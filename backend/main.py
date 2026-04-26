@@ -16,8 +16,13 @@ from .utils.scheduler import start_scheduler
 from backtest.api import router as backtest_router
 
 
+_startup_error: str | None = None
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    global _startup_error
+    scheduler = None
     try:
         logger.info(f"Python {sys.version}")
         logger.info(f"CWD: {os.getcwd()}")
@@ -26,14 +31,16 @@ async def lifespan(app: FastAPI):
         await init_db()
         logger.info("Starting background scheduler...")
         scheduler = start_scheduler()
+        logger.info("Startup complete.")
     except Exception as e:
-        logger.error(f"Startup failed: {e}\n{traceback.format_exc()}")
-        raise   # 讓 uvicorn 知道啟動失敗
+        _startup_error = f"{type(e).__name__}: {e}"
+        logger.error(f"Startup failed: {_startup_error}\n{traceback.format_exc()}")
     yield
-    try:
-        scheduler.shutdown()
-    except Exception:
-        pass
+    if scheduler:
+        try:
+            scheduler.shutdown()
+        except Exception:
+            pass
 
 
 app = FastAPI(
@@ -55,6 +62,11 @@ app.include_router(backtest_router, prefix="/api")
 
 @app.get("/health")
 async def health():
+    if _startup_error:
+        return JSONResponse(
+            status_code=503,
+            content={"status": "error", "detail": _startup_error},
+        )
     return {"status": "ok", "version": "1.0.0"}
 
 
