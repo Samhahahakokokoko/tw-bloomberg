@@ -1,4 +1,4 @@
-import sys, os, traceback
+import sys, os, traceback, asyncio
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -28,10 +28,13 @@ async def lifespan(app: FastAPI):
         logger.info(f"CWD: {os.getcwd()}")
         logger.info(f"sys.path: {sys.path[:3]}")
         logger.info("Initialising database...")
-        await init_db()
+        await asyncio.wait_for(init_db(), timeout=30)
         logger.info("Starting background scheduler...")
         scheduler = start_scheduler()
         logger.info("Startup complete.")
+    except asyncio.TimeoutError:
+        _startup_error = "Database connection timed out after 30s"
+        logger.error(_startup_error)
     except Exception as e:
         _startup_error = f"{type(e).__name__}: {e}"
         logger.error(f"Startup failed: {_startup_error}\n{traceback.format_exc()}")
