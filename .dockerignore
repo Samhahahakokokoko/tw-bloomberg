@@ -1,0 +1,15 @@
+.env
+*.env
+.git
+.gitignore
+.claude
+frontend/node_modules
+frontend/dist
+frontend/.vite
+data/*.db
+*.log
+__pycache__
+*.pyc
+*.pyo
+.venv
+venv
