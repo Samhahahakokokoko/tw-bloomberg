@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+dist/
+*.pyc
+
+# 敏感資訊 — 絕對不能上傳
+.env
+*.env
+data/bloomberg.db
+data/*.db
+
+# 前端
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+
+# Rich Menu 圖片（可重新生成）
+data/rich_menu.png
+
+# 系統
+.DS_Store
+Thumbs.db
+*.log
