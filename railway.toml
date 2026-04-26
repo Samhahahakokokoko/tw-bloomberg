@@ -8,3 +8,5 @@ healthcheckTimeout = 60
 restartPolicyType = "on_failure"
 restartPolicyMaxRetries = 3
 
+[service]
+internalPort = 8080
