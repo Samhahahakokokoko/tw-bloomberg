@@ -1,10 +1,11 @@
-import sys, os
+import sys, os, traceback
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from loguru import logger
 
-# 確保 project root 在 sys.path（LINE Bot handler 需要）
+# ── sys.path setup ────────────────────────────────────────────────────────────
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
@@ -17,12 +18,22 @@ from backtest.api import router as backtest_router
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    logger.info("Initialising database...")
-    await init_db()
-    logger.info("Starting background scheduler...")
-    scheduler = start_scheduler()
+    try:
+        logger.info(f"Python {sys.version}")
+        logger.info(f"CWD: {os.getcwd()}")
+        logger.info(f"sys.path: {sys.path[:3]}")
+        logger.info("Initialising database...")
+        await init_db()
+        logger.info("Starting background scheduler...")
+        scheduler = start_scheduler()
+    except Exception as e:
+        logger.error(f"Startup failed: {e}\n{traceback.format_exc()}")
+        raise   # 讓 uvicorn 知道啟動失敗
     yield
-    scheduler.shutdown()
+    try:
+        scheduler.shutdown()
+    except Exception:
+        pass
 
 
 app = FastAPI(
@@ -44,16 +55,19 @@ app.include_router(backtest_router, prefix="/api")
 
 @app.get("/health")
 async def health():
-    return {"status": "ok"}
+    return {"status": "ok", "version": "1.0.0"}
 
 
-# ── LINE Bot webhook（合併進主 app，Railway 只需一個服務）───────────────────
+# ── 全域例外處理（讓錯誤可見，不只是 500）────────────────────────────────────
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    logger.error(f"Unhandled: {request.url} → {exc}\n{traceback.format_exc()}")
+    return JSONResponse(status_code=500, content={"error": str(exc)})
+
+
+# ── LINE Bot webhook（失敗不影響主 app）──────────────────────────────────────
 try:
-    from line_webhook.handler import (
-        app as _linebot_app,
-        webhook as _webhook_handler,
-    )
-    from fastapi import Request
+    from line_webhook.handler import webhook as _webhook_handler
 
     @app.post("/webhook")
     async def webhook(request: Request):
@@ -61,4 +75,5 @@ try:
 
     logger.info("LINE Bot webhook mounted at /webhook")
 except Exception as e:
-    logger.warning(f"LINE Bot not mounted: {e}")
+    logger.warning(f"LINE Bot not mounted (non-fatal): {e}")
+    logger.debug(traceback.format_exc())

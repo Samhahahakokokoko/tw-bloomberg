@@ -35,4 +35,4 @@ apscheduler==3.10.4
 loguru==0.7.2
 pytz==2024.2
 python-dateutil==2.9.0
-pillow==10.4.0
+pillow>=10.0.0
