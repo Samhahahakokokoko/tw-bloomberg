@@ -34,11 +34,32 @@ BUTTONS = [
     ("更多指令", "查看完整操作手冊",     "menu",   1, 2),
 ]
 
-FONT_PATH = "C:/Windows/Fonts/msjh.ttc"
+def _find_font() -> str:
+    """跨平台字型搜尋：Windows / Linux（Railway）"""
+    import os, glob
+    candidates = [
+        # Windows
+        "C:/Windows/Fonts/msjh.ttc",
+        "C:/Windows/Fonts/msyh.ttc",
+        # Linux（fonts-noto-cjk via apt）
+        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc",
+    ]
+    # 通配找第一個存在的
+    for p in candidates:
+        if os.path.exists(p):
+            return p
+    # fallback: 讓 PIL 用預設字型（無中文支援，但不崩潰）
+    return ""
+
+FONT_PATH = _find_font()
 
 
 def _font(size: int) -> ImageFont.FreeTypeFont:
-    return ImageFont.truetype(FONT_PATH, size)
+    if FONT_PATH:
+        return ImageFont.truetype(FONT_PATH, size)
+    return ImageFont.load_default()
 
 
 # ── 圖示 ─────────────────────────────────────────────────────────────────────
