@@ -36,3 +36,4 @@ loguru==0.7.2
 pytz==2024.2
 python-dateutil==2.9.0
 pillow>=10.0.0
+# PIL 字型：fonts-noto-cjk 太大，改用系統預設字型（有 fallback）
