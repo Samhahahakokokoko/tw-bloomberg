@@ -106,25 +106,32 @@ def _parse_date(date_str: str) -> Optional[datetime]:
 async def _analyze_sentiment(text: str, api_key: str) -> tuple[str, float]:
     if not api_key or len(text) < 10:
         return "neutral", 0.0
-    try:
-        import anthropic
-        client = anthropic.AsyncAnthropic(api_key=api_key)
-        prompt = (
-            "以下是台股相關新聞，請判斷情緒。\n"
-            "只回傳 JSON，格式：{\"sentiment\": \"positive|negative|neutral\", \"score\": 0.0~1.0}\n\n"
-            + text[:800]
-        )
-        msg = await client.messages.create(
-            model="claude-haiku-4-5-20251001",
-            max_tokens=64,
-            messages=[{"role": "user", "content": prompt}],
-        )
-        import json
-        result = json.loads(msg.content[0].text)
-        return result.get("sentiment", "neutral"), float(result.get("score", 0.5))
-    except Exception as e:
-        logger.error(f"Sentiment analysis error: {e}")
-        return "neutral", 0.0
+    import anthropic, json, re
+    client = anthropic.AsyncAnthropic(api_key=api_key)
+    prompt = (
+        "以下是台股相關新聞，請判斷情緒。\n"
+        "只回傳 JSON，格式：{\"sentiment\": \"positive|negative|neutral\", \"score\": 0.0~1.0}\n\n"
+        + text[:800]
+    )
+    for attempt in range(2):
+        try:
+            msg = await client.messages.create(
+                model="claude-haiku-4-5-20251001",
+                max_tokens=64,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            if not msg.content:
+                continue
+            raw = msg.content[0].text.strip()
+            raw = re.sub(r"^```(?:json)?\s*", "", raw)
+            raw = re.sub(r"\s*```$", "", raw).strip()
+            if not raw:
+                continue
+            result = json.loads(raw)
+            return result.get("sentiment", "neutral"), float(result.get("score", 0.5))
+        except Exception as e:
+            logger.error(f"Sentiment analysis error (attempt {attempt + 1}): {e}")
+    return "neutral", 0.0
 
 
 if __name__ == "__main__":

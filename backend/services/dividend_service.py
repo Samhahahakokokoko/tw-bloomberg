@@ -8,7 +8,7 @@ async def fetch_upcoming_dividends(days_ahead: int = 30) -> list[dict]:
     """抓近期除權息日期（TWSE OpenAPI）"""
     url = "https://openapi.twse.com.tw/v1/exchangeReport/TWT49U"
     try:
-        async with httpx.AsyncClient(timeout=15) as client:
+        async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
             resp = await client.get(url)
             resp.raise_for_status()
             data = resp.json()
@@ -41,7 +41,7 @@ async def fetch_historical_dividends(stock_code: str) -> list[dict]:
     for y in [year, year - 1]:
         url = f"https://www.twse.com.tw/exchangeReport/TWT49U?response=json&strDate={y}0101&endDate={y}1231"
         try:
-            async with httpx.AsyncClient(timeout=15) as client:
+            async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
                 resp = await client.get(url)
                 data = resp.json()
                 for row in data.get("data", []):
