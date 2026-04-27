@@ -26,46 +26,59 @@ async def fetch_twse_quote(stock_code: str) -> dict:
 
 
 async def fetch_realtime_quote(stock_code: str) -> dict:
-    """即時報價：優先用 STOCK_DAY_ALL（每日收盤後），盤中 fallback MIS"""
-    # 先試 STOCK_DAY_ALL（欄位齊全、穩定）
+    """即時報價：先試 TWSE，再試 TPEX，最後 MIS（盤中）"""
+    # 1. TWSE 上市
     url = f"{TWSE_BASE}/exchangeReport/STOCK_DAY_ALL"
     try:
-        async with httpx.AsyncClient(timeout=15) as client:
+        async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
             resp = await client.get(url)
             resp.raise_for_status()
-            data = resp.json()
-            for item in data:
+            for item in resp.json():
                 if item.get("Code") == stock_code:
                     return _normalize_twse_quote(item)
     except Exception as e:
-        logger.error(f"Realtime quote error for {stock_code}: {e}")
+        logger.error(f"TWSE quote error for {stock_code}: {e}")
 
-    # fallback: 盤中即時
+    # 2. TPEX 上櫃
+    url = f"{TPEX_BASE}/tpex_mainboard_daily_close_quotes"
+    try:
+        async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
+            resp = await client.get(url)
+            resp.raise_for_status()
+            for item in resp.json():
+                if item.get("SecuritiesCompanyCode") == stock_code:
+                    return _normalize_tpex_quote(item)
+    except Exception as e:
+        logger.error(f"TPEX quote error for {stock_code}: {e}")
+
+    # 3. MIS 盤中即時（tse / otc 都試）
     return await _fetch_twse_mi(stock_code)
 
 
 async def _fetch_twse_mi(stock_code: str) -> dict:
-    url = f"https://mis.twse.com.tw/stock/api/getStockInfo.jsp?ex_ch=tse_{stock_code}.tw"
-    try:
-        async with httpx.AsyncClient(timeout=15) as client:
-            resp = await client.get(url)
-            data = resp.json()
-            if data.get("msgArray"):
-                item = data["msgArray"][0]
-                return {
-                    "code": stock_code,
-                    "name": item.get("n", ""),
-                    "price": float(item.get("z", 0) or 0),
-                    "open": float(item.get("o", 0) or 0),
-                    "high": float(item.get("h", 0) or 0),
-                    "low": float(item.get("l", 0) or 0),
-                    "volume": int(item.get("v", 0) or 0),
-                    "change": float(item.get("y", 0) or 0),
-                    "change_pct": _calc_change_pct(item.get("z"), item.get("y")),
-                    "timestamp": datetime.now().isoformat(),
-                }
-    except Exception as e:
-        logger.error(f"MI fetch error: {e}")
+    """MIS 盤中即時：先試上市(tse)，再試上櫃(otc)"""
+    for market in ("tse", "otc"):
+        url = f"https://mis.twse.com.tw/stock/api/getStockInfo.jsp?ex_ch={market}_{stock_code}.tw"
+        try:
+            async with httpx.AsyncClient(timeout=15) as client:
+                resp = await client.get(url)
+                data = resp.json()
+                if data.get("msgArray"):
+                    item = data["msgArray"][0]
+                    return {
+                        "code": stock_code,
+                        "name": item.get("n", ""),
+                        "price": float(item.get("z", 0) or 0),
+                        "open": float(item.get("o", 0) or 0),
+                        "high": float(item.get("h", 0) or 0),
+                        "low": float(item.get("l", 0) or 0),
+                        "volume": int(item.get("v", 0) or 0),
+                        "change": float(item.get("y", 0) or 0),
+                        "change_pct": _calc_change_pct(item.get("z"), item.get("y")),
+                        "timestamp": datetime.now().isoformat(),
+                    }
+        except Exception as e:
+            logger.error(f"MI fetch error ({market}_{stock_code}): {e}")
     return {}
 
 
@@ -180,6 +193,26 @@ def _normalize_twse_quote(item: dict) -> dict:
         "volume": _parse_int(item.get("TradeVolume")),
         "change": float(item.get("Change", 0) or 0),
         "change_pct": _calc_pct(item.get("ClosingPrice"), item.get("Change")),
+        "timestamp": datetime.now().isoformat(),
+    }
+
+
+def _normalize_tpex_quote(item: dict) -> dict:
+    def _f(v):
+        try:
+            return float(str(v).replace(",", "") or 0)
+        except Exception:
+            return 0.0
+    return {
+        "code": item.get("SecuritiesCompanyCode", ""),
+        "name": item.get("CompanyName", ""),
+        "price": _f(item.get("Close")),
+        "open": _f(item.get("Open")),
+        "high": _f(item.get("High")),
+        "low": _f(item.get("Low")),
+        "volume": _parse_int(item.get("TradeVolume")),
+        "change": _f(item.get("Change")),
+        "change_pct": _calc_pct(item.get("Close"), item.get("Change")),
         "timestamp": datetime.now().isoformat(),
     }
 
