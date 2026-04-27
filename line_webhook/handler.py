@@ -2,7 +2,7 @@
 import sys, os, urllib.parse
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from fastapi import FastAPI, Request, HTTPException
+from fastapi import APIRouter, Request, HTTPException
 from linebot.v3.messaging import (
     AsyncApiClient, AsyncMessagingApi, Configuration,
     ReplyMessageRequest, TextMessage, FlexMessage,
@@ -36,14 +36,14 @@ from line_webhook.flex_messages import (
     quick_reply_quote, quick_reply_portfolio,
 )
 
-app = FastAPI()
+router = APIRouter()
 configuration = Configuration(access_token=settings.line_channel_access_token)
 parser = WebhookParser(settings.line_channel_secret)
 
 
 # ── Webhook 入口 ───────────────────────────────────────────────────────────────
 
-@app.post("/webhook")
+@router.post("/webhook")
 async def webhook(request: Request):
     sig  = request.headers.get("X-Line-Signature", "")
     body = await request.body()

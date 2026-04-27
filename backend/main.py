@@ -82,12 +82,8 @@ async def global_exception_handler(request: Request, exc: Exception):
 
 # ── LINE Bot webhook（失敗不影響主 app）──────────────────────────────────────
 try:
-    from line_webhook.handler import webhook as _webhook_handler
-
-    @app.post("/webhook")
-    async def webhook(request: Request):
-        return await _webhook_handler(request)
-
+    from line_webhook.handler import router as _webhook_router
+    app.include_router(_webhook_router)
     logger.info("LINE Bot webhook mounted at /webhook")
 except Exception as e:
     logger.warning(f"LINE Bot not mounted (non-fatal): {e}")
