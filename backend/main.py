@@ -13,7 +13,11 @@ if _ROOT not in sys.path:
 from .models.database import init_db
 from .api.routes import router
 from .utils.scheduler import start_scheduler
-from backtest.api import router as backtest_router
+try:
+    from backtest.api import router as backtest_router
+except Exception as _e:
+    backtest_router = None
+    logger.warning(f"Backtest router not loaded: {_e}")
 
 
 _startup_error: str | None = None
@@ -60,15 +64,21 @@ app.add_middleware(
 )
 
 app.include_router(router, prefix="/api")
-app.include_router(backtest_router, prefix="/api")
+if backtest_router:
+    app.include_router(backtest_router, prefix="/api")
 
 
 @app.get("/health")
 async def health():
+    return {"status": "ok", "version": "1.0.0"}
+
+
+@app.get("/health/detail")
+async def health_detail():
     if _startup_error:
         return JSONResponse(
             status_code=503,
-            content={"status": "error", "detail": _startup_error},
+            content={"status": "degraded", "detail": _startup_error},
         )
     return {"status": "ok", "version": "1.0.0"}
 
