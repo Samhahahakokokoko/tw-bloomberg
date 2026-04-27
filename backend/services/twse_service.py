@@ -210,7 +210,7 @@ def _normalize_tpex_quote(item: dict) -> dict:
         "open": _f(item.get("Open")),
         "high": _f(item.get("High")),
         "low": _f(item.get("Low")),
-        "volume": _parse_int(item.get("TradeVolume")),
+        "volume": _parse_int(item.get("TradingShares")),
         "change": _f(item.get("Change")),
         "change_pct": _calc_pct(item.get("Close"), item.get("Change")),
         "timestamp": datetime.now().isoformat(),
