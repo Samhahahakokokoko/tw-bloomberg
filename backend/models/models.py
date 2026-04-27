@@ -220,3 +220,25 @@ class SharedPortfolio(Base):
     is_public = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow)
+
+
+class EarningsReminder(Base):
+    """財報提醒 — 使用者訂閱特定股票的財報公布日提醒"""
+    __tablename__ = "earnings_reminders"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(String(100), index=True, nullable=False, default="")
+    line_user_id = Column(String(100))
+    stock_code = Column(String(10), nullable=False, index=True)
+    stock_name = Column(String(50))
+    # 財報期別，例如 "2025Q1"、"2025H1"、"2024Annual"
+    period = Column(String(20))
+    # 預計公布日 YYYY-MM-DD（使用者自填 or 系統估算）
+    announce_date = Column(String(10))
+    # 提前幾天提醒
+    remind_days_before = Column(Integer, default=3)
+    is_reminded = Column(Boolean, default=False)
+    # 實際公布後填入
+    actual_eps = Column(Float)
+    expected_eps = Column(Float)
+    created_at = Column(DateTime, default=datetime.utcnow)

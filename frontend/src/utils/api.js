@@ -44,6 +44,14 @@ export const getMargin    = (code) => api.get(`/api/margin/${code}`).then(r => r
 export const triggerMorningReport = () => api.post("/api/report/morning").then(r => r.data);
 export const triggerWeeklyReport  = () => api.post("/api/report/weekly").then(r => r.data);
 
+// ── Earnings Reminders ────────────────────────────────────────────────────────
+export const getEarnings          = (userId = "") => api.get("/api/earnings", { params: { user_id: userId } }).then(r => r.data);
+export const createEarnings       = (data) => api.post("/api/earnings", data).then(r => r.data);
+export const deleteEarnings       = (id, userId = "") => api.delete(`/api/earnings/${id}`, { params: { user_id: userId } }).then(r => r.data);
+export const updateEarningsEps    = (id, actual_eps) => api.put(`/api/earnings/${id}/eps`, { actual_eps }).then(r => r.data);
+export const getLatestEps         = (code) => api.get(`/api/earnings/${code}/latest-eps`).then(r => r.data);
+export const triggerEarningsCheck = () => api.post("/api/earnings/check-now").then(r => r.data);
+
 // ── Watchlist ─────────────────────────────────────────────────────────────────
 export const getWatchlist    = (userId = "") => api.get("/api/watchlist", { params: { user_id: userId } }).then(r => r.data);
 export const addWatchlist    = (data) => api.post("/api/watchlist", data).then(r => r.data);

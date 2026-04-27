@@ -154,31 +154,40 @@ async def unfollow_trader(db: AsyncSession, follower_id: str, leader_id: str) ->
 
 
 async def get_following(db: AsyncSession, follower_id: str) -> list[dict]:
-    """取得我追蹤的所有交易者清單"""
-    result = await db.execute(
-        select(CopyTradeRelation, SharedPortfolio).join(
-            SharedPortfolio, CopyTradeRelation.leader_id == SharedPortfolio.user_id, isouter=True
-        ).where(
+    """取得我追蹤的所有交易者清單（兩步查詢，避免 JOIN 相容性問題）"""
+    rel_result = await db.execute(
+        select(CopyTradeRelation).where(
             CopyTradeRelation.follower_id == follower_id,
             CopyTradeRelation.is_active == True,
         )
     )
-    rows = result.all()
+    relations = rel_result.scalars().all()
+
     following = []
-    for rel, shared in rows:
-        entry = {
+    for rel in relations:
+        # 查對應的 SharedPortfolio
+        sp_result = await db.execute(
+            select(SharedPortfolio).where(SharedPortfolio.user_id == rel.leader_id)
+        )
+        shared = sp_result.scalar_one_or_none()
+
+        entry: dict = {
             "leader_id":    rel.leader_id,
             "display_name": shared.display_name if shared else rel.leader_id,
             "share_code":   shared.share_code if shared else None,
+            "holdings_count": 0,
+            "total_pnl_pct":  None,
         }
-        # 補充績效
+
         if shared and shared.share_code:
             try:
                 portfolio_data = await get_shared_portfolio(db, shared.share_code)
                 if portfolio_data:
-                    entry["total_pnl_pct"] = portfolio_data["total_pnl_pct"]
+                    entry["total_pnl_pct"]  = portfolio_data["total_pnl_pct"]
                     entry["holdings_count"] = len(portfolio_data["holdings"])
-            except Exception:
-                pass
+                    entry["total_mv"]       = portfolio_data["total_mv"]
+            except Exception as e:
+                logger.error(f"get_following perf error {rel.leader_id}: {e}")
+
         following.append(entry)
     return following

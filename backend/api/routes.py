@@ -332,6 +332,77 @@ async def trigger_weekly_report():
     return {"report": report}
 
 
+# ── Earnings Reminders ──────────────────────────────────────────────────────────
+
+class EarningsReminderCreate(BaseModel):
+    user_id: str = ""
+    stock_code: str
+    period: str = ""              # e.g. "2025Q1"
+    announce_date: str = ""       # YYYY-MM-DD，留空則自動估算
+    remind_days_before: int = 3
+    line_user_id: str = ""
+    expected_eps: Optional[float] = None
+
+
+class EarningsEpsUpdate(BaseModel):
+    actual_eps: float
+
+
+@router.get("/earnings")
+async def list_earnings(user_id: str = Query(""), db: AsyncSession = Depends(get_db)):
+    from ..services.earnings_service import list_reminders
+    return await list_reminders(db, user_id)
+
+
+@router.post("/earnings", status_code=201)
+async def create_earnings_reminder(payload: EarningsReminderCreate, db: AsyncSession = Depends(get_db)):
+    from ..services.earnings_service import add_reminder
+    return await add_reminder(
+        db,
+        user_id=payload.user_id,
+        stock_code=payload.stock_code,
+        period=payload.period,
+        announce_date=payload.announce_date,
+        remind_days_before=payload.remind_days_before,
+        line_user_id=payload.line_user_id,
+        expected_eps=payload.expected_eps,
+    )
+
+
+@router.delete("/earnings/{reminder_id}")
+async def delete_earnings_reminder(reminder_id: int, user_id: str = Query(""), db: AsyncSession = Depends(get_db)):
+    from ..services.earnings_service import delete_reminder
+    ok = await delete_reminder(db, reminder_id, user_id)
+    if not ok:
+        raise HTTPException(404, "Reminder not found")
+    return {"deleted": True}
+
+
+@router.put("/earnings/{reminder_id}/eps")
+async def update_eps(reminder_id: int, payload: EarningsEpsUpdate, db: AsyncSession = Depends(get_db)):
+    from ..services.earnings_service import update_actual_eps
+    r = await update_actual_eps(db, reminder_id, payload.actual_eps)
+    if not r:
+        raise HTTPException(404, "Reminder not found")
+    return r
+
+
+@router.get("/earnings/{stock_code}/latest-eps")
+async def get_latest_eps(stock_code: str):
+    from ..services.earnings_service import fetch_latest_eps
+    data = await fetch_latest_eps(stock_code)
+    if not data:
+        raise HTTPException(404, f"No EPS data for {stock_code}")
+    return data
+
+
+@router.post("/earnings/check-now")
+async def trigger_earnings_check():
+    from ..services.earnings_service import check_and_push_reminders
+    await check_and_push_reminders()
+    return {"status": "ok"}
+
+
 # ── Watchlist ──────────────────────────────────────────────────────────────────
 
 class WatchlistCreate(BaseModel):

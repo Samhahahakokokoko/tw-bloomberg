@@ -70,6 +70,20 @@ def start_scheduler() -> AsyncIOScheduler:
         id="weekly_picks", replace_existing=True,
     )
 
+    # 財報提醒檢查 — 每日 08:15
+    scheduler.add_job(
+        _check_earnings_reminders,
+        CronTrigger(day_of_week="mon-fri", hour=8, minute=15, timezone="Asia/Taipei"),
+        id="earnings_reminder", replace_existing=True,
+    )
+
+    # 自選股停損停利檢查 — 交易時段每 5 分鐘
+    scheduler.add_job(
+        _check_watchlist_triggers,
+        CronTrigger(day_of_week="mon-fri", hour="9-13", minute="*/5", timezone="Asia/Taipei"),
+        id="watchlist_trigger", replace_existing=True,
+    )
+
     scheduler.start()
     logger.info("Scheduler started (morning report 08:30 / weekly report Fri 14:30)")
     return scheduler
@@ -148,3 +162,19 @@ async def _push_weekly_picks():
         await push_weekly_picks()
     except Exception as e:
         logger.error(f"Weekly picks push failed: {e}")
+
+
+async def _check_earnings_reminders():
+    try:
+        from ..services.earnings_service import check_and_push_reminders
+        await check_and_push_reminders()
+    except Exception as e:
+        logger.error(f"Earnings reminder check failed: {e}")
+
+
+async def _check_watchlist_triggers():
+    try:
+        from .alert_checker import check_watchlist_triggers
+        await check_watchlist_triggers()
+    except Exception as e:
+        logger.error(f"Watchlist trigger check failed: {e}")

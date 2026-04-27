@@ -58,10 +58,11 @@ _SQLITE_MIGRATIONS = [
     "CREATE INDEX IF NOT EXISTS ix_qh_user_hash       ON query_history(user_id, topic_hash)",
     "CREATE INDEX IF NOT EXISTS ix_watchlist_user     ON watchlist(user_id)",
     "CREATE INDEX IF NOT EXISTS ix_perf_user_date     ON performance_records(user_id, record_date)",
+    "CREATE INDEX IF NOT EXISTS ix_earnings_user      ON earnings_reminders(user_id)",
+    "CREATE INDEX IF NOT EXISTS ix_earnings_code      ON earnings_reminders(stock_code)",
 ]
 
 _PG_MIGRATIONS = [
-    # PostgreSQL 用 DO $$ ... $$ 避免重複
     """DO $$ BEGIN
          ALTER TABLE portfolio  ADD COLUMN user_id VARCHAR(100) NOT NULL DEFAULT '';
        EXCEPTION WHEN duplicate_column THEN NULL; END $$""",
@@ -74,6 +75,8 @@ _PG_MIGRATIONS = [
     "CREATE INDEX IF NOT EXISTS ix_qh_user_hash       ON query_history(user_id, topic_hash)",
     "CREATE INDEX IF NOT EXISTS ix_watchlist_user     ON watchlist(user_id)",
     "CREATE INDEX IF NOT EXISTS ix_perf_user_date     ON performance_records(user_id, record_date)",
+    "CREATE INDEX IF NOT EXISTS ix_earnings_user      ON earnings_reminders(user_id)",
+    "CREATE INDEX IF NOT EXISTS ix_earnings_code      ON earnings_reminders(stock_code)",
 ]
 
 

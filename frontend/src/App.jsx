@@ -2,20 +2,21 @@ import React from "react";
 import { Routes, Route, NavLink } from "react-router-dom";
 import {
   BarChart2, TrendingUp, BookOpen, Bell, Newspaper, Activity,
-  Star, Cpu, Heart, Map, Trophy, Users,
+  Star, Cpu, Heart, Map, Trophy, Users, CalendarDays,
 } from "lucide-react";
-import Dashboard    from "./pages/Dashboard";
-import Quote        from "./pages/Quote";
-import Portfolio    from "./pages/Portfolio";
-import Alerts       from "./pages/Alerts";
-import News         from "./pages/News";
-import Backtest     from "./pages/Backtest";
-import Watchlist    from "./pages/Watchlist";
-import ChipTracker  from "./pages/ChipTracker";
-import StockHealth  from "./pages/StockHealth";
-import Industry     from "./pages/Industry";
-import Performance  from "./pages/Performance";
-import CopyTrade    from "./pages/CopyTrade";
+import Dashboard       from "./pages/Dashboard";
+import Quote           from "./pages/Quote";
+import Portfolio       from "./pages/Portfolio";
+import Alerts          from "./pages/Alerts";
+import News            from "./pages/News";
+import Backtest        from "./pages/Backtest";
+import Watchlist       from "./pages/Watchlist";
+import ChipTracker     from "./pages/ChipTracker";
+import StockHealth     from "./pages/StockHealth";
+import Industry        from "./pages/Industry";
+import Performance     from "./pages/Performance";
+import CopyTrade       from "./pages/CopyTrade";
+import EarningsReminder from "./pages/EarningsReminder";
 
 const NAV = [
   { to: "/",           label: "DASHBOARD",  icon: Activity },
@@ -25,6 +26,7 @@ const NAV = [
   { to: "/chip",       label: "籌碼",        icon: Cpu },
   { to: "/health",     label: "健診",        icon: Heart },
   { to: "/industry",   label: "產業鏈",      icon: Map },
+  { to: "/earnings",   label: "財報提醒",    icon: CalendarDays },
   { to: "/alerts",     label: "ALERTS",     icon: Bell },
   { to: "/news",       label: "NEWS",       icon: Newspaper },
   { to: "/performance",label: "排行榜",      icon: Trophy },
@@ -83,6 +85,7 @@ export default function App() {
           <Route path="/news"        element={<News />} />
           <Route path="/performance" element={<Performance />} />
           <Route path="/copytrade"   element={<CopyTrade />} />
+          <Route path="/earnings"    element={<EarningsReminder />} />
           <Route path="/backtest"    element={<Backtest />} />
         </Routes>
       </main>
