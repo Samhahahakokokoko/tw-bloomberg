@@ -17,5 +17,8 @@ RUN mkdir -p data
 
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
+ENV PORT=8080
 
-CMD python -m uvicorn backend.main:app --host 0.0.0.0 --port $PORT --log-level info
+EXPOSE 8080
+
+CMD python -m uvicorn backend.main:app --host 0.0.0.0 --port ${PORT:-8080} --log-level info
