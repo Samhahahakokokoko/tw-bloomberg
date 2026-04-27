@@ -157,12 +157,55 @@ async def _handle_postback(data: str, uid: str) -> list:
     return [_text("未知操作", qr_items(("💼 庫存", "/portfolio")))]
 
 
+# ── 自然語言關鍵字對照表 ──────────────────────────────────────────────────────
+
+_NL_PORTFOLIO = {
+    "庫存", "我的庫存", "持股", "查庫存", "看庫存", "我的持股", "庫存清單",
+    "持股清單", "我的股票", "股票庫存", "帳戶", "我的帳戶", "倉位",
+    "持倉", "查持股", "看持股",
+}
+_NL_MARKET = {
+    "大盤", "指數", "加權", "台股", "今天大盤", "市場", "行情",
+    "大盤指數", "台股指數", "今天行情", "今日大盤",
+}
+_NL_MORNING = {
+    "早報", "今日早報", "今天早報", "晨報", "早安報", "每日早報",
+    "今日摘要", "早盤", "今天市況",
+}
+_NL_WEEKLY = {
+    "週報", "周報", "本週報告", "本周報告", "週績效", "本週績效",
+    "這週怎樣", "本周走勢",
+}
+_NL_REC = {
+    "推薦", "策略", "策略推薦", "建議", "操作建議", "我該怎麼操作",
+    "怎麼買", "買什麼", "選股", "策略建議",
+}
+_NL_HELP = {
+    "幫助", "說明", "指令", "功能", "怎麼用", "如何使用", "使用說明",
+    "有哪些指令", "可以幹嘛", "能做什麼", "幫我",
+}
+_NL_AI_PORTFOLIO = {
+    "分析庫存", "分析我的庫存", "幫我分析", "庫存分析", "AI分析庫存",
+    "分析持股", "幫我看看", "我的投資如何", "投組分析",
+}
+_NL_SUBSCRIBE = {
+    "訂閱", "訂閱早報", "幫我訂閱", "我要訂閱", "開啟推播", "訂閱推播",
+}
+_NL_HISTORY = {
+    "歷史", "交易紀錄", "買賣紀錄", "交易歷史", "操作紀錄", "我的紀錄",
+}
+_NL_TAX = {
+    "稅務", "稅", "證交稅", "報稅", "今年稅", "已實現損益",
+}
+
+
 # ── 文字指令分發 ──────────────────────────────────────────────────────────────
 
 async def _handle_text(text: str, uid: str) -> list:
     parts = text.split()
     cmd   = parts[0].lower() if parts else ""
 
+    # ── 斜線指令（精確比對）──────────────────────────────────────────────────
     if cmd == "/quote"    and len(parts) >= 2: return await _cmd_quote(parts[1])
     if cmd in ("/market", "/market_overview"):  return await _cmd_market()
     if cmd == "/portfolio":                     return await _cmd_portfolio(uid)
@@ -190,11 +233,73 @@ async def _handle_text(text: str, uid: str) -> list:
     if cmd == "/ai_guide":                      return [_ai_guide()]
     if cmd == "/help":                          return [_text(_help_text(), _home_qr())]
 
-    # 純數字 4 碼 → 直接查報價
-    if len(text) == 4 and text.isdigit():
-        return await _cmd_quote(text)
+    # ── 純數字 4-6 碼 → 直接查報價 ─────────────────────────────────────────
+    t = text.strip()
+    if t.isdigit() and 4 <= len(t) <= 6:
+        return await _cmd_quote(t)
 
-    return [_text(f"輸入 /help 查看所有指令\n\n或直接輸入 4 碼股票代碼查詢", _home_qr())]
+    # ── 自然語言關鍵字（整句比對）──────────────────────────────────────────
+    t_strip = t.strip("？?！!～~。，, ")
+    if t_strip in _NL_PORTFOLIO:      return await _cmd_portfolio(uid)
+    if t_strip in _NL_MARKET:         return await _cmd_market()
+    if t_strip in _NL_MORNING:        return await _cmd_morning()
+    if t_strip in _NL_WEEKLY:         return await _cmd_weekly(uid)
+    if t_strip in _NL_REC:            return await _cmd_rec_dispatch(uid)
+    if t_strip in _NL_HELP:           return [_text(_help_text(), _home_qr())]
+    if t_strip in _NL_AI_PORTFOLIO:   return [await _cmd_ai_portfolio(uid)]
+    if t_strip in _NL_SUBSCRIBE:      return [await _cmd_subscribe(uid)]
+    if t_strip in _NL_HISTORY:        return await _cmd_history(uid)
+    if t_strip in _NL_TAX:            return await _cmd_tax(uid)
+
+    # ── 含關鍵字的長句（部分比對）──────────────────────────────────────────
+    t_lower = t_strip.lower()
+
+    if _any_kw(t_lower, ("庫存", "持股", "倉位", "持倉")):
+        # 若句中還有操作動詞，交給 AI 處理
+        if _any_kw(t_lower, ("買", "賣", "加碼", "減碼", "分析", "怎麼辦")):
+            return [await _cmd_ai_ask(t, uid)]
+        return await _cmd_portfolio(uid)
+
+    if _any_kw(t_lower, ("早報", "晨報", "今天市況", "早安")):
+        return await _cmd_morning()
+
+    if _any_kw(t_lower, ("週報", "周報", "本週", "本周")):
+        return await _cmd_weekly(uid)
+
+    if _any_kw(t_lower, ("大盤", "指數", "台股今天", "行情")):
+        return await _cmd_market()
+
+    if _any_kw(t_lower, ("策略", "推薦", "建議怎麼買", "操作建議")):
+        return await _cmd_rec_dispatch(uid)
+
+    # ── 句中包含 4 碼數字 → 嘗試查報價 ─────────────────────────────────────
+    import re
+    codes = re.findall(r'\b\d{4,6}\b', t)
+    if codes:
+        return await _cmd_quote(codes[0])
+
+    # ── 其餘長句 → 丟給 AI ───────────────────────────────────────────────────
+    # 若文字夠長且像是問句，直接問 AI
+    if len(t) >= 6 and _any_kw(t_lower, ("嗎", "怎", "如何", "分析", "解讀",
+                                          "看法", "走勢", "展望", "值得", "要不要",
+                                          "適合", "建議", "幫我", "告訴我")):
+        return [await _cmd_ai_ask(t, uid)]
+
+    # ── 預設 fallback ────────────────────────────────────────────────────────
+    return [_text(
+        "😅 看不懂你說的\n\n"
+        "你可以說：\n"
+        "• 「庫存」→ 查我的持股\n"
+        "• 「大盤」→ 今日指數\n"
+        "• 「早報」→ 今日早報\n"
+        "• 輸入 4 碼 → 即時報價\n"
+        "• /help → 完整指令說明",
+        _home_qr()
+    )]
+
+
+def _any_kw(text: str, keywords: tuple) -> bool:
+    return any(kw in text for kw in keywords)
 
 
 # ── 各指令實作 ────────────────────────────────────────────────────────────────
