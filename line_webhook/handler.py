@@ -232,6 +232,8 @@ async def _handle_text(text: str, uid: str) -> list:
     if cmd in ("/news", "/news_guide"):         return [_news_guide()]
     if cmd == "/ai_guide":                      return [_ai_guide()]
     if cmd == "/help":                          return [_text(_help_text(), _home_qr())]
+    if cmd == "/screener":                      return await _cmd_screener(parts[1] if len(parts) > 1 else "top")
+    if cmd == "/find"     and len(parts) >= 2:  return await _cmd_nl_screener(" ".join(parts[1:]))
 
     # ── 純數字 4-6 碼 → 直接查報價 ─────────────────────────────────────────
     t = text.strip()
@@ -272,6 +274,12 @@ async def _handle_text(text: str, uid: str) -> list:
     if _any_kw(t_lower, ("策略", "推薦", "建議怎麼買", "操作建議")):
         return await _cmd_rec_dispatch(uid)
 
+    # ── 選股類自然語言 → NL Screener ─────────────────────────────────────────
+    if _any_kw(t_lower, ("找股票", "幫我找", "篩選", "選股", "哪些股",
+                          "推薦股票", "找出", "法人大買", "外資買超",
+                          "營收成長", "三率齊升", "技術突破", "量能")):
+        return await _cmd_nl_screener(t)
+
     # ── 句中包含 4 碼數字 → 嘗試查報價 ─────────────────────────────────────
     import re
     codes = re.findall(r'\b\d{4,6}\b', t)
@@ -279,7 +287,6 @@ async def _handle_text(text: str, uid: str) -> list:
         return await _cmd_quote(codes[0])
 
     # ── 其餘長句 → 丟給 AI ───────────────────────────────────────────────────
-    # 若文字夠長且像是問句，直接問 AI
     if len(t) >= 6 and _any_kw(t_lower, ("嗎", "怎", "如何", "分析", "解讀",
                                           "看法", "走勢", "展望", "值得", "要不要",
                                           "適合", "建議", "幫我", "告訴我")):
@@ -677,6 +684,85 @@ async def _cmd_apply_rec(code: str, strategy: str, uid: str) -> list:
     )]
 
 
+async def _cmd_screener(preset_or_top: str = "top") -> list:
+    """選股引擎 — 顯示前 10 高分股票或 preset"""
+    try:
+        from backend.services.screener_engine import get_top_scores, PRESETS, run_screener
+        if preset_or_top in PRESETS:
+            results = await run_screener(PRESETS[preset_or_top])
+        else:
+            results = await get_top_scores(limit=10)
+
+        if not results:
+            return [_text(
+                "📊 選股結果暫無資料\n\n"
+                "原因：每日 18:30 自動更新評分\n"
+                "可先手動觸發：請至 Web 界面 → 排行榜 → 拍績效快照",
+                qr_items(("💼 庫存", "/portfolio"), ("📊 大盤", "/market"))
+            )]
+
+        lines = ["🎯 多維度選股結果\n" + "─" * 20]
+        for i, r in enumerate(results[:8], 1):
+            ma  = "✓" if r.get("ma_aligned") else "✗"
+            kd  = "✓" if r.get("kd_golden_cross") else "✗"
+            vol = "✓" if r.get("vol_breakout") else "✗"
+            lines.append(
+                f"{i}. {r['stock_code']} {r['stock_name']}\n"
+                f"   總分:{r['total_score']:.0f} "
+                f"基:{r['fundamental_score']:.0f} "
+                f"籌:{r['chip_score']:.0f} "
+                f"技:{r['technical_score']:.0f}\n"
+                f"   均線{ma} KD{kd} 量能{vol}"
+            )
+
+        return [_text(
+            "\n".join(lines),
+            qr_items(
+                ("🔍 基本面強", "/screener strong_fundamental"),
+                ("🏦 法人偏愛", "/screener institutional_favorite"),
+                ("📈 技術突破", "/screener technical_breakout"),
+                ("💼 庫存", "/portfolio"),
+            )
+        )]
+    except Exception as e:
+        return [_text(f"❌ 選股失敗：{e}")]
+
+
+async def _cmd_nl_screener(query: str) -> list:
+    """自然語言選股"""
+    try:
+        from backend.services.nl_query_parser import execute_nl_query
+        result = await execute_nl_query(query)
+        results = result.get("results", [])
+        criteria = result.get("filter_description", "")
+        ai_summary = result.get("ai_summary", "")
+
+        if not results:
+            return [_text(
+                f"🔍 「{query[:30]}」\n\n"
+                f"條件：{criteria}\n"
+                "找不到符合條件的股票。\n"
+                "（評分資料每日 18:30 更新）",
+                _home_qr()
+            )]
+
+        lines = [f"🔍 自然語言選股\n條件：{criteria}\n" + "─" * 22]
+        for i, r in enumerate(results[:6], 1):
+            lines.append(
+                f"{i}. {r['stock_code']} {r['stock_name']}\n"
+                f"   總分:{r['total_score']:.0f} 信心:{r.get('confidence', 0):.0f}"
+            )
+            if r.get("ai_reason"):
+                lines.append(f"   💡 {r['ai_reason'][:40]}")
+
+        if ai_summary:
+            lines.append(f"\n🤖 {ai_summary[:150]}")
+
+        return [_text("\n".join(lines), _home_qr())]
+    except Exception as e:
+        return [_text(f"❌ 選股失敗：{e}")]
+
+
 async def _cmd_subscribe(uid: str) -> TextMessage:
     from sqlalchemy import select
     try:
@@ -763,17 +849,20 @@ def _help_text() -> str:
     return (
         "📋 指令說明\n"
         "─────────────\n"
-        "輸入 4 碼代碼  即時報價\n"
-        "/portfolio     我的庫存（互動卡片）\n"
+        "輸入 4 碼代碼   即時報價\n"
+        "「庫存」        查我的持股\n"
+        "「大盤」        大盤指數\n"
+        "「早報」        今日早報\n"
+        "/portfolio      我的庫存\n"
         "/buy 代碼 股數 成本\n"
-        "/setcost ID 新成本\n"
+        "/sell 代碼 股數 價格\n"
         "/alert 代碼 類型 數值\n"
-        "/rec           策略推薦（含回測）\n"
-        "/ai_portfolio  AI庫存分析\n"
-        "/morning       今日早報\n"
-        "/week          本週週報\n"
-        "/pe /dividend /margin\n"
-        "/subscribe     訂閱自動推播"
+        "/rec            策略推薦\n"
+        "/screener       多維度選股\n"
+        "/find 條件      自然語言選股\n"
+        "  例：/find 找外資連買法人大買\n"
+        "/ai_portfolio   AI庫存分析\n"
+        "/morning  /week /subscribe"
     )
 
 

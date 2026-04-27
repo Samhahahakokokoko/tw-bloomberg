@@ -10,6 +10,7 @@ class Settings(BaseSettings):
     anthropic_api_key: str = ""
     line_channel_access_token: str = ""
     line_channel_secret: str = ""
+    finmind_token: str = ""   # FinMind API token（免費版可留空）
 
     class Config:
         env_file = ".env"
@@ -60,6 +61,11 @@ _SQLITE_MIGRATIONS = [
     "CREATE INDEX IF NOT EXISTS ix_perf_user_date     ON performance_records(user_id, record_date)",
     "CREATE INDEX IF NOT EXISTS ix_earnings_user      ON earnings_reminders(user_id)",
     "CREATE INDEX IF NOT EXISTS ix_earnings_code      ON earnings_reminders(stock_code)",
+    "CREATE INDEX IF NOT EXISTS ix_fin_code_yq        ON stock_financials(stock_code, year, quarter)",
+    "CREATE INDEX IF NOT EXISTS ix_rev_code_ym        ON monthly_revenue(stock_code, year, month)",
+    "CREATE INDEX IF NOT EXISTS ix_scores_date        ON stock_scores(score_date)",
+    "CREATE INDEX IF NOT EXISTS ix_scores_total       ON stock_scores(total_score)",
+    "CREATE INDEX IF NOT EXISTS ix_industry_sent_date ON industry_sentiment(analysis_date)",
 ]
 
 _PG_MIGRATIONS = [
@@ -77,6 +83,11 @@ _PG_MIGRATIONS = [
     "CREATE INDEX IF NOT EXISTS ix_perf_user_date     ON performance_records(user_id, record_date)",
     "CREATE INDEX IF NOT EXISTS ix_earnings_user      ON earnings_reminders(user_id)",
     "CREATE INDEX IF NOT EXISTS ix_earnings_code      ON earnings_reminders(stock_code)",
+    "CREATE INDEX IF NOT EXISTS ix_fin_code_yq        ON stock_financials(stock_code, year, quarter)",
+    "CREATE INDEX IF NOT EXISTS ix_rev_code_ym        ON monthly_revenue(stock_code, year, month)",
+    "CREATE INDEX IF NOT EXISTS ix_scores_date        ON stock_scores(score_date)",
+    "CREATE INDEX IF NOT EXISTS ix_scores_total       ON stock_scores(total_score)",
+    "CREATE INDEX IF NOT EXISTS ix_industry_sent_date ON industry_sentiment(analysis_date)",
 ]
 
 

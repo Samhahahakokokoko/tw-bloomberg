@@ -242,3 +242,97 @@ class EarningsReminder(Base):
     actual_eps = Column(Float)
     expected_eps = Column(Float)
     created_at = Column(DateTime, default=datetime.utcnow)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 升級架構 v2 — FinMind 數據 + 多維度選股引擎
+# ══════════════════════════════════════════════════════════════════════════════
+
+class StockFinancials(Base):
+    """季度財務報表 — 來源 FinMind TaiwanFinancialStatements"""
+    __tablename__ = "stock_financials"
+    __table_args__ = (UniqueConstraint("stock_code", "year", "quarter"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    stock_code     = Column(String(10), index=True, nullable=False)
+    stock_name     = Column(String(50))
+    year           = Column(Integer, nullable=False)
+    quarter        = Column(Integer, nullable=False)        # 1-4
+    revenue        = Column(Float)                          # 營收（千元）
+    gross_profit   = Column(Float)                          # 毛利
+    operating_income = Column(Float)                        # 營業利益
+    net_income     = Column(Float)                          # 淨利
+    eps            = Column(Float)                          # 每股盈餘
+    gross_margin   = Column(Float)                          # 毛利率 %
+    operating_margin = Column(Float)                        # 營益率 %
+    net_margin     = Column(Float)                          # 淨利率 %
+    is_anomaly     = Column(Boolean, default=False)         # 異常資料標記
+    updated_at     = Column(DateTime, default=datetime.utcnow)
+
+
+class MonthlyRevenue(Base):
+    """月營收 — 來源 FinMind TaiwanStockMonthRevenue"""
+    __tablename__ = "monthly_revenue"
+    __table_args__ = (UniqueConstraint("stock_code", "year", "month"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    stock_code     = Column(String(10), index=True, nullable=False)
+    stock_name     = Column(String(50))
+    year           = Column(Integer, nullable=False)
+    month          = Column(Integer, nullable=False)
+    revenue        = Column(Float)                          # 當月營收（千元）
+    revenue_mom    = Column(Float)                          # 月增率 %
+    revenue_yoy    = Column(Float)                          # 年增率 %
+    cum_revenue    = Column(Float)                          # 累計營收
+    cum_revenue_yoy = Column(Float)                         # 累計年增率 %
+    updated_at     = Column(DateTime, default=datetime.utcnow)
+
+
+class StockScore(Base):
+    """三維度評分快照 — Agent B 每日計算"""
+    __tablename__ = "stock_scores"
+    __table_args__ = (UniqueConstraint("stock_code", "score_date"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    stock_code        = Column(String(10), index=True, nullable=False)
+    stock_name        = Column(String(50))
+    score_date        = Column(String(10), nullable=False)   # YYYY-MM-DD
+    # 三維度評分（各 0-100）
+    fundamental_score = Column(Float, default=0)
+    chip_score        = Column(Float, default=0)
+    technical_score   = Column(Float, default=0)
+    total_score       = Column(Float, default=0)             # 加權總分
+    # 明細指標（供前端雷達圖）
+    revenue_yoy       = Column(Float)                        # 最新月營收 YoY %
+    gross_margin      = Column(Float)                        # 最新毛利率 %
+    three_margins_up  = Column(Boolean, default=False)       # 三率齊升
+    eps_growth_qtrs   = Column(Integer, default=0)           # 連續 EPS 成長季數
+    foreign_consec_buy = Column(Integer, default=0)          # 外資連續買超日
+    trust_consec_buy  = Column(Integer, default=0)           # 投信連續買超日
+    ma_aligned        = Column(Boolean, default=False)       # 均線多頭排列
+    kd_golden_cross   = Column(Boolean, default=False)       # KD 黃金交叉
+    vol_breakout      = Column(Boolean, default=False)       # 量能突破
+    bb_breakout       = Column(Boolean, default=False)       # 布林上軌突破
+    # AI 推薦
+    confidence        = Column(Float, default=0)             # 信心指數 0-100
+    ai_reason         = Column(Text)                         # AI 推薦理由
+    updated_at        = Column(DateTime, default=datetime.utcnow)
+
+
+class IndustrySentiment(Base):
+    """產業情緒分析快照"""
+    __tablename__ = "industry_sentiment"
+    __table_args__ = (UniqueConstraint("industry", "analysis_date"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    industry       = Column(String(50), index=True, nullable=False)
+    analysis_date  = Column(String(10), nullable=False)
+    bullish_score  = Column(Float, default=50)              # 偏多分數 0-100
+    bearish_score  = Column(Float, default=50)              # 偏空分數 0-100
+    net_sentiment  = Column(Float, default=0)               # bullish - bearish
+    key_stocks     = Column(String(500))                    # 影響股票（逗號分隔）
+    bullish_factors = Column(Text)                          # 利多因素
+    bearish_factors = Column(Text)                          # 利空因素
+    ai_summary     = Column(Text)
+    news_count     = Column(Integer, default=0)
+    updated_at     = Column(DateTime, default=datetime.utcnow)

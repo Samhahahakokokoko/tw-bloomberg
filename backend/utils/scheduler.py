@@ -84,6 +84,34 @@ def start_scheduler() -> AsyncIOScheduler:
         id="watchlist_trigger", replace_existing=True,
     )
 
+    # Agent A — 數據員：每日 18:00 抓取並更新 FinMind 數據
+    scheduler.add_job(
+        _run_agent_a,
+        CronTrigger(day_of_week="mon-fri", hour=18, minute=0, timezone="Asia/Taipei"),
+        id="agent_a_pipeline", replace_existing=True,
+    )
+
+    # Agent B — 分析師：每日 18:30 計算三維度評分
+    scheduler.add_job(
+        _run_agent_b,
+        CronTrigger(day_of_week="mon-fri", hour=18, minute=30, timezone="Asia/Taipei"),
+        id="agent_b_scoring", replace_existing=True,
+    )
+
+    # Agent C — 決策員：每日 19:00 產生 AI 推薦理由
+    scheduler.add_job(
+        _run_agent_c,
+        CronTrigger(day_of_week="mon-fri", hour=19, minute=0, timezone="Asia/Taipei"),
+        id="agent_c_decision", replace_existing=True,
+    )
+
+    # 產業情緒分析 — 每日 20:00（新聞累積後分析）
+    scheduler.add_job(
+        _run_industry_sentiment,
+        CronTrigger(day_of_week="mon-fri", hour=20, minute=0, timezone="Asia/Taipei"),
+        id="industry_sentiment", replace_existing=True,
+    )
+
     scheduler.start()
     logger.info("Scheduler started (morning report 08:30 / weekly report Fri 14:30)")
     return scheduler
@@ -178,3 +206,35 @@ async def _check_watchlist_triggers():
         await check_watchlist_triggers()
     except Exception as e:
         logger.error(f"Watchlist trigger check failed: {e}")
+
+
+async def _run_agent_a():
+    try:
+        from ..services.data_pipeline import run_daily_pipeline
+        await run_daily_pipeline(trigger_scoring=False)
+    except Exception as e:
+        logger.error(f"Agent A (pipeline) failed: {e}")
+
+
+async def _run_agent_b():
+    try:
+        from ..services.score_updater import run_score_update
+        await run_score_update()
+    except Exception as e:
+        logger.error(f"Agent B (scoring) failed: {e}")
+
+
+async def _run_agent_c():
+    try:
+        from ..services.ai_decision_agent import run_ai_decision
+        await run_ai_decision()
+    except Exception as e:
+        logger.error(f"Agent C (decision) failed: {e}")
+
+
+async def _run_industry_sentiment():
+    try:
+        from ..services.industry_sentiment import run_all_industries
+        await run_all_industries()
+    except Exception as e:
+        logger.error(f"Industry sentiment failed: {e}")

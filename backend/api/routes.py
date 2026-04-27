@@ -557,3 +557,221 @@ async def unfollow_trader(payload: UnfollowRequest, db: AsyncSession = Depends(g
 async def get_following(follower_id: str = Query(""), db: AsyncSession = Depends(get_db)):
     from ..services.copy_trade_service import get_following
     return await get_following(db, follower_id)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# v2 升級 API
+# ══════════════════════════════════════════════════════════════════════════════
+
+# ── Screener — 多維度選股 ─────────────────────────────────────────────────────
+
+class ScreenerRequest(BaseModel):
+    preset:               Optional[str] = None
+    revenue_yoy_min:      Optional[float] = None
+    gross_margin_min:     Optional[float] = None
+    three_margins_up:     Optional[bool]  = None
+    eps_growth_qtrs_min:  Optional[int]   = None
+    foreign_consec_buy_min: Optional[int] = None
+    trust_consec_buy_min: Optional[int]   = None
+    dual_signal:          Optional[bool]  = None
+    ma_aligned:           Optional[bool]  = None
+    kd_golden_cross:      Optional[bool]  = None
+    vol_breakout:         Optional[bool]  = None
+    bb_breakout:          Optional[bool]  = None
+    fundamental_score_min: Optional[float] = None
+    chip_score_min:       Optional[float] = None
+    technical_score_min:  Optional[float] = None
+    total_score_min:      Optional[float] = None
+    sort_by:              str = "total_score"
+    limit:                int = 20
+
+
+class NLQueryRequest(BaseModel):
+    query: str
+
+
+@router.post("/screener")
+async def run_screener_api(payload: ScreenerRequest):
+    from ..services.screener_engine import run_screener, PRESETS, ScreenerFilter
+    if payload.preset and payload.preset in PRESETS:
+        f = PRESETS[payload.preset]
+    else:
+        f = ScreenerFilter(
+            revenue_yoy_min       = payload.revenue_yoy_min,
+            gross_margin_min      = payload.gross_margin_min,
+            three_margins_up      = payload.three_margins_up,
+            eps_growth_qtrs_min   = payload.eps_growth_qtrs_min,
+            foreign_consec_buy_min= payload.foreign_consec_buy_min,
+            trust_consec_buy_min  = payload.trust_consec_buy_min,
+            dual_signal           = payload.dual_signal,
+            ma_aligned            = payload.ma_aligned,
+            kd_golden_cross       = payload.kd_golden_cross,
+            vol_breakout          = payload.vol_breakout,
+            bb_breakout           = payload.bb_breakout,
+            fundamental_score_min = payload.fundamental_score_min,
+            chip_score_min        = payload.chip_score_min,
+            technical_score_min   = payload.technical_score_min,
+            total_score_min       = payload.total_score_min,
+            sort_by               = payload.sort_by,
+            limit                 = payload.limit,
+        )
+    results = await run_screener(f)
+    return {"results": results, "count": len(results)}
+
+
+@router.get("/screener/presets")
+async def list_presets():
+    from ..services.screener_engine import PRESETS
+    return {k: str(v) for k, v in PRESETS.items()}
+
+
+@router.get("/screener/top")
+async def top_scores(limit: int = Query(20, ge=1, le=100)):
+    from ..services.screener_engine import get_top_scores
+    return await get_top_scores(limit)
+
+
+@router.post("/screener/nl")
+async def nl_screener(payload: NLQueryRequest):
+    from ..services.nl_query_parser import execute_nl_query
+    return await execute_nl_query(payload.query)
+
+
+# ── Scores — 評分查詢 ─────────────────────────────────────────────────────────
+
+@router.get("/scores/{stock_code}")
+async def get_score(stock_code: str):
+    from ..services.screener_engine import get_stock_score
+    data = await get_stock_score(stock_code)
+    if not data:
+        raise HTTPException(404, f"No score data for {stock_code}")
+    return data
+
+
+# ── Financials — 財務報表 ──────────────────────────────────────────────────────
+
+@router.get("/financials/{stock_code}")
+async def get_financials(stock_code: str, limit: int = Query(8, ge=1, le=20)):
+    from sqlalchemy import select
+    from ..models.models import StockFinancials
+    async with AsyncSessionLocal() as db:
+        r = await db.execute(
+            select(StockFinancials)
+            .where(StockFinancials.stock_code == stock_code)
+            .order_by(StockFinancials.year.desc(), StockFinancials.quarter.desc())
+            .limit(limit)
+        )
+        rows = r.scalars().all()
+    if not rows:
+        # 嘗試從 FinMind 即時抓取
+        try:
+            from ..services.finmind_service import fetch_financials
+            data = await fetch_financials(stock_code)
+            return {"source": "finmind_live", "data": data[-limit:]}
+        except Exception:
+            raise HTTPException(404, f"No financial data for {stock_code}")
+    return {
+        "source": "cache",
+        "data": [
+            {
+                "year":             r.year,
+                "quarter":          r.quarter,
+                "revenue":          r.revenue,
+                "gross_margin":     r.gross_margin,
+                "operating_margin": r.operating_margin,
+                "net_margin":       r.net_margin,
+                "eps":              r.eps,
+            }
+            for r in reversed(rows)
+        ]
+    }
+
+
+# ── Revenue — 月營收 ──────────────────────────────────────────────────────────
+
+@router.get("/revenue/{stock_code}")
+async def get_revenue(stock_code: str, months: int = Query(13, ge=3, le=36)):
+    from sqlalchemy import select
+    from ..models.models import MonthlyRevenue
+    async with AsyncSessionLocal() as db:
+        r = await db.execute(
+            select(MonthlyRevenue)
+            .where(MonthlyRevenue.stock_code == stock_code)
+            .order_by(MonthlyRevenue.year.desc(), MonthlyRevenue.month.desc())
+            .limit(months)
+        )
+        rows = r.scalars().all()
+    if not rows:
+        try:
+            from ..services.finmind_service import fetch_monthly_revenue
+            data = await fetch_monthly_revenue(stock_code)
+            return {"source": "finmind_live", "data": data[-months:]}
+        except Exception:
+            raise HTTPException(404, f"No revenue data for {stock_code}")
+    return {
+        "source": "cache",
+        "data": [
+            {
+                "year":    r.year,
+                "month":   r.month,
+                "revenue": r.revenue,
+                "yoy":     r.revenue_yoy,
+                "mom":     r.revenue_mom,
+            }
+            for r in reversed(rows)
+        ]
+    }
+
+
+# ── Industry Sentiment ────────────────────────────────────────────────────────
+
+@router.get("/industry/sentiment")
+async def industry_sentiment():
+    from ..services.industry_sentiment import get_all_sentiments
+    return await get_all_sentiments()
+
+
+@router.get("/industry/sentiment/{industry}")
+async def single_industry_sentiment(industry: str):
+    from ..services.industry_sentiment import analyze_industry
+    return await analyze_industry(industry)
+
+
+@router.post("/industry/sentiment/refresh")
+async def refresh_industry_sentiment():
+    from ..services.industry_sentiment import run_all_industries
+    import asyncio
+    asyncio.create_task(run_all_industries())
+    return {"status": "started"}
+
+
+# ── Pipeline — 手動觸發 ───────────────────────────────────────────────────────
+
+@router.post("/pipeline/run")
+async def trigger_pipeline(stock_code: Optional[str] = Query(None)):
+    import asyncio
+    if stock_code:
+        from ..services.data_pipeline import update_single_stock
+        from ..services.score_updater import calc_and_save_score
+        from datetime import date
+        ok = await update_single_stock(stock_code, force=True)
+        today = date.today().strftime("%Y-%m-%d")
+        if ok:
+            await calc_and_save_score(stock_code, today)
+        return {"status": "ok" if ok else "failed", "stock_code": stock_code}
+    else:
+        asyncio.create_task(_run_full_pipeline())
+        return {"status": "started", "message": "全量更新已在背景啟動"}
+
+
+async def _run_full_pipeline():
+    from ..services.data_pipeline import run_daily_pipeline
+    await run_daily_pipeline(trigger_scoring=True)
+
+
+@router.post("/pipeline/score")
+async def trigger_scoring():
+    import asyncio
+    from ..services.score_updater import run_score_update
+    asyncio.create_task(run_score_update())
+    return {"status": "started"}

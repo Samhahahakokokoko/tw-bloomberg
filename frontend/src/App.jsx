@@ -3,6 +3,7 @@ import { Routes, Route, NavLink } from "react-router-dom";
 import {
   BarChart2, TrendingUp, BookOpen, Bell, Newspaper, Activity,
   Star, Cpu, Heart, Map, Trophy, Users, CalendarDays,
+  Filter, FileText,
 } from "lucide-react";
 import Dashboard       from "./pages/Dashboard";
 import Quote           from "./pages/Quote";
@@ -17,6 +18,8 @@ import Industry        from "./pages/Industry";
 import Performance     from "./pages/Performance";
 import CopyTrade       from "./pages/CopyTrade";
 import EarningsReminder from "./pages/EarningsReminder";
+import Screener         from "./pages/Screener";
+import Financials       from "./pages/Financials";
 
 const NAV = [
   { to: "/",           label: "DASHBOARD",  icon: Activity },
@@ -26,6 +29,8 @@ const NAV = [
   { to: "/chip",       label: "籌碼",        icon: Cpu },
   { to: "/health",     label: "健診",        icon: Heart },
   { to: "/industry",   label: "產業鏈",      icon: Map },
+  { to: "/screener",   label: "選股引擎",    icon: Filter },
+  { to: "/financials", label: "財務報表",    icon: FileText },
   { to: "/earnings",   label: "財報提醒",    icon: CalendarDays },
   { to: "/alerts",     label: "ALERTS",     icon: Bell },
   { to: "/news",       label: "NEWS",       icon: Newspaper },
@@ -85,6 +90,8 @@ export default function App() {
           <Route path="/news"        element={<News />} />
           <Route path="/performance" element={<Performance />} />
           <Route path="/copytrade"   element={<CopyTrade />} />
+          <Route path="/screener"    element={<Screener />} />
+          <Route path="/financials"  element={<Financials />} />
           <Route path="/earnings"    element={<EarningsReminder />} />
           <Route path="/backtest"    element={<Backtest />} />
         </Routes>

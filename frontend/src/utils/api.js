@@ -79,4 +79,26 @@ export const followTrader       = (data) => api.post("/api/copytrade/follow", da
 export const unfollowTrader     = (data) => api.post("/api/copytrade/unfollow", data).then(r => r.data);
 export const getFollowing       = (followerId = "") => api.get("/api/copytrade/following", { params: { follower_id: followerId } }).then(r => r.data);
 
+// ── Screener v2 ───────────────────────────────────────────────────────────────
+export const runScreener     = (data) => api.post("/api/screener", data).then(r => r.data);
+export const nlScreener      = (query) => api.post("/api/screener/nl", { query }).then(r => r.data);
+export const getScreenerTop  = (limit = 20) => api.get("/api/screener/top", { params: { limit } }).then(r => r.data);
+export const getScreenerPresets = () => api.get("/api/screener/presets").then(r => r.data);
+
+// ── Scores ────────────────────────────────────────────────────────────────────
+export const getStockScoreV2 = (code) => api.get(`/api/scores/${code}`).then(r => r.data);
+
+// ── Financials / Revenue ──────────────────────────────────────────────────────
+export const getFinancials   = (code, limit = 8) => api.get(`/api/financials/${code}`, { params: { limit } }).then(r => r.data);
+export const getRevenue      = (code, months = 13) => api.get(`/api/revenue/${code}`, { params: { months } }).then(r => r.data);
+
+// ── Industry Sentiment v2 ─────────────────────────────────────────────────────
+export const getIndustrySentiments = () => api.get("/api/industry/sentiment").then(r => r.data);
+export const getSingleIndustrySentiment = (industry) => api.get(`/api/industry/sentiment/${encodeURIComponent(industry)}`).then(r => r.data);
+export const refreshIndustrySentiment = () => api.post("/api/industry/sentiment/refresh").then(r => r.data);
+
+// ── Pipeline ──────────────────────────────────────────────────────────────────
+export const triggerPipeline = (code) => api.post("/api/pipeline/run", null, { params: code ? { stock_code: code } : {} }).then(r => r.data);
+export const triggerScoring  = () => api.post("/api/pipeline/score").then(r => r.data);
+
 export default api;
