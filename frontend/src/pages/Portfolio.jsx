@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { getPortfolio, addHolding, deleteHolding, aiPortfolioAnalysis } from "../utils/api";
+import api from "../utils/api";
 import Card from "../components/Card";
 import PriceTag from "../components/PriceTag";
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from "recharts";
@@ -12,6 +13,7 @@ export default function Portfolio() {
   const [loading, setLoading] = useState(false);
   const [aiAnalysis, setAiAnalysis] = useState("");
   const [aiLoading, setAiLoading] = useState(false);
+  const [fixMsg, setFixMsg] = useState("");
 
   const load = () => getPortfolio().then(setHoldings).catch(console.error);
   useEffect(() => { load(); }, []);
@@ -35,6 +37,22 @@ export default function Portfolio() {
   const handleDelete = async (id) => {
     await deleteHolding(id);
     load();
+  };
+
+  const handleFixNames = async () => {
+    setFixMsg("修正中...");
+    try {
+      const r = await api.post("/api/portfolio/fix-names").then(res => res.data);
+      if (r.fixed.length === 0) {
+        setFixMsg("✓ 所有股票名稱皆正確");
+      } else {
+        setFixMsg(`✓ 已修正 ${r.fixed.length} 檔：${r.fixed.map(f => `${f.code} ${f.old}→${f.new}`).join("、")}`);
+      }
+      load();
+    } catch (e) {
+      setFixMsg("修正失敗：" + e.message);
+    }
+    setTimeout(() => setFixMsg(""), 8000);
   };
 
   const handleAiAnalysis = async () => {
@@ -65,8 +83,15 @@ export default function Portfolio() {
         </div>
       </div>
 
-      {/* AI Analysis Button */}
-      <div className="flex justify-end">
+      {/* Action Buttons */}
+      <div className="flex justify-end gap-2">
+        <button
+          onClick={handleFixNames}
+          title="重新從 TWSE/TPEX 查詢所有持股名稱，修正錯誤的名稱（如 1815 顯示為其他公司）"
+          className="px-3 py-2 bg-terminal-yellow/10 border border-terminal-yellow text-terminal-yellow text-xs rounded hover:bg-terminal-yellow/20 transition-colors"
+        >
+          ⟳ 修正股票名稱
+        </button>
         <button
           onClick={handleAiAnalysis}
           disabled={aiLoading || holdings.length === 0}
@@ -75,6 +100,12 @@ export default function Portfolio() {
           {aiLoading ? "⟳ AI 分析中..." : "◈ AI 投資組合分析"}
         </button>
       </div>
+
+      {fixMsg && (
+        <div className="text-terminal-yellow text-xs px-3 py-2 bg-terminal-yellow/10 border border-terminal-yellow/30 rounded">
+          {fixMsg}
+        </div>
+      )}
 
       {/* AI Result */}
       {aiAnalysis && (

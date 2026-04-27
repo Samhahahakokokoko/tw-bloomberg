@@ -1,24 +1,27 @@
 import React, { useEffect, useState } from "react";
-import { getMarketOverview, getPortfolio, getNews } from "../utils/api";
+import { getMarketOverview, getPortfolio, getNews, getMarketAnomaly } from "../utils/api";
 import Card from "../components/Card";
 import PriceTag from "../components/PriceTag";
 
 export default function Dashboard() {
-  const [market, setMarket] = useState(null);
+  const [market, setMarket]   = useState(null);
   const [portfolio, setPortfolio] = useState([]);
-  const [news, setNews] = useState([]);
-  const [time, setTime] = useState(new Date());
+  const [news, setNews]       = useState([]);
+  const [anomaly, setAnomaly] = useState(null);
+  const [time, setTime]       = useState(new Date());
 
   useEffect(() => {
     const load = async () => {
-      const [m, p, n] = await Promise.allSettled([
+      const [m, p, n, a] = await Promise.allSettled([
         getMarketOverview(),
         getPortfolio(),
         getNews({ limit: 6 }),
+        getMarketAnomaly(),
       ]);
       if (m.status === "fulfilled") setMarket(m.value);
       if (p.status === "fulfilled") setPortfolio(p.value);
       if (n.status === "fulfilled") setNews(n.value);
+      if (a.status === "fulfilled") setAnomaly(a.value);
     };
     load();
     const tick = setInterval(() => setTime(new Date()), 1000);
@@ -36,6 +39,19 @@ export default function Dashboard() {
         <h1 className="text-terminal-accent text-lg font-bold tracking-widest">◈ MARKET DASHBOARD</h1>
         <div className="text-terminal-muted text-xs font-mono">{time.toLocaleString("zh-TW")}</div>
       </div>
+
+      {/* 大盤異常警報 */}
+      {anomaly?.has_anomaly && (
+        <div className={`px-4 py-3 rounded border text-sm font-bold tracking-wide ${
+          anomaly.level === "critical"
+            ? "bg-terminal-red/20 border-terminal-red text-terminal-red"
+            : anomaly.level === "warning"
+            ? "bg-terminal-red/10 border-terminal-red/60 text-terminal-red"
+            : "bg-terminal-green/10 border-terminal-green/60 text-terminal-green"
+        }`}>
+          {anomaly.message}
+        </div>
+      )}
 
       {/* Market Overview */}
       <div className="grid grid-cols-3 gap-3">

@@ -49,6 +49,27 @@ def start_scheduler() -> AsyncIOScheduler:
         id="monthly_report", replace_existing=True,
     )
 
+    # 大盤異常偵測 — 交易時段每 5 分鐘
+    scheduler.add_job(
+        _check_market_anomaly,
+        CronTrigger(day_of_week="mon-fri", hour="9-13", minute="*/5", timezone="Asia/Taipei"),
+        id="market_anomaly", replace_existing=True,
+    )
+
+    # 績效快照 — 週一到週五 14:00
+    scheduler.add_job(
+        _snapshot_performance,
+        CronTrigger(day_of_week="mon-fri", hour=14, minute=0, timezone="Asia/Taipei"),
+        id="perf_snapshot", replace_existing=True,
+    )
+
+    # 每週選股推播 — 週五 15:00
+    scheduler.add_job(
+        _push_weekly_picks,
+        CronTrigger(day_of_week="fri", hour=15, minute=0, timezone="Asia/Taipei"),
+        id="weekly_picks", replace_existing=True,
+    )
+
     scheduler.start()
     logger.info("Scheduler started (morning report 08:30 / weekly report Fri 14:30)")
     return scheduler
@@ -101,3 +122,29 @@ async def _refresh_dividends():
         logger.info("Dividend data refreshed")
     except Exception as e:
         logger.error(f"Dividend refresh failed: {e}")
+
+
+async def _check_market_anomaly():
+    try:
+        from ..services.market_anomaly_service import check_market_anomaly, push_anomaly_alert
+        anomaly = await check_market_anomaly()
+        if anomaly and anomaly.get("has_anomaly"):
+            await push_anomaly_alert(anomaly)
+    except Exception as e:
+        logger.error(f"Market anomaly check failed: {e}")
+
+
+async def _snapshot_performance():
+    try:
+        from ..services.performance_service import snapshot_all_users
+        await snapshot_all_users()
+    except Exception as e:
+        logger.error(f"Performance snapshot failed: {e}")
+
+
+async def _push_weekly_picks():
+    try:
+        from ..services.stock_pick_service import push_weekly_picks
+        await push_weekly_picks()
+    except Exception as e:
+        logger.error(f"Weekly picks push failed: {e}")

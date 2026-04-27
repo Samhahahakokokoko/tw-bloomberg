@@ -163,3 +163,60 @@ class QueryHistory(Base):
     answer = Column(Text)
     topic_hash = Column(String(64), index=True)               # 問題摘要 hash
     created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class Watchlist(Base):
+    """自選股清單"""
+    __tablename__ = "watchlist"
+    __table_args__ = (UniqueConstraint("user_id", "stock_code"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(String(100), index=True, nullable=False, default="")
+    stock_code = Column(String(10), nullable=False, index=True)
+    stock_name = Column(String(50))
+    target_price = Column(Float)        # 目標價
+    stop_loss = Column(Float)           # 停損價
+    note = Column(String(500))
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class PerformanceRecord(Base):
+    """每日績效快照 — 用於排行榜"""
+    __tablename__ = "performance_records"
+    __table_args__ = (UniqueConstraint("user_id", "record_date"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(String(100), index=True, nullable=False)
+    record_date = Column(String(10), nullable=False)   # YYYY-MM-DD
+    total_mv = Column(Float, default=0)
+    total_cost = Column(Float, default=0)
+    total_pnl = Column(Float, default=0)
+    daily_return = Column(Float, default=0)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class CopyTradeRelation(Base):
+    """跟單關係 — follower 追蹤 leader 的持倉"""
+    __tablename__ = "copy_trade_relations"
+    __table_args__ = (UniqueConstraint("follower_id", "leader_id"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    follower_id = Column(String(100), index=True, nullable=False)
+    leader_id = Column(String(100), index=True, nullable=False)
+    is_active = Column(Boolean, default=True)
+    auto_copy = Column(Boolean, default=False)   # 是否自動跟單
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class SharedPortfolio(Base):
+    """公開分享的投資組合"""
+    __tablename__ = "shared_portfolios"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(String(100), unique=True, nullable=False, index=True)
+    share_code = Column(String(20), unique=True, nullable=False)
+    display_name = Column(String(100), default="匿名投資人")
+    description = Column(String(500))
+    is_public = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow)

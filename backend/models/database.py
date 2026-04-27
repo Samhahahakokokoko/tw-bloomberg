@@ -56,6 +56,8 @@ _SQLITE_MIGRATIONS = [
     "CREATE INDEX IF NOT EXISTS ix_alerts_user_id     ON alerts(user_id)",
     "CREATE INDEX IF NOT EXISTS ix_tradelog_user_date ON trade_log(user_id, trade_date)",
     "CREATE INDEX IF NOT EXISTS ix_qh_user_hash       ON query_history(user_id, topic_hash)",
+    "CREATE INDEX IF NOT EXISTS ix_watchlist_user     ON watchlist(user_id)",
+    "CREATE INDEX IF NOT EXISTS ix_perf_user_date     ON performance_records(user_id, record_date)",
 ]
 
 _PG_MIGRATIONS = [
@@ -70,6 +72,8 @@ _PG_MIGRATIONS = [
     "CREATE INDEX IF NOT EXISTS ix_alerts_user_id     ON alerts(user_id)",
     "CREATE INDEX IF NOT EXISTS ix_tradelog_user_date ON trade_log(user_id, trade_date)",
     "CREATE INDEX IF NOT EXISTS ix_qh_user_hash       ON query_history(user_id, topic_hash)",
+    "CREATE INDEX IF NOT EXISTS ix_watchlist_user     ON watchlist(user_id)",
+    "CREATE INDEX IF NOT EXISTS ix_perf_user_date     ON performance_records(user_id, record_date)",
 ]
 
 

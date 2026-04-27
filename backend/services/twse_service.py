@@ -26,8 +26,18 @@ async def fetch_twse_quote(stock_code: str) -> dict:
 
 
 async def fetch_realtime_quote(stock_code: str) -> dict:
-    """即時報價：先試 TWSE，再試 TPEX，最後 MIS（盤中）"""
-    # 1. TWSE 上市
+    """
+    即時報價查詢順序：
+    1. TWSE STOCK_DAY_ALL（上市收盤資料）
+    2. MIS tse_ 端點（上市盤中）← 在 TPEX 之前，避免同代號跨市場污染
+    3. TPEX mainboard（上櫃收盤）
+    4. MIS otc_ 端點（上櫃盤中）
+
+    背景：TWSE/TPEX 可能同時存在相同代號但不同公司（例如 1815 在 TWSE 是富喬，
+    在 TPEX 是另一家）。必須以上市交易所為優先，不能讓 TPEX fallback 覆蓋掉
+    找不到當日成交的上市股。
+    """
+    # 1. TWSE 上市收盤資料
     url = f"{TWSE_BASE}/exchangeReport/STOCK_DAY_ALL"
     try:
         async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
@@ -39,7 +49,14 @@ async def fetch_realtime_quote(stock_code: str) -> dict:
     except Exception as e:
         logger.error(f"TWSE quote error for {stock_code}: {e}")
 
-    # 2. TPEX 上櫃
+    # 2. MIS 上市盤中（tse 端點）— 先試上市，才能判斷此股是否為 TWSE 股票
+    #    即使當天停牌（price=0），只要有 msgArray 就說明它是上市股，直接 return，
+    #    不再往下查 TPEX 以免拿到同代號的上櫃公司名稱。
+    tse_result = await _fetch_twse_mi_single(stock_code, "tse")
+    if tse_result:
+        return tse_result
+
+    # 3. TPEX 上櫃收盤資料（只有在確定不是上市股時才查）
     url = f"{TPEX_BASE}/tpex_mainboard_daily_close_quotes"
     try:
         async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
@@ -51,34 +68,56 @@ async def fetch_realtime_quote(stock_code: str) -> dict:
     except Exception as e:
         logger.error(f"TPEX quote error for {stock_code}: {e}")
 
-    # 3. MIS 盤中即時（tse / otc 都試）
-    return await _fetch_twse_mi(stock_code)
+    # 4. MIS 上櫃盤中（otc 端點）
+    otc_result = await _fetch_twse_mi_single(stock_code, "otc")
+    if otc_result:
+        return otc_result
+
+    return {}
+
+
+async def _fetch_twse_mi_single(stock_code: str, market: str) -> dict:
+    """MIS 盤中即時 — 指定單一市場 (tse 或 otc)"""
+    url = f"https://mis.twse.com.tw/stock/api/getStockInfo.jsp?ex_ch={market}_{stock_code}.tw"
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.get(url)
+            data = resp.json()
+            msgs = data.get("msgArray", [])
+            if msgs:
+                item = msgs[0]
+                name = item.get("n", "")
+                # 確保 name 有值才算有效（避免空殼回應）
+                if not name:
+                    return {}
+                def _safe_float(v, default=0.0):
+                    try:
+                        return float(v)
+                    except (TypeError, ValueError):
+                        return default
+                return {
+                    "code":       stock_code,
+                    "name":       name,
+                    "price":      _safe_float(item.get("z")),
+                    "open":       _safe_float(item.get("o")),
+                    "high":       _safe_float(item.get("h")),
+                    "low":        _safe_float(item.get("l")),
+                    "volume":     int(item.get("v", 0) or 0),
+                    "change":     _safe_float(item.get("y")),
+                    "change_pct": _calc_change_pct(item.get("z"), item.get("y")),
+                    "timestamp":  datetime.now().isoformat(),
+                }
+    except Exception as e:
+        logger.error(f"MI fetch error ({market}_{stock_code}): {e}")
+    return {}
 
 
 async def _fetch_twse_mi(stock_code: str) -> dict:
-    """MIS 盤中即時：先試上市(tse)，再試上櫃(otc)"""
+    """MIS 盤中即時：先試上市(tse)，再試上櫃(otc)（保留給外部舊呼叫用）"""
     for market in ("tse", "otc"):
-        url = f"https://mis.twse.com.tw/stock/api/getStockInfo.jsp?ex_ch={market}_{stock_code}.tw"
-        try:
-            async with httpx.AsyncClient(timeout=15) as client:
-                resp = await client.get(url)
-                data = resp.json()
-                if data.get("msgArray"):
-                    item = data["msgArray"][0]
-                    return {
-                        "code": stock_code,
-                        "name": item.get("n", ""),
-                        "price": float(item.get("z", 0) or 0),
-                        "open": float(item.get("o", 0) or 0),
-                        "high": float(item.get("h", 0) or 0),
-                        "low": float(item.get("l", 0) or 0),
-                        "volume": int(item.get("v", 0) or 0),
-                        "change": float(item.get("y", 0) or 0),
-                        "change_pct": _calc_change_pct(item.get("z"), item.get("y")),
-                        "timestamp": datetime.now().isoformat(),
-                    }
-        except Exception as e:
-            logger.error(f"MI fetch error ({market}_{stock_code}): {e}")
+        result = await _fetch_twse_mi_single(stock_code, market)
+        if result:
+            return result
     return {}
 
 

@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
+from typing import Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 from ..models.database import get_db
 from ..models.models import Alert, NewsArticle, Subscriber
@@ -88,6 +89,27 @@ async def delete_holding(holding_id: int, db: AsyncSession = Depends(get_db)):
     if not ok:
         raise HTTPException(404, "Holding not found")
     return {"deleted": True}
+
+
+@router.post("/portfolio/fix-names")
+async def fix_portfolio_names(db: AsyncSession = Depends(get_db)):
+    """重新從 TWSE/TPEX 抓取所有持股名稱，修正錯誤的股票名稱"""
+    from ..models.models import Portfolio
+    result = await db.execute(select(Portfolio))
+    holdings = result.scalars().all()
+    fixed = []
+    for h in holdings:
+        try:
+            quote = await twse_service.fetch_realtime_quote(h.stock_code)
+            new_name = quote.get("name", "")
+            if new_name and new_name != h.stock_name:
+                old_name = h.stock_name
+                h.stock_name = new_name
+                fixed.append({"code": h.stock_code, "old": old_name, "new": new_name})
+        except Exception as e:
+            logger.error(f"Fix name error {h.stock_code}: {e}")
+    await db.commit()
+    return {"fixed": fixed, "total": len(fixed)}
 
 
 # ── Alerts ─────────────────────────────────────────────────────────────────────
@@ -308,3 +330,159 @@ async def trigger_weekly_report():
     from ..services.weekly_report import generate_weekly_report
     report = await generate_weekly_report()
     return {"report": report}
+
+
+# ── Watchlist ──────────────────────────────────────────────────────────────────
+
+class WatchlistCreate(BaseModel):
+    stock_code: str
+    stock_name: str = ""
+    target_price: Optional[float] = None
+    stop_loss: Optional[float] = None
+    note: str = ""
+    user_id: str = ""
+
+
+@router.get("/watchlist")
+async def get_watchlist(user_id: str = Query(""), db: AsyncSession = Depends(get_db)):
+    from ..services.watchlist_service import get_watchlist as _get
+    return await _get(db, user_id)
+
+
+@router.post("/watchlist", status_code=201)
+async def add_watchlist(payload: WatchlistCreate, db: AsyncSession = Depends(get_db)):
+    from ..services.watchlist_service import add_to_watchlist
+    return await add_to_watchlist(
+        db,
+        payload.user_id,
+        payload.stock_code,
+        payload.stock_name,
+        payload.target_price,
+        payload.stop_loss,
+        payload.note,
+    )
+
+
+@router.delete("/watchlist/{item_id}")
+async def delete_watchlist(item_id: int, user_id: str = Query(""), db: AsyncSession = Depends(get_db)):
+    from ..services.watchlist_service import remove_from_watchlist
+    ok = await remove_from_watchlist(db, item_id, user_id)
+    if not ok:
+        raise HTTPException(404, "Watchlist item not found")
+    return {"deleted": True}
+
+
+# ── Chip Tracker ───────────────────────────────────────────────────────────────
+
+@router.get("/chip/{stock_code}/history")
+async def get_chip_history(stock_code: str, days: int = Query(20, ge=5, le=60)):
+    from ..services.chip_service import fetch_chip_history
+    return await fetch_chip_history(stock_code, days)
+
+
+@router.get("/chip/{stock_code}/main-force-cost")
+async def get_main_force_cost(stock_code: str):
+    from ..services.chip_service import estimate_main_force_cost
+    return await estimate_main_force_cost(stock_code)
+
+
+# ── Stock Health ───────────────────────────────────────────────────────────────
+
+@router.get("/health/{stock_code}")
+async def stock_health(stock_code: str):
+    from ..services.health_service import check_stock_health
+    return await check_stock_health(stock_code)
+
+
+# ── Market Anomaly ──────────────────────────────────────────────────────────────
+
+@router.get("/market/anomaly")
+async def market_anomaly():
+    from ..services.market_anomaly_service import check_market_anomaly
+    return await check_market_anomaly()
+
+
+# ── Performance Leaderboard ─────────────────────────────────────────────────────
+
+@router.get("/performance/leaderboard")
+async def performance_leaderboard():
+    from ..services.performance_service import get_leaderboard
+    return await get_leaderboard()
+
+
+@router.get("/performance/history")
+async def performance_history(user_id: str = Query(""), days: int = Query(30, ge=7, le=90)):
+    from ..services.performance_service import get_performance_history
+    return await get_performance_history(user_id, days)
+
+
+@router.post("/performance/snapshot")
+async def trigger_snapshot():
+    from ..services.performance_service import snapshot_all_users
+    await snapshot_all_users()
+    return {"status": "ok"}
+
+
+# ── Weekly Stock Picks ──────────────────────────────────────────────────────────
+
+@router.get("/picks/weekly")
+async def weekly_stock_picks(top_n: int = Query(5, ge=3, le=10)):
+    from ..services.stock_pick_service import generate_weekly_picks
+    return await generate_weekly_picks(top_n)
+
+
+# ── Copy Trade ──────────────────────────────────────────────────────────────────
+
+class SharePortfolioRequest(BaseModel):
+    user_id: str
+    display_name: str = ""
+    description: str = ""
+
+
+class FollowRequest(BaseModel):
+    follower_id: str
+    share_code: str
+
+
+class UnfollowRequest(BaseModel):
+    follower_id: str
+    leader_id: str
+
+
+@router.post("/copytrade/publish")
+async def publish_portfolio(payload: SharePortfolioRequest, db: AsyncSession = Depends(get_db)):
+    from ..services.copy_trade_service import publish_portfolio as _publish
+    return await _publish(db, payload.user_id, payload.display_name, payload.description)
+
+
+@router.get("/copytrade/view/{share_code}")
+async def view_shared_portfolio(share_code: str, db: AsyncSession = Depends(get_db)):
+    from ..services.copy_trade_service import get_shared_portfolio
+    data = await get_shared_portfolio(db, share_code)
+    if not data:
+        raise HTTPException(404, "Share code not found or portfolio is private")
+    return data
+
+
+@router.post("/copytrade/follow")
+async def follow_trader(payload: FollowRequest, db: AsyncSession = Depends(get_db)):
+    from ..services.copy_trade_service import follow_trader as _follow
+    result = await _follow(db, payload.follower_id, payload.share_code)
+    if "error" in result:
+        raise HTTPException(400, result["error"])
+    return result
+
+
+@router.post("/copytrade/unfollow")
+async def unfollow_trader(payload: UnfollowRequest, db: AsyncSession = Depends(get_db)):
+    from ..services.copy_trade_service import unfollow_trader as _unfollow
+    ok = await _unfollow(db, payload.follower_id, payload.leader_id)
+    if not ok:
+        raise HTTPException(404, "Follow relation not found")
+    return {"unfollowed": True}
+
+
+@router.get("/copytrade/following")
+async def get_following(follower_id: str = Query(""), db: AsyncSession = Depends(get_db)):
+    from ..services.copy_trade_service import get_following
+    return await get_following(db, follower_id)
