@@ -248,6 +248,20 @@ async def _handle_text(text: str, uid: str) -> list:
     if cmd == "/var":                           return await _cmd_var(uid)
     if cmd == "/correlation":                   return await _cmd_correlation(uid)
 
+    # ── 量化策略 / 零股系統 新增指令 ──────────────────────────────────────
+    if cmd == "/recommend":
+        regime_arg = parts[1] if len(parts) > 1 else "unknown"
+        return await _cmd_recommend(regime_arg)
+    if cmd == "/odd" and len(parts) >= 2:
+        # /odd 5000 2330  或  /odd 5000（預設推薦組合）
+        budget_str = parts[1]
+        code_arg   = parts[2] if len(parts) > 2 else None
+        return await _cmd_odd(budget_str, code_arg, uid)
+    if cmd == "/compare" and len(parts) >= 3:
+        return await _cmd_compare(parts[1], parts[2])
+    if cmd == "/strategy" and len(parts) >= 2:
+        return await _cmd_strategy_analyze(parts[1])
+
     # ── 純數字 4-6 碼 → 直接查報價 ─────────────────────────────────────────
     t = text.strip()
     if t.isdigit() and 4 <= len(t) <= 6:
@@ -1141,3 +1155,199 @@ def _flex(alt_text: str, container: dict, quick_reply: dict = None) -> FlexMessa
         contents=container,
         quick_reply=_make_qr(quick_reply),
     )
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  量化策略 / 零股 / 比較 — 新增 LINE 指令
+# ═══════════════════════════════════════════════════════════════════
+
+async def _cmd_recommend(regime: str = "unknown") -> list:
+    """/recommend [盤態]  → 推薦高信心選股"""
+    try:
+        import httpx
+        base = f"http://localhost:{os.getenv('PORT', '8080')}/api/quant"
+        async with httpx.AsyncClient(timeout=8) as client:
+            resp = await client.get(
+                f"{base}/strategy/recommend",
+                params={"regime": regime, "min_confidence": 60, "limit": 5},
+            )
+            data = resp.json()
+    except Exception:
+        from quant.strategy_engine import StrategyEngine, MOCK_STOCKS
+        sigs = StrategyEngine().batch_evaluate(MOCK_STOCKS, regime=regime, min_confidence=60)
+        data = {"regime": regime, "signals": [s.to_dict() for s in sigs[:5]]}
+
+    regime_label = {
+        "bull": "多頭", "bear": "空頭",
+        "sideways": "盤整", "volatile": "高波動", "unknown": "未知",
+    }.get(data.get("regime", "unknown"), "未知")
+
+    lines = [f"市場狀態：{regime_label} 策略推薦\n"]
+    emoji_map = {"強力買進": "🔥", "買進": "▲", "觀察": "◆", "減碼": "▽", "賣出": "🔴"}
+    for s in data.get("signals", []):
+        e = emoji_map.get(s.get("action", ""), "")
+        lines.append(
+            f"{e} {s['stock_id']} {s.get('name', '?')} 信心{s.get('confidence', 0):.0f}\n"
+            f"  目標 {s.get('target_price', 0):.0f}  "
+            f"停損 {s.get('stop_loss', 0):.0f}  "
+            f"風險：{s.get('risk_level', '?')}"
+        )
+    qr = qr_items(
+        ("📊 市場狀態", "/market"),
+        ("🔍 選股器",   "/screener top"),
+        ("💡 AI 建議",  "/advice"),
+    )
+    return [_text("\n".join(lines), qr)]
+
+
+async def _cmd_odd(budget_str: str, code: str | None, uid: str) -> list:
+    """/odd {budget} [{code}]  → 零股計算"""
+    try:
+        budget = float(budget_str.replace(",", ""))
+    except ValueError:
+        return [_text("格式：/odd 5000 或 /odd 5000 0056")]
+
+    from quant.odd_lot_engine import OddLotEngine
+    engine = OddLotEngine(discount=0.6)
+
+    if code:
+        try:
+            quote = await fetch_realtime_quote(code)
+            price = float(quote.get("close") or quote.get("price") or 0)
+            name  = quote.get("name", code)
+        except Exception:
+            price = 0.0
+            name  = code
+        if price <= 0:
+            return [_text(f"無法取得 {code} 現價，請稍後再試")]
+        result = engine.calc(budget, price, code, name)
+        return [_text(result.to_line_text())]
+
+    # 未指定個股 → 從推薦清單分配
+    try:
+        from quant.strategy_engine import StrategyEngine, MOCK_STOCKS
+        top    = StrategyEngine().batch_evaluate(MOCK_STOCKS, min_confidence=55)[:3]
+        stocks = []
+        for sig in top:
+            try:
+                q = await fetch_realtime_quote(sig.stock_id)
+                p = float(q.get("close") or q.get("price") or 0)
+            except Exception:
+                p = 0.0
+            if p <= 0:
+                m = next((x for x in MOCK_STOCKS if x["stock_id"] == sig.stock_id), None)
+                p = m.get("close", 100) if m else 100.0
+            stocks.append({"stock_id": sig.stock_id, "name": sig.name,
+                           "price": p, "confidence": sig.confidence})
+        portfolio = engine.allocate(budget, stocks, strategy="signal")
+        return [_text(portfolio.to_line_text())]
+    except Exception as e:
+        logger.warning(f"[odd_lot] alloc failed: {e}")
+        return [_text(f"零股計算失敗，請用 /odd {budget:.0f} {{股票代號}}")]
+
+
+async def _cmd_compare(code_a: str, code_b: str) -> list:
+    """/compare {code_a} {code_b}  → 兩股策略比較"""
+    import numpy as np
+    from quant.strategy_engine import StrategyEngine, MOCK_STOCKS
+
+    def _data(code: str) -> dict:
+        for s in MOCK_STOCKS:
+            if s["stock_id"] == code:
+                return s
+        seed = sum(ord(c) for c in code)
+        rng  = np.random.default_rng(seed)
+        return {
+            "stock_id": code, "name": code,
+            "momentum_20d":       float(rng.uniform(0.95, 1.15)),
+            "foreign_buy_days":   int(rng.integers(-3, 7)),
+            "volume_ratio":       float(rng.uniform(0.8, 1.8)),
+            "dividend_yield":     float(rng.uniform(0, 7)),
+            "pe_ratio":           float(rng.uniform(8, 28)),
+            "eps_stability":      float(rng.uniform(0.4, 0.95)),
+            "foreign_net":        float(rng.uniform(-1000, 4000)),
+            "trust_net":          float(rng.uniform(-300, 800)),
+            "dealer_net":         float(rng.uniform(-100, 200)),
+            "chip_concentration": float(rng.uniform(45, 80)),
+            "volatility":         float(rng.uniform(0.008, 0.022)),
+            "max_drawdown":       float(rng.uniform(0.05, 0.20)),
+            "close":              float(rng.uniform(30, 1000)),
+            "atr14":              float(rng.uniform(0.5, 20)),
+        }
+
+    result = StrategyEngine().compare(_data(code_a), _data(code_b))
+    cmp    = result["compare"]
+    da     = result.get(code_a, {})
+    db_    = result.get(code_b, {})
+
+    lines = [
+        f"比較：{code_a} vs {code_b}\n",
+        f"{code_a} {da.get('name', code_a)}",
+        f"  信心：{da.get('confidence', 0):.0f}  "
+        f"建議：{da.get('action', '?')}  "
+        f"風險：{da.get('risk_level', '?')}",
+        f"  目標：{da.get('target_price', 0):.0f}  停損：{da.get('stop_loss', 0):.0f}",
+        "",
+        f"{code_b} {db_.get('name', code_b)}",
+        f"  信心：{db_.get('confidence', 0):.0f}  "
+        f"建議：{db_.get('action', '?')}  "
+        f"風險：{db_.get('risk_level', '?')}",
+        f"  目標：{db_.get('target_price', 0):.0f}  停損：{db_.get('stop_loss', 0):.0f}",
+        "",
+        f"信心較高：{cmp['higher_confidence']}",
+        f"風險較低：{cmp['lower_risk']}",
+        f"建議選擇：{cmp['recommend']}（{cmp['reason']}）",
+    ]
+    qr = qr_items(
+        (f"📋 {code_a} 策略", f"/strategy {code_a}"),
+        (f"📋 {code_b} 策略", f"/strategy {code_b}"),
+    )
+    return [_text("\n".join(lines), qr)]
+
+
+async def _cmd_strategy_analyze(code: str) -> list:
+    """/strategy {code}  → 個股完整策略評分"""
+    import numpy as np
+    from quant.strategy_engine import StrategyEngine, MOCK_STOCKS
+
+    data = next((s for s in MOCK_STOCKS if s["stock_id"] == code), None)
+    if not data:
+        seed = sum(ord(c) for c in code)
+        rng  = np.random.default_rng(seed)
+        data = {
+            "stock_id": code, "name": code,
+            "momentum_20d":       float(rng.uniform(0.95, 1.12)),
+            "foreign_buy_days":   int(rng.integers(-2, 6)),
+            "volume_ratio":       float(rng.uniform(0.8, 1.8)),
+            "dividend_yield":     float(rng.uniform(1, 6)),
+            "pe_ratio":           float(rng.uniform(10, 25)),
+            "eps_stability":      float(rng.uniform(0.5, 0.9)),
+            "foreign_net":        float(rng.uniform(-500, 3000)),
+            "trust_net":          float(rng.uniform(-200, 600)),
+            "dealer_net":         float(rng.uniform(-100, 200)),
+            "chip_concentration": float(rng.uniform(45, 75)),
+            "volatility":         float(rng.uniform(0.009, 0.020)),
+            "max_drawdown":       float(rng.uniform(0.05, 0.18)),
+            "close":              float(rng.uniform(50, 800)),
+            "atr14":              float(rng.uniform(1, 15)),
+        }
+
+    sig = StrategyEngine().evaluate(data, strategy="composite")
+    sc  = sig.to_dict()["scores"]
+    lines = [
+        f"策略分析：{code} {sig.name}",
+        f"建議：{sig.action.value}  信心：{sig.confidence:.0f}  風險：{sig.risk_level.value}",
+        f"目標：{sig.target_price:.0f}  停損：{sig.stop_loss:.0f}  持有：{sig.holding_days}日",
+        "",
+        "子分數：",
+        f"  動能：{sc['momentum']:.0f}  價值：{sc['value']:.0f}  籌碼：{sc['chip']:.0f}",
+        f"  複合：{sc['composite']:.0f}",
+        "",
+        f"理由：{'、'.join(sig.reasons[:4])}",
+    ]
+    qr = qr_items(
+        ("📈 報價",     f"/quote {code}"),
+        ("🔬 深度 AI",  f"/ai {code}"),
+        ("💹 零股試算", f"/odd 5000 {code}"),
+    )
+    return [_text("\n".join(lines), qr)]

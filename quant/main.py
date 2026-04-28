@@ -37,6 +37,10 @@ from .backtest_engine import BacktestEngine, BacktestReport
 from .risk_engine import RiskEngine, MarketRegime
 from .portfolio_engine import PortfolioEngine
 from .feedback_engine import FeedbackEngine, get_feedback_engine
+from .strategy_engine import StrategyEngine, MOCK_STOCKS as _MOCK_STOCKS
+from .confidence_engine import ConfidenceEngine
+from .odd_lot_engine import OddLotEngine
+from .signal_db import SignalDB, get_signal_db
 
 logger = logging.getLogger(__name__)
 
@@ -58,10 +62,13 @@ app.add_middleware(
 from fastapi import APIRouter
 router = APIRouter(prefix="/quant", tags=["quant"])
 
-# 全域共享的 RuleBasedAlpha（不需訓練，直接可用）
-_rule_alpha  = RuleBasedAlpha()
-_alpha_model = AlphaModel()          # LightGBM 版（若未訓練則降級至 rule）
-_risk_engine = RiskEngine()
+# 全域共享的引擎實例
+_rule_alpha      = RuleBasedAlpha()
+_alpha_model     = AlphaModel()          # LightGBM 版（若未訓練則降級至 rule）
+_risk_engine     = RiskEngine()
+_strategy_engine = StrategyEngine()
+_confidence_engine = ConfidenceEngine()
+_odd_lot_engine  = OddLotEngine(discount=0.6)
 
 
 # ── 工具函式 ─────────────────────────────────────────────────────────────────
@@ -485,6 +492,265 @@ async def _get_signal_brief(stock_code: str) -> dict:
         return {"signal": out.signal.value, "score": out.score}
     except Exception:
         return {"signal": "hold", "score": 50}
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  新端點：Strategy / OddLot / Compare / Recommend
+# ═══════════════════════════════════════════════════════════════════
+
+class StrategyAnalyzeRequest(BaseModel):
+    stock_id:   str
+    name:       str = ""
+    strategy:   str = Field("composite", pattern="^(composite|momentum|value|chip)$")
+    # 動能
+    momentum_20d:     float = 1.0
+    foreign_buy_days: int   = 0
+    volume_ratio:     float = 1.0
+    # 價值
+    dividend_yield:   float = 0.0
+    pe_ratio:         float = 20.0
+    eps_stability:    float = 0.5
+    # 籌碼
+    foreign_net:      float = 0.0
+    trust_net:        float = 0.0
+    dealer_net:       float = 0.0
+    chip_concentration: float = 50.0
+    # 風險 / 技術
+    volatility:   float = 0.015
+    max_drawdown: float = 0.10
+    close:        float = 100.0
+    ma20:         float = 0.0
+    ma60:         float = 0.0
+    atr14:        float = 0.0
+    macd_golden:  int   = 0
+    # 回測 / 模型（可選）
+    backtest_sharpe: Optional[float] = None
+    pred_ret:        Optional[float] = None
+
+
+class OddLotRequest(BaseModel):
+    budget:       float = Field(..., gt=0, description="可用預算（元）")
+    price:        float = Field(..., gt=0, description="股票現價")
+    stock_id:     str   = "????"
+    name:         str   = ""
+    target_price: Optional[float] = None
+    discount:     float = Field(0.6, ge=0.1, le=1.0, description="手續費折扣")
+
+
+class OddLotAllocateRequest(BaseModel):
+    budget:   float = Field(..., gt=0)
+    stocks:   list[dict]    # [{stock_id, name, price, weight?}]
+    strategy: str = Field("weight", pattern="^(weight|equal|signal)$")
+    discount: float = Field(0.6, ge=0.1, le=1.0)
+
+
+@router.post("/strategy/analyze", summary="單股策略分析")
+async def strategy_analyze(req: StrategyAnalyzeRequest):
+    """
+    輸入股票基本面 + 技術面數據，回傳完整策略評分與買賣建議。
+    """
+    # 偵測盤態（若有 K 線資料）
+    regime = "unknown"
+    try:
+        df = await _fetch_kline(req.stock_id)
+        if len(df) >= 20:
+            feat_df = _build_features(df)
+            regime_result = _risk_engine.detect_regime(feat_df)
+            regime = regime_result.regime.value
+            # 補充技術指標（若未傳入）
+            last = feat_df.iloc[-1]
+            if req.close <= 0:
+                req.close = float(last.get("close", req.close))
+    except Exception:
+        pass
+
+    data = req.model_dump()
+    data["stock_id"] = req.stock_id
+    data["name"]     = req.name or req.stock_id
+
+    sig = _strategy_engine.evaluate(data, strategy=req.strategy, regime=regime)
+
+    # 信心指數（整合多源）
+    breakdown = _confidence_engine.from_strategy_signal(sig, pred_ret=req.pred_ret)
+    sig_dict  = sig.to_dict()
+    sig_dict["confidence"] = breakdown.total
+    sig_dict["confidence_breakdown"] = breakdown.to_dict()
+    sig_dict["regime"] = regime
+
+    # 儲存到 SignalDB（非同步，不阻塞）
+    asyncio.create_task(_save_signal_task(sig, regime))
+    return sig_dict
+
+
+@router.get("/strategy/recommend", summary="市場推薦選股")
+async def strategy_recommend(
+    regime:         str   = "unknown",
+    strategy:       str   = "composite",
+    min_confidence: float = 60.0,
+    limit:          int   = 10,
+):
+    """
+    從 mock 股票池（或 DB 最新訊號）選出高信心標的，格式化為推薦列表。
+    實際部署時，stock_pool 來自 signal_db 的 strategy_signals 表。
+    """
+    # 嘗試從 DB 拿今日訊號
+    signals = []
+    try:
+        sdb = get_signal_db()
+        signals = await sdb.get_latest_signals(
+            strategy=strategy,
+            min_confidence=min_confidence,
+            limit=limit,
+        )
+    except Exception:
+        pass
+
+    # fallback：用 MOCK_STOCKS 即時計算
+    if not signals:
+        batch = _strategy_engine.batch_evaluate(
+            _MOCK_STOCKS,
+            strategy=strategy,
+            regime=regime,
+            min_confidence=min_confidence,
+        )
+        signals = [s.to_dict() for s in batch[:limit]]
+
+    # 市場狀態說明
+    regime_labels = {
+        "bull": "多頭趨勢", "bear": "空頭趨勢",
+        "sideways": "盤整", "volatile": "高波動", "unknown": "未知",
+    }
+    return {
+        "regime":        regime,
+        "regime_label":  regime_labels.get(regime, "未知"),
+        "strategy":      strategy,
+        "min_confidence":min_confidence,
+        "count":         len(signals),
+        "signals":       signals,
+    }
+
+
+@router.get("/strategy/compare/{code_a}/{code_b}", summary="比較兩股")
+async def strategy_compare(
+    code_a: str,
+    code_b: str,
+    regime: str = "unknown",
+):
+    """
+    比較兩檔股票的策略評分，輸出哪個信心較高、風險較低、建議選擇。
+    若在 MOCK_STOCKS 找不到，以 code 的 hash 產生 mock 資料。
+    """
+    def _find_or_mock(code: str) -> dict:
+        for s in _MOCK_STOCKS:
+            if s["stock_id"] == code:
+                return s
+        # 根據 code 生成 deterministic mock
+        seed = sum(ord(c) for c in code)
+        rng  = np.random.default_rng(seed)
+        return {
+            "stock_id": code, "name": code,
+            "momentum_20d":     float(rng.uniform(0.95, 1.15)),
+            "foreign_buy_days": int(rng.integers(-5, 8)),
+            "volume_ratio":     float(rng.uniform(0.7, 2.0)),
+            "dividend_yield":   float(rng.uniform(0, 8)),
+            "pe_ratio":         float(rng.uniform(8, 30)),
+            "eps_stability":    float(rng.uniform(0.3, 0.95)),
+            "foreign_net":      float(rng.uniform(-2000, 5000)),
+            "trust_net":        float(rng.uniform(-500, 1000)),
+            "dealer_net":       float(rng.uniform(-200, 300)),
+            "chip_concentration": float(rng.uniform(40, 85)),
+            "volatility":       float(rng.uniform(0.007, 0.025)),
+            "max_drawdown":     float(rng.uniform(0.03, 0.25)),
+            "close":            float(rng.uniform(30, 1200)),
+            "atr14":            float(rng.uniform(0.5, 30)),
+        }
+
+    data_a = _find_or_mock(code_a)
+    data_b = _find_or_mock(code_b)
+
+    result = _strategy_engine.compare(data_a, data_b, regime=regime)
+    return result
+
+
+@router.post("/odd_lot/calc", summary="零股計算")
+async def odd_lot_calc(req: OddLotRequest):
+    """
+    計算指定預算可買幾股零股，含手續費、損益兩平、最小獲利幅度。
+    """
+    engine = OddLotEngine(discount=req.discount)
+    try:
+        result = engine.calc(
+            budget=req.budget,
+            price=req.price,
+            stock_id=req.stock_id,
+            name=req.name,
+            target_price=req.target_price,
+        )
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+    return result.to_dict()
+
+
+@router.post("/odd_lot/allocate", summary="零股預算分配")
+async def odd_lot_allocate(req: OddLotAllocateRequest):
+    """
+    將預算分配到多檔零股，回傳組合建議（含各股股數與手續費）。
+    """
+    engine = OddLotEngine(discount=req.discount)
+    try:
+        portfolio = engine.allocate(req.budget, req.stocks, strategy=req.strategy)
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+    return {
+        "total_budget": portfolio.total_budget,
+        "total_cost":   portfolio.total_cost,
+        "total_fee":    portfolio.total_fee,
+        "remaining":    portfolio.remaining,
+        "allocations":  portfolio.allocations,
+    }
+
+
+@router.get("/strategy/screener", summary="多條件選股")
+async def strategy_screener(
+    action:     Optional[str]   = None,   # 強力買進/買進/觀察
+    risk_level: Optional[str]   = None,   # 低/中/高
+    strategy:   str             = "composite",
+    min_confidence: float       = 50.0,
+    limit:      int             = 20,
+):
+    """
+    從 mock 股票池篩選符合條件的標的（生產環境改成從 strategy_signals 表查詢）。
+    """
+    results = _strategy_engine.batch_evaluate(_MOCK_STOCKS, strategy=strategy, min_confidence=min_confidence)
+    if action:
+        results = [s for s in results if s.action.value == action]
+    if risk_level:
+        results = [s for s in results if s.risk_level.value == risk_level]
+    return {
+        "count":   len(results[:limit]),
+        "signals": [s.to_dict() for s in results[:limit]],
+    }
+
+
+# ── 工具函式 ─────────────────────────────────────────────────────────────────
+
+async def _save_signal_task(signal, regime: str) -> None:
+    """背景任務：儲存策略訊號到 signal_db"""
+    try:
+        sdb = get_signal_db()
+        await sdb.save_signal(signal, regime=regime)
+        # 高信心自動觸發警報
+        if signal.confidence >= 80:
+            await sdb.log_alert(
+                stock_id=signal.stock_id,
+                alert_type="signal_high",
+                message=f"{signal.name} {signal.action.value}（信心{signal.confidence:.0f}）",
+                name=signal.name,
+                confidence=signal.confidence,
+                action=signal.action.value,
+            )
+    except Exception as e:
+        logger.debug(f"[quant] signal_db 儲存略過: {e}")
 
 
 async def _save_feedback_task(
