@@ -1,4 +1,5 @@
 """LINE Bot Webhook — 多用戶 · Flex · Quick Reply · Postback · 策略推薦"""
+import re
 import sys, os, urllib.parse
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -245,8 +246,13 @@ async def _handle_text(text: str, uid: str) -> list:
     if cmd == "/accuracy":                      return await _cmd_accuracy()
     if cmd == "/advice":                        return await _cmd_daily_advice()
     if cmd == "/broker"   and len(parts) >= 2:  return await _cmd_broker(parts[1])
-    if cmd == "/track"    and len(parts) >= 2:  return await _cmd_track(" ".join(parts[1:]))
     if cmd == "/smart":                         return await _cmd_smart_money()
+    # [FIX] /track 依參數型態分派：4~6 碼純數字 → 股票歷史；否則 → 分點追蹤
+    if cmd == "/track" and len(parts) >= 2:
+        arg = parts[1]
+        if re.match(r"^\d{4,6}[A-Z]?$", arg.upper()):
+            return await _cmd_track_history(arg)
+        return await _cmd_track(" ".join(parts[1:]))
     if cmd == "/optimize":                      return await _cmd_optimize(uid)
     if cmd == "/var":                           return await _cmd_var(uid)
     if cmd == "/correlation":                   return await _cmd_correlation(uid)
@@ -1334,15 +1340,20 @@ async def _report_bg(
     screen_type: str, sector: str, uid: str,
     page: int = 1, cached_rows=None,
 ) -> None:
-    """背景：篩選 → 分頁 → 產生圖 → 推送"""
+    """背景：篩選 → real-time 補充 → 分頁 → 產生圖 → 推送"""
     import httpx
-    from backend.services.report_screener import run_screener, paginate, get_label
+    from backend.services.report_screener import run_screener, paginate, get_label, enrich_with_realtime
     from backend.services.generate_report_image import generate_report_image
     from backend.services.report_tracker import batch_record
 
     try:
         if cached_rows is None:
             rows = run_screener(screen_type, sector=sector)
+            # [FIX-1] 用 TWSE 真實收盤/量/法人覆蓋靜態假資料
+            try:
+                rows = await enrich_with_realtime(rows)
+            except Exception as e:
+                logger.warning(f"[report_bg] enrich failed (using pool data): {e}")
         else:
             rows = cached_rows
 
@@ -1412,11 +1423,12 @@ async def _cmd_custom_screen(conditions: str, uid: str) -> list:
 
 async def _custom_bg(conditions: str, uid: str) -> None:
     import httpx
-    from backend.services.report_screener import custom_screener
+    from backend.services.report_screener import custom_screener, enrich_with_realtime
     from backend.services.generate_report_image import generate_report_image
 
     try:
         rows = await custom_screener(conditions, api_key=settings.anthropic_api_key)
+        rows = await enrich_with_realtime(rows)
         path = generate_report_image(stocks=rows, group=f"自訂：{conditions[:20]}",
                                      market_state=os.getenv("MARKET_STATE", "unknown"))
         base_url = os.getenv("BASE_URL", "")
@@ -1476,11 +1488,12 @@ async def _cmd_myfav_report(uid: str) -> list:
 
 async def _myfav_bg(stock_ids: list[str], uid: str) -> None:
     import httpx
-    from backend.services.report_screener import favorites_screener
+    from backend.services.report_screener import favorites_screener, enrich_with_realtime
     from backend.services.generate_report_image import generate_report_image
 
     try:
         rows = favorites_screener(stock_ids)
+        rows = await enrich_with_realtime(rows)
         path = generate_report_image(stocks=rows, group="我的最愛",
                                      market_state=os.getenv("MARKET_STATE", "unknown"))
         base_url = os.getenv("BASE_URL", "")
@@ -1510,11 +1523,14 @@ async def _cmd_compare_image(codes: list[str], uid: str) -> list:
 
 async def _compare_bg(codes: list[str], uid: str) -> None:
     import httpx
-    from backend.services.report_screener import favorites_screener
+    from backend.services.report_screener import favorites_screener, enrich_with_realtime, unify_ticker_format
     from backend.services.generate_report_image import generate_comparison_image
 
     try:
-        rows = favorites_screener(codes)[:3]
+        clean_codes = [unify_ticker_format(c) for c in codes[:3]]
+        rows = favorites_screener(clean_codes)
+        rows = await enrich_with_realtime(rows)
+        rows = rows[:3]
         path = generate_comparison_image(rows)
         base_url = os.getenv("BASE_URL", "")
         if base_url:
