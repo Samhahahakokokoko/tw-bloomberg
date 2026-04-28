@@ -40,6 +40,9 @@ router = APIRouter()
 configuration = Configuration(access_token=settings.line_channel_access_token)
 parser = WebhookParser(settings.line_channel_secret)
 
+# ── 分頁快取（uid → {rows, total_pages, page, group, screen_type}）─────────
+_report_pages: dict[str, dict] = {}
+
 
 # ── Webhook 入口 ───────────────────────────────────────────────────────────────
 
@@ -248,10 +251,32 @@ async def _handle_text(text: str, uid: str) -> list:
     if cmd == "/var":                           return await _cmd_var(uid)
     if cmd == "/correlation":                   return await _cmd_correlation(uid)
 
-    # ── 族群連動選股表 ────────────────────────────────────────────────────
+    # ── 選股系統 ──────────────────────────────────────────────────────────
+    if cmd == "/screen":
+        return [_flex_screen_menu()]
     if cmd == "/report":
-        group = " ".join(parts[1:]) if len(parts) > 1 else "族群連動"
-        return await _cmd_report(group, uid)
+        sub = parts[1].lower() if len(parts) > 1 else "all"
+        # 分頁指令
+        if sub == "next":
+            return await _cmd_report_page(uid, delta=+1)
+        if sub == "page" and len(parts) >= 3:
+            try:    return await _cmd_report_page(uid, go_to=int(parts[2]))
+            except: return [_text("格式：/report page 2")]
+        # 族群指定
+        sector_arg = " ".join(parts[2:]) if sub == "sector" and len(parts) >= 3 else ""
+        return await _cmd_report(sub, uid, sector=sector_arg)
+    if cmd == "/custom" and len(parts) >= 2:
+        conditions = " ".join(parts[1:])
+        return await _cmd_custom_screen(conditions, uid)
+    if cmd == "/save" and len(parts) >= 2:
+        return await _cmd_save_fav(parts[1], uid)
+    if cmd == "/unsave" and len(parts) >= 2:
+        return await _cmd_unsave_fav(parts[1], uid)
+    if cmd == "/myfav":
+        sub = parts[1].lower() if len(parts) > 1 else ""
+        if sub == "report":
+            return await _cmd_myfav_report(uid)
+        return await _cmd_myfav_list(uid)
 
     # ── 量化策略 / 零股系統 新增指令 ──────────────────────────────────────
     if cmd == "/recommend":
@@ -263,9 +288,12 @@ async def _handle_text(text: str, uid: str) -> list:
         code_arg   = parts[2] if len(parts) > 2 else None
         return await _cmd_odd(budget_str, code_arg, uid)
     if cmd == "/compare" and len(parts) >= 3:
-        return await _cmd_compare(parts[1], parts[2])
+        codes = parts[1:]   # 支援 2~3 支股票
+        return await _cmd_compare_image(codes, uid)
     if cmd == "/strategy" and len(parts) >= 2:
         return await _cmd_strategy_analyze(parts[1])
+    if cmd == "/track" and len(parts) >= 2:
+        return await _cmd_track_history(parts[1])
 
     # ── 純數字 4-6 碼 → 直接查報價 ─────────────────────────────────────────
     t = text.strip()
@@ -1132,10 +1160,22 @@ def _help_text() -> str:
         "/correlation     持股相關性\n"
         "/advice          今日操作建議\n"
         "/ai 2330         個股深度分析\n"
-        "\n📊 族群選股表\n"
-        "/report          今日選股圖\n"
-        "/report AI       AI族群選股表\n"
-        "/report 散熱     散熱族群選股表\n"
+        "\n📊 選股系統\n"
+        "/screen               互動選股選單\n"
+        "/report all           全維度前20\n"
+        "/report momentum      動能選股\n"
+        "/report value         存股選股\n"
+        "/report chip          籌碼選股\n"
+        "/report breakout      技術突破\n"
+        "/report ai            AI族群\n"
+        "/report sector 散熱   族群選股\n"
+        "/report next          下一頁\n"
+        "/custom 外資連買3天   自訂條件\n"
+        "/save 2330            收藏股票\n"
+        "/myfav                我的收藏\n"
+        "/myfav report         收藏選股圖\n"
+        "/compare 2330 2454    比較圖\n"
+        "/track 2330           歷史追蹤\n"
         "\n/morning /week /subscribe"
     )
 
@@ -1190,6 +1230,319 @@ async def _cmd_report(group: str, uid: str) -> list:
             ("💼 庫存", "/portfolio"),
         )
     )]
+
+
+def _flex_screen_menu() -> FlexMessage:
+    """互動選股選單 Flex Message"""
+    def _btn(label: str, cmd: str, color: str = "#1A3A8F") -> dict:
+        return {
+            "type": "button",
+            "style": "primary",
+            "color": color,
+            "height": "sm",
+            "margin": "xs",
+            "action": {"type": "message", "label": label, "text": cmd},
+        }
+    bubble = {
+        "type": "bubble",
+        "size": "kilo",
+        "header": {
+            "type": "box", "layout": "vertical",
+            "paddingAll": "12px",
+            "backgroundColor": "#0D1B2A",
+            "contents": [
+                {"type": "text", "text": "📊 選股系統", "color": "#FFFFFF",
+                 "weight": "bold", "size": "lg"},
+                {"type": "text", "text": "選擇選股類型", "color": "#AAAAAA", "size": "sm"},
+            ],
+        },
+        "body": {
+            "type": "box", "layout": "vertical", "spacing": "xs", "paddingAll": "10px",
+            "contents": [
+                {
+                    "type": "box", "layout": "horizontal", "spacing": "xs",
+                    "contents": [
+                        _btn("⚡ 動能",  "/report momentum", "#C00020"),
+                        _btn("💰 存股",  "/report value",    "#007A45"),
+                    ],
+                },
+                {
+                    "type": "box", "layout": "horizontal", "spacing": "xs",
+                    "contents": [
+                        _btn("🏛 籌碼",  "/report chip",     "#0057B8"),
+                        _btn("🚀 突破",  "/report breakout", "#8B4513"),
+                    ],
+                },
+                {
+                    "type": "box", "layout": "horizontal", "spacing": "xs",
+                    "contents": [
+                        _btn("🤖 AI族群", "/report ai",      "#6A0DAD"),
+                        _btn("🏆 全維度",  "/report all",     "#1A3A8F"),
+                    ],
+                },
+                {
+                    "type": "box", "layout": "horizontal", "spacing": "xs",
+                    "contents": [
+                        _btn("⭐ 我的最愛", "/myfav report", "#E67E00"),
+                        _btn("🔍 自訂條件", "/custom ",       "#555555"),
+                    ],
+                },
+            ],
+        },
+    }
+    return FlexMessage(alt_text="選股系統選單", contents=bubble)
+
+
+async def _cmd_report(screen_type: str, uid: str, sector: str = "") -> list:
+    """/report [type] — 觸發後立即回 ACK，背景產生圖"""
+    import asyncio
+    from backend.services.report_screener import run_screener, paginate, get_label, ScreenerType
+
+    label = get_label(screen_type, sector)
+    asyncio.create_task(_report_bg(screen_type, sector, uid, page=1))
+
+    qr = qr_items(
+        ("動能", "/report momentum"), ("存股", "/report value"),
+        ("籌碼", "/report chip"),     ("突破", "/report breakout"),
+    )
+    return [_text(f"📊 正在產生「{label}」選股表…\n5秒後自動推送（共最多20檔）\n\n"
+                  f"/report next → 下一頁  /screen → 選單", qr)]
+
+
+async def _cmd_report_page(uid: str, delta: int = 0, go_to: int = 0) -> list:
+    """/report next 或 /report page N — 分頁翻頁"""
+    import asyncio
+    cache = _report_pages.get(uid)
+    if not cache:
+        return [_text("沒有進行中的選股，請先輸入 /report [類型]",
+                      qr_items(("選單", "/screen")))]
+    current  = cache["page"]
+    total_p  = cache["total_pages"]
+    next_p   = go_to if go_to > 0 else current + delta
+    next_p   = max(1, min(next_p, total_p))
+    if next_p == current and delta != 0:
+        return [_text(f"已是最{'後' if delta > 0 else '前'}一頁（第 {current}/{total_p} 頁）",
+                      qr_items(("重新選股", "/screen")))]
+    asyncio.create_task(_report_bg(
+        cache["screen_type"], cache.get("sector", ""),
+        uid, page=next_p, cached_rows=cache["rows"],
+    ))
+    return [_text(f"正在載入第 {next_p}/{total_p} 頁…")]
+
+
+async def _report_bg(
+    screen_type: str, sector: str, uid: str,
+    page: int = 1, cached_rows=None,
+) -> None:
+    """背景：篩選 → 分頁 → 產生圖 → 推送"""
+    import httpx
+    from backend.services.report_screener import run_screener, paginate, get_label
+    from backend.services.generate_report_image import generate_report_image
+    from backend.services.report_tracker import batch_record
+
+    try:
+        if cached_rows is None:
+            rows = run_screener(screen_type, sector=sector)
+        else:
+            rows = cached_rows
+
+        page_rows, total_pages = paginate(rows, page)
+
+        # 快取分頁狀態
+        _report_pages[uid] = {
+            "rows": rows, "page": page,
+            "total_pages": total_pages,
+            "screen_type": screen_type, "sector": sector,
+        }
+
+        label = get_label(screen_type, sector)
+        path = generate_report_image(
+            stocks=page_rows, group=label,
+            market_state=os.getenv("MARKET_STATE", "unknown"),
+            page=page, total_pages=total_pages,
+        )
+
+        # 追蹤記錄（僅第一頁）
+        if page == 1:
+            try:
+                batch_record(page_rows, screen_type=screen_type)
+            except Exception:
+                pass
+
+        base_url = os.getenv("BASE_URL", "")
+        if base_url:
+            image_url = f"{base_url.rstrip('/')}/static/reports/{path.name}"
+            headers = {"Authorization": f"Bearer {settings.line_channel_access_token}"}
+            msg = {"type": "image", "originalContentUrl": image_url, "previewImageUrl": image_url}
+        else:
+            msg = _build_text_fallback(page_rows, label, page, total_pages)
+
+        # 分頁提示文字
+        hint_msg = None
+        if total_pages > 1:
+            hint_msg = {"type": "text",
+                        "text": f"第 {page}/{total_pages} 頁\n/report next 下一頁  /report page N 跳頁"}
+
+        msgs = [msg] + ([hint_msg] if hint_msg else [])
+        async with httpx.AsyncClient(timeout=20) as c:
+            await c.post("https://api.line.me/v2/bot/message/push",
+                         json={"to": uid, "messages": msgs[:5]},
+                         headers={"Authorization": f"Bearer {settings.line_channel_access_token}"})
+    except Exception as e:
+        logger.error(f"[report_bg] {screen_type} uid={uid[:8]} err={e}")
+
+
+def _build_text_fallback(rows, label: str, page: int, total: int) -> dict:
+    lines = [f"📊 {label} (第{page}/{total}頁)", "─" * 20]
+    for r in rows[:10]:
+        s = "+" if r.change_pct > 0 else ""
+        lines.append(f"{r.stock_id} {r.name} {s}{r.change_pct:.2f}%  分:{r.model_score:.0f}")
+    return {"type": "text", "text": "\n".join(lines)[:4800]}
+
+
+async def _cmd_custom_screen(conditions: str, uid: str) -> list:
+    """/custom [條件] — AI 解析自訂篩選條件"""
+    import asyncio
+    asyncio.create_task(_custom_bg(conditions, uid))
+    return [_text(
+        f"🔍 正在解析條件：\n「{conditions[:80]}」\n\n約需 5 秒…",
+        qr_items(("選單", "/screen"), ("全維度", "/report all"))
+    )]
+
+
+async def _custom_bg(conditions: str, uid: str) -> None:
+    import httpx
+    from backend.services.report_screener import custom_screener
+    from backend.services.generate_report_image import generate_report_image
+
+    try:
+        rows = await custom_screener(conditions, api_key=settings.anthropic_api_key)
+        path = generate_report_image(stocks=rows, group=f"自訂：{conditions[:20]}",
+                                     market_state=os.getenv("MARKET_STATE", "unknown"))
+        base_url = os.getenv("BASE_URL", "")
+        if base_url:
+            url = f"{base_url.rstrip('/')}/static/reports/{path.name}"
+            msg = {"type": "image", "originalContentUrl": url, "previewImageUrl": url}
+        else:
+            msg = _build_text_fallback(rows, f"自訂條件：{conditions[:20]}", 1, 1)
+        async with httpx.AsyncClient(timeout=20) as c:
+            await c.post("https://api.line.me/v2/bot/message/push",
+                         json={"to": uid, "messages": [msg]},
+                         headers={"Authorization": f"Bearer {settings.line_channel_access_token}"})
+    except Exception as e:
+        logger.error(f"[custom_bg] err={e}")
+
+
+async def _cmd_save_fav(code: str, uid: str) -> list:
+    """/save [code]"""
+    from backend.services.stock_favorites import save_favorite
+    try:
+        q = await fetch_realtime_quote(code)
+        name = q.get("name", code) if q else code
+    except Exception:
+        name = code
+    ok, msg = save_favorite(uid, code, name)
+    qr = qr_items(("我的最愛", "/myfav"), ("選股圖", "/myfav report"), ("移除", f"/unsave {code}"))
+    return [_text(msg, qr)]
+
+
+async def _cmd_unsave_fav(code: str, uid: str) -> list:
+    """/unsave [code]"""
+    from backend.services.stock_favorites import remove_favorite
+    ok, msg = remove_favorite(uid, code)
+    return [_text(msg, qr_items(("我的最愛", "/myfav")))]
+
+
+async def _cmd_myfav_list(uid: str) -> list:
+    """/myfav — 顯示收藏列表"""
+    from backend.services.stock_favorites import format_favorites_text
+    text = format_favorites_text(uid)
+    return [_text(text, qr_items(("選股圖", "/myfav report"), ("📊 選單", "/screen")))]
+
+
+async def _cmd_myfav_report(uid: str) -> list:
+    """/myfav report — 產生收藏選股圖"""
+    import asyncio
+    from backend.services.stock_favorites import get_favorite_ids
+    ids = get_favorite_ids(uid)
+    if not ids:
+        return [_text("收藏為空，請先 /save 代碼 加入收藏",
+                      qr_items(("加入示範", "/save 2330"), ("📊 選單", "/screen")))]
+    asyncio.create_task(_report_bg("favorites", "", uid, cached_rows=None))
+    # 手動快取 favorites 篩選
+    asyncio.create_task(_myfav_bg(ids, uid))
+    return [_text(f"正在產生 {len(ids)} 檔收藏選股圖…")]
+
+
+async def _myfav_bg(stock_ids: list[str], uid: str) -> None:
+    import httpx
+    from backend.services.report_screener import favorites_screener
+    from backend.services.generate_report_image import generate_report_image
+
+    try:
+        rows = favorites_screener(stock_ids)
+        path = generate_report_image(stocks=rows, group="我的最愛",
+                                     market_state=os.getenv("MARKET_STATE", "unknown"))
+        base_url = os.getenv("BASE_URL", "")
+        if base_url:
+            url = f"{base_url.rstrip('/')}/static/reports/{path.name}"
+            msg = {"type": "image", "originalContentUrl": url, "previewImageUrl": url}
+        else:
+            msg = _build_text_fallback(rows, "我的最愛", 1, 1)
+        async with httpx.AsyncClient(timeout=20) as c:
+            await c.post("https://api.line.me/v2/bot/message/push",
+                         json={"to": uid, "messages": [msg]},
+                         headers={"Authorization": f"Bearer {settings.line_channel_access_token}"})
+    except Exception as e:
+        logger.error(f"[myfav_bg] err={e}")
+
+
+async def _cmd_compare_image(codes: list[str], uid: str) -> list:
+    """/compare 2330 2454 [3711] — 比較圖"""
+    import asyncio
+    codes = codes[:3]
+    asyncio.create_task(_compare_bg(codes, uid))
+    return [_text(
+        f"正在產生比較圖：{' vs '.join(codes)}\n包含五維雷達圖…",
+        qr_items(("📊 全維度", "/report all"), ("📋 選單", "/screen"))
+    )]
+
+
+async def _compare_bg(codes: list[str], uid: str) -> None:
+    import httpx
+    from backend.services.report_screener import favorites_screener
+    from backend.services.generate_report_image import generate_comparison_image
+
+    try:
+        rows = favorites_screener(codes)[:3]
+        path = generate_comparison_image(rows)
+        base_url = os.getenv("BASE_URL", "")
+        if base_url:
+            url = f"{base_url.rstrip('/')}/static/reports/{path.name}"
+            msg = {"type": "image", "originalContentUrl": url, "previewImageUrl": url}
+        else:
+            lines = ["比較：" + " vs ".join(codes)]
+            for r in rows:
+                lines.append(f"{r.stock_id} {r.name}  分:{r.model_score:.0f}  信心:{r.confidence:.0f}")
+            msg = {"type": "text", "text": "\n".join(lines)}
+        async with httpx.AsyncClient(timeout=20) as c:
+            await c.post("https://api.line.me/v2/bot/message/push",
+                         json={"to": uid, "messages": [msg]},
+                         headers={"Authorization": f"Bearer {settings.line_channel_access_token}"})
+    except Exception as e:
+        logger.error(f"[compare_bg] err={e}")
+
+
+async def _cmd_track_history(code: str) -> list:
+    """/track [code] — 個股歷史追蹤"""
+    from backend.services.report_tracker import get_stock_history, format_history_text
+    history = get_stock_history(code, days=30)
+    text = format_history_text(history)
+    return [_text(text, qr_items(
+        (f"📈 報價", f"/quote {code}"),
+        ("🔬 AI 分析", f"/ai {code}"),
+        ("📊 選單", "/screen"),
+    ))]
 
 
 async def _push_report_bg(group: str, uid: str) -> None:

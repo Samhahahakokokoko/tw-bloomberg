@@ -134,11 +134,25 @@ def start_scheduler() -> AsyncIOScheduler:
         id="rec_backfill", replace_existing=True,
     )
 
-    # 族群連動選股表 — 每日 19:30 自動產生圖片並推送給訂閱者
+    # 08:30 盤前選股表（動能 + 全維度）
+    scheduler.add_job(
+        _push_morning_picks,
+        CronTrigger(day_of_week="mon-fri", hour=8, minute=30, timezone="Asia/Taipei"),
+        id="morning_picks", replace_existing=True,
+    )
+
+    # 19:30 收盤後選股表（今日收盤後三張圖）
     scheduler.add_job(
         _push_group_report,
         CronTrigger(day_of_week="mon-fri", hour=19, minute=30, timezone="Asia/Taipei"),
         id="group_report", replace_existing=True,
+    )
+
+    # 週五 15:00 本週績效 + 下週潛力股
+    scheduler.add_job(
+        _push_friday_summary,
+        CronTrigger(day_of_week="fri", hour=15, minute=0, timezone="Asia/Taipei"),
+        id="friday_summary", replace_existing=True,
     )
 
     # 評分權重自動調整 — 每週一 08:00
@@ -332,6 +346,71 @@ async def _auto_adjust_feature_weights():
         logger.error(f"Feature weight adjustment failed: {e}")
 
 
+async def _push_morning_picks():
+    """08:30 盤前：動能 + 全維度 選股圖推送"""
+    try:
+        import os
+        from sqlalchemy import select
+        from ..models.models import Subscriber
+        from ..models.database import settings as cfg
+        from backend.services.report_screener import momentum_screener, all_screener, paginate
+        from backend.services.generate_report_image import generate_report_image, push_report_image
+
+        async with AsyncSessionLocal() as db:
+            r = await db.execute(select(Subscriber).where(Subscriber.subscribed_morning == True))
+            subs = r.scalars().all()
+        if not subs:
+            return
+        user_ids = [s.line_user_id for s in subs]
+        base_url = os.getenv("BASE_URL", "")
+
+        for fn, label in [(momentum_screener, "動能選股"), (all_screener, "全維度排名")]:
+            rows = fn()
+            page_rows, total = paginate(rows, 1)
+            path = generate_report_image(
+                stocks=page_rows, group=f"盤前重點｜{label}",
+                market_state=os.getenv("MARKET_STATE", "unknown"),
+                page=1, total_pages=total,
+            )
+            if base_url:
+                await push_report_image(path, user_ids, cfg.line_channel_access_token, base_url, alt_text=label)
+            logger.info(f"[MorningPicks] {label} 推送 {len(user_ids)} 人")
+    except Exception as e:
+        logger.error(f"Morning picks push failed: {e}")
+
+
+async def _push_friday_summary():
+    """週五 15:00：本週績效 + 下週潛力股"""
+    try:
+        import os
+        from sqlalchemy import select
+        from ..models.models import Subscriber
+        from ..models.database import settings as cfg
+        from backend.services.report_screener import breakout_screener, value_screener, paginate
+        from backend.services.generate_report_image import generate_report_image, push_report_image
+
+        async with AsyncSessionLocal() as db:
+            r = await db.execute(select(Subscriber).where(Subscriber.subscribed_morning == True))
+            subs = r.scalars().all()
+        if not subs:
+            return
+        user_ids = [s.line_user_id for s in subs]
+        base_url = os.getenv("BASE_URL", "")
+
+        for fn, label in [(breakout_screener, "下週潛力突破"), (value_screener, "存股精選")]:
+            rows = fn()
+            page_rows, total = paginate(rows, 1)
+            path = generate_report_image(
+                stocks=page_rows, group=f"週五精選｜{label}",
+                market_state=os.getenv("MARKET_STATE", "unknown"),
+            )
+            if base_url:
+                await push_report_image(path, user_ids, cfg.line_channel_access_token, base_url, alt_text=label)
+            logger.info(f"[FridaySummary] {label} 推送 {len(user_ids)} 人")
+    except Exception as e:
+        logger.error(f"Friday summary push failed: {e}")
+
+
 async def _push_group_report():
     """每日 19:30：產生族群連動選股表圖片 → 推送給所有訂閱者"""
     try:
@@ -354,15 +433,27 @@ async def _push_group_report():
         user_ids = [s.line_user_id for s in subs]
         base_url  = os.getenv("BASE_URL", "")
 
-        # 主力族群（AI）+ 散熱族群 各產一張
-        for group in ["AI族群", "散熱族群"]:
-            path = await generate_and_push(
-                group=group,
-                user_ids=user_ids if base_url else [],
-                access_token=cfg.line_channel_access_token,
-                base_url=base_url,
+        from backend.services.report_screener import (
+            ai_screener, momentum_screener, chip_screener, paginate
+        )
+        from backend.services.generate_report_image import generate_report_image, push_report_image
+
+        tasks = [
+            (ai_screener,       "AI族群"),
+            (momentum_screener, "動能選股"),
+            (chip_screener,     "籌碼選股"),
+        ]
+        for fn, label in tasks:
+            rows = fn()
+            page_rows, total = paginate(rows, 1)
+            path = generate_report_image(
+                stocks=page_rows, group=f"收盤後｜{label}",
+                market_state=os.getenv("MARKET_STATE", "unknown"),
+                page=1, total_pages=total,
             )
-            logger.info(f"[GroupReport] {group} 圖片: {path}, 推送 {len(user_ids)} 人")
+            if base_url:
+                await push_report_image(path, user_ids, cfg.line_channel_access_token, base_url, alt_text=label)
+            logger.info(f"[GroupReport] {label} 圖片: {path}, 推送 {len(user_ids)} 人")
 
     except Exception as e:
         logger.error(f"Group report push failed: {e}")
