@@ -257,6 +257,11 @@ async def _handle_text(text: str, uid: str) -> list:
     if cmd == "/var":                           return await _cmd_var(uid)
     if cmd == "/correlation":                   return await _cmd_correlation(uid)
 
+    # ── 機構級量化流程 ────────────────────────────────────────────────────
+    if cmd == "/pipeline":
+        code = parts[1] if len(parts) > 1 else "2330"
+        return await _cmd_pipeline(code, uid)
+
     # ── 選股系統 ──────────────────────────────────────────────────────────
     if cmd == "/screen":
         return [_flex_screen_menu()]
@@ -1236,6 +1241,84 @@ async def _cmd_report(group: str, uid: str) -> list:
             ("💼 庫存", "/portfolio"),
         )
     )]
+
+
+async def _cmd_pipeline(code: str, uid: str) -> list:
+    """/pipeline [代碼] — 觸發完整量化分析流程"""
+    import asyncio
+    asyncio.create_task(_pipeline_bg(code, uid))
+    return [_text(
+        f"🔬 啟動 {code} 機構級量化分析...\n\n"
+        "流程：因子IC → 動態加權 → 盤態偵測 → Multi-Alpha → Walk-Forward\n"
+        "約需 15-30 秒，完成後自動推送報告",
+        qr_items(("📊 選股", "/screen"), ("💼 庫存", "/portfolio"))
+    )]
+
+
+async def _pipeline_bg(code: str, uid: str) -> None:
+    import httpx
+    try:
+        base = os.getenv("BASE_URL", f"http://localhost:{os.getenv('PORT', '8080')}")
+        async with httpx.AsyncClient(timeout=60) as c:
+            r = await c.post(
+                f"{base}/api/quant/run_full_pipeline",
+                json={"stock_code": code, "train_days": 120, "test_days": 20},
+            )
+            data = r.json() if r.status_code == 200 else {}
+    except Exception as e:
+        logger.error(f"[pipeline_bg] API call failed: {e}")
+        data = {}
+
+    if not data:
+        msg_text = f"❌ {code} 量化分析失敗（API 無回應）"
+    else:
+        regime   = data.get("regime", {})
+        alpha    = data.get("alpha_portfolio", {})
+        ic_info  = data.get("factor_ic", {})
+        wf       = data.get("walk_forward", {})
+        stab     = wf.get("stability", {}) if isinstance(wf, dict) else {}
+        combined = wf.get("combined", {}) if isinstance(wf, dict) else {}
+        stop     = data.get("risk_stop_loss", {})
+
+        lines = [
+            f"🔬 {code} 量化完整分析報告",
+            "─" * 24,
+            f"📍 盤態：{regime.get('regime','?')} ({regime.get('sub_label','?')})",
+            f"   信心：{regime.get('confidence',0)*100:.0f}%  倉位乘數：×{regime.get('position_scale',1):.2f}",
+            f"   {regime.get('note','')}",
+            "",
+            f"🎯 Multi-Alpha 評分：{alpha.get('composite_score',0):.1f}/100",
+            f"   訊號：{alpha.get('signal','?')}  分歧度：{alpha.get('divergence',0):.3f}",
+            f"   {'⛔ ' + alpha.get('no_trade_reason','') if alpha.get('no_trade') else '✅ 訊號一致'}",
+            "",
+            f"📊 因子 IC：有效 {ic_info.get('valid_factors',0)} 個",
+        ]
+        if ic_info.get("top5"):
+            for t in ic_info["top5"][:3]:
+                lines.append(f"   {t['factor']:15s} ICIR={t['icir']:+.3f} w={t['weight']:.4f}")
+
+        lines += [
+            "",
+            f"⚡ 停損建議：{stop.get('stop_price',0):.1f}（{stop.get('method','?')} {stop.get('stop_pct',0)*100:.1f}%）",
+        ]
+
+        if combined:
+            lines += [
+                "",
+                f"📈 Walk-Forward 回測（{wf.get('n_segments',0)} 段）",
+                f"   合併夏普：{combined.get('sharpe',0):.3f}",
+                f"   合併報酬：{combined.get('return_pct',0):+.2f}%",
+                f"   最大回撤：{combined.get('max_dd_pct',0):.2f}%",
+                f"   穩定指數：{stab.get('sharpe_stability',0):.3f}  結論：{stab.get('verdict','?')}",
+            ]
+
+        msg_text = "\n".join(lines)
+
+    headers = {"Authorization": f"Bearer {settings.line_channel_access_token}"}
+    async with httpx.AsyncClient(timeout=10) as c:
+        await c.post("https://api.line.me/v2/bot/message/push",
+                     json={"to": uid, "messages": [{"type": "text", "text": msg_text[:4800]}]},
+                     headers=headers)
 
 
 def _flex_screen_menu() -> FlexMessage:

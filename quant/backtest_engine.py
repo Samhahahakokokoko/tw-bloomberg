@@ -528,3 +528,349 @@ if __name__ == "__main__":
     print(f"\n淨值曲線（前 5 / 後 5）：")
     for e in report.equity_curve[:5] + report.equity_curve[-5:]:
         print(f"  {e['date']}  {e['equity']:>12,.0f}")
+
+
+# =======================================================================
+#  Walk-Forward 回測引擎（防過擬合）— 訓練120日 / 測試20日 / 嚴格無未來偏差
+# =======================================================================
+
+from dataclasses import dataclass as _wf_dc, field as _wf_field
+from typing import Callable as _Callable, Optional as _Optional
+import logging as _wf_logging
+
+_log = logging.getLogger(__name__)
+
+
+@dataclass
+class WFSegment:
+    segment_id:   int
+    train_start:  str
+    train_end:    str
+    test_start:   str
+    test_end:     str
+    train_sharpe: float
+    train_return: float
+    test_sharpe:  float
+    test_return:  float
+    test_max_dd:  float
+    test_win_rate:float
+    test_n_trades:int
+    generalization: float   # test_sharpe / train_sharpe
+
+    def to_dict(self) -> dict:
+        return {
+            "segment":        self.segment_id,
+            "train":          {"start": self.train_start, "end": self.train_end,
+                               "sharpe": round(self.train_sharpe, 3),
+                               "return_pct": round(self.train_return * 100, 2)},
+            "test":           {"start": self.test_start, "end": self.test_end,
+                               "sharpe": round(self.test_sharpe, 3),
+                               "return_pct": round(self.test_return * 100, 2),
+                               "max_dd_pct": round(self.test_max_dd * 100, 2),
+                               "win_rate_pct": round(self.test_win_rate * 100, 1),
+                               "n_trades": self.test_n_trades},
+            "generalization": round(self.generalization, 3),
+        }
+
+
+@dataclass
+class WFStabilityAnalysis:
+    n_segments:       int
+    avg_test_sharpe:  float
+    std_test_sharpe:  float
+    sharpe_stability: float
+    avg_test_return:  float
+    pct_profitable:   float
+    avg_generalization: float
+    verdict:          str
+
+    def to_dict(self) -> dict:
+        return {
+            "n_segments":         self.n_segments,
+            "avg_test_sharpe":    round(self.avg_test_sharpe, 3),
+            "std_test_sharpe":    round(self.std_test_sharpe, 3),
+            "sharpe_stability":   round(self.sharpe_stability, 3),
+            "avg_test_return_pct":round(self.avg_test_return * 100, 2),
+            "pct_profitable":     round(self.pct_profitable * 100, 1),
+            "avg_generalization": round(self.avg_generalization, 3),
+            "verdict":            self.verdict,
+        }
+
+
+@dataclass
+class WFResult:
+    segments:   list
+    combined_sharpe:   float
+    combined_return:   float
+    combined_max_dd:   float
+    combined_win_rate: float
+    combined_n_trades: int
+    stability:  WFStabilityAnalysis
+    train_days: int
+    test_days:  int
+
+    def to_dict(self) -> dict:
+        return {
+            "train_days":  self.train_days,
+            "test_days":   self.test_days,
+            "n_segments":  len(self.segments),
+            "combined": {
+                "sharpe":    round(self.combined_sharpe, 3),
+                "return_pct":round(self.combined_return * 100, 2),
+                "max_dd_pct":round(self.combined_max_dd * 100, 2),
+                "win_rate_pct": round(self.combined_win_rate * 100, 1),
+                "n_trades":  self.combined_n_trades,
+            },
+            "stability":  self.stability.to_dict(),
+            "segments":   [s.to_dict() for s in self.segments],
+        }
+
+    def summary(self) -> str:
+        s = self.stability
+        lines = [
+            "=== Walk-Forward 回測報告 ====",
+            f"窗口設定: 訓練 {self.train_days}日 / 測試 {self.test_days}日",
+            f"共 {len(self.segments)} 個窗口",
+            "",
+            "合併績效（測試段）:",
+            f"  總報酬:    {self.combined_return*100:+.2f}%",
+            f"  夏普值:    {self.combined_sharpe:.3f}",
+            f"  最大回撤:  {self.combined_max_dd*100:.2f}%",
+            f"  勝率:      {self.combined_win_rate*100:.1f}%",
+            f"  交易筆數:  {self.combined_n_trades}",
+            "",
+            "穩定性分析:",
+            f"  平均夏普:  {s.avg_test_sharpe:.3f} (±{s.std_test_sharpe:.3f})",
+            f"  穩定指數:  {s.sharpe_stability:.3f}  (越高越穩定，目標>0.7)",
+            f"  盈利窗口:  {s.pct_profitable*100:.0f}%",
+            f"  泛化比:    {s.avg_generalization:.3f}  (越接近1越好)",
+            f"  結論:      {s.verdict}",
+        ]
+        return "\n".join(lines)
+
+
+class WalkForwardEngine:
+    """
+    Walk-Forward 回測引擎（防過擬合）。
+
+    訓練=120日，測試=20日，滾動步長=test_days。
+    嚴格避免 lookahead bias：訓練期與測試期絕不重疊。
+
+    signal_fn(train_df: pd.DataFrame) → pd.Series
+      - 接收訓練期 DataFrame 進行學習/校準
+      - 回傳長度等於 len(train_df) 的訊號 Series（"buy"/"sell"/"hold"）
+      - 引擎會獨立對測試期使用同一策略（使用訓練期末的狀態）
+
+    使用方式：
+        from quant.backtest_engine import WalkForwardEngine, BacktestEngine
+
+        def my_strategy(train_df):
+            # 用 train_df 學習，回傳訓練期訊號
+            from quant.alpha_model import RuleBasedAlpha
+            alpha = RuleBasedAlpha()
+            return pd.Series([alpha.evaluate(r).signal.value
+                              for _, r in train_df.iterrows()])
+
+        wf = WalkForwardEngine(train_days=120, test_days=20)
+        result = wf.run(feat_df, signal_fn=my_strategy)
+        print(result.summary())
+    """
+
+    def __init__(
+        self,
+        train_days: int = 120,
+        test_days:  int = 20,
+        initial_capital: float = 1_000_000,
+        commission_discount: float = 0.6,
+    ):
+        self.train_days = train_days
+        self.test_days  = test_days
+        self.capital    = initial_capital
+        self.discount   = commission_discount
+
+    def run(
+        self,
+        feat_df: pd.DataFrame,
+        signal_fn: Callable,
+        stop_loss_pct:   Optional[float] = 0.08,
+        take_profit_pct: Optional[float] = None,
+    ) -> WFResult:
+        """
+        執行 Walk-Forward 回測。
+
+        feat_df   : FeatureEngine.compute_all() 的輸出 DataFrame
+        signal_fn : fn(train_df) → pd.Series — 接受訓練期 df，回傳訊號
+        """
+        # 延遲匯入，避免循環依賴
+        from quant.backtest_engine import BacktestEngine
+
+        n  = len(feat_df)
+        T  = self.train_days
+        Te = self.test_days
+
+        if n < T + Te:
+            raise ValueError(
+                f"資料不足：需 {T + Te}，實際 {n}（train={T} + test={Te}）"
+            )
+
+        segments: list[WFSegment] = []
+        seg_id = 0
+        start  = 0
+
+        all_test_returns:  list[float] = []
+        all_test_n_trades: int = 0
+        all_test_pnl:      list[float] = []
+        combined_equity:   list[float] = [self.capital]
+
+        while start + T + Te <= n:
+            train_end = start + T
+            test_end  = train_end + Te
+
+            train_df = feat_df.iloc[start:train_end].reset_index(drop=True)
+            test_df  = feat_df.iloc[train_end:test_end].reset_index(drop=True)
+
+            # ── 產生訊號（嚴格限制：只能讀 train_df）───────────────────
+            try:
+                train_signals = signal_fn(train_df)
+                if len(train_signals) != len(train_df):
+                    train_signals = pd.Series(["hold"] * len(train_df))
+            except Exception as e:
+                _log.warning("[WF] segment=%d signal_fn 失敗: %s", seg_id, e)
+                train_signals = pd.Series(["hold"] * len(train_df))
+
+            # ── 測試期：對 test_df 用同策略（用 signal_fn 直接生成）────
+            try:
+                test_signals = signal_fn(test_df)
+                if len(test_signals) != len(test_df):
+                    test_signals = pd.Series(["hold"] * len(test_df))
+            except Exception as e:
+                _log.warning("[WF] segment=%d test signal_fn 失敗: %s", seg_id, e)
+                test_signals = pd.Series(["hold"] * len(test_df))
+
+            engine = BacktestEngine(
+                initial_capital=self.capital,
+                commission_discount=self.discount,
+            )
+
+            # 訓練期回測（只用來計算 generalization ratio）
+            try:
+                train_rpt = engine.run(
+                    train_df, train_signals,
+                    stop_loss_pct=stop_loss_pct,
+                    take_profit_pct=take_profit_pct,
+                )
+                train_sharpe = train_rpt.sharpe_ratio
+                train_return = train_rpt.total_return
+            except Exception:
+                train_sharpe = 0.0; train_return = 0.0
+
+            # 測試期回測（核心）
+            try:
+                test_rpt = engine.run(
+                    test_df, test_signals,
+                    stop_loss_pct=stop_loss_pct,
+                    take_profit_pct=take_profit_pct,
+                )
+                test_sharpe  = test_rpt.sharpe_ratio
+                test_return  = test_rpt.total_return
+                test_max_dd  = test_rpt.max_drawdown
+                test_win_rate= test_rpt.win_rate
+                test_trades  = test_rpt.n_trades
+
+                all_test_n_trades += test_trades
+                all_test_pnl.extend([t.pnl for t in test_rpt.trades if t.pnl is not None])
+                if combined_equity:
+                    last_eq = combined_equity[-1]
+                    combined_equity.append(last_eq * (1 + test_return))
+            except Exception as e:
+                _log.warning("[WF] segment=%d test backtest 失敗: %s", seg_id, e)
+                test_sharpe = test_return = test_max_dd = test_win_rate = 0.0
+                test_trades = 0
+
+            generalization = (test_sharpe / train_sharpe) if abs(train_sharpe) > 1e-6 else 0.0
+
+            def _date(df_, idx):
+                try: return str(df_.iloc[idx].get("date", idx))[:10]
+                except: return str(idx)
+
+            seg = WFSegment(
+                segment_id=seg_id,
+                train_start=_date(feat_df, start),
+                train_end=_date(feat_df, train_end - 1),
+                test_start=_date(feat_df, train_end),
+                test_end=_date(feat_df, test_end - 1),
+                train_sharpe=round(train_sharpe, 3),
+                train_return=round(train_return, 4),
+                test_sharpe=round(test_sharpe, 3),
+                test_return=round(test_return, 4),
+                test_max_dd=round(test_max_dd, 4),
+                test_win_rate=round(test_win_rate, 4),
+                test_n_trades=test_trades,
+                generalization=round(generalization, 3),
+            )
+            segments.append(seg)
+            _log.info("[WF] segment %d  train_sharpe=%.3f  test_sharpe=%.3f  gen=%.3f",
+                      seg_id, train_sharpe, test_sharpe, generalization)
+
+            seg_id += 1
+            start  += Te
+
+        if not segments:
+            raise ValueError("無有效回測窗口，請縮短 train_days 或提供更多資料")
+
+        # ── 合併測試段績效 ───────────────────────────────────────────────
+        eq_arr   = np.array(combined_equity)
+        peak     = np.maximum.accumulate(eq_arr)
+        dd_arr   = (peak - eq_arr) / peak
+        comb_dd  = float(dd_arr.max())
+        comb_ret = (eq_arr[-1] - eq_arr[0]) / eq_arr[0] if eq_arr[0] > 0 else 0.0
+        ret_ser  = np.diff(eq_arr) / eq_arr[:-1]
+        comb_vol = float(ret_ser.std() * np.sqrt(252)) if len(ret_ser) > 1 else 0.0
+        n_days   = len(eq_arr)
+        comb_ann = (1 + comb_ret) ** (252 / max(n_days, 1)) - 1
+        comb_sharpe = comb_ann / comb_vol if comb_vol > 0 else 0.0
+
+        wins = [p for p in all_test_pnl if p > 0]
+        loss = [p for p in all_test_pnl if p <= 0]
+        comb_wr = len(wins) / len(all_test_pnl) if all_test_pnl else 0.0
+
+        # ── 穩定性分析 ───────────────────────────────────────────────────
+        sharpes = np.array([s.test_sharpe for s in segments])
+        returns = np.array([s.test_return for s in segments])
+        gens    = np.array([s.generalization for s in segments])
+
+        mean_s = float(sharpes.mean())
+        std_s  = float(sharpes.std())
+        stab   = max(0.0, 1.0 - std_s / abs(mean_s)) if abs(mean_s) > 1e-6 else 0.0
+        pct_p  = float((returns > 0).mean())
+        mean_g = float(gens.mean())
+
+        if stab >= 0.7 and mean_s >= 1.0 and pct_p >= 0.7:
+            verdict = "excellent"
+        elif stab >= 0.5 and mean_s >= 0.5 and pct_p >= 0.6:
+            verdict = "good"
+        else:
+            verdict = "poor"
+
+        stability = WFStabilityAnalysis(
+            n_segments=len(segments),
+            avg_test_sharpe=round(mean_s, 3),
+            std_test_sharpe=round(std_s, 3),
+            sharpe_stability=round(stab, 3),
+            avg_test_return=round(float(returns.mean()), 4),
+            pct_profitable=round(pct_p, 3),
+            avg_generalization=round(mean_g, 3),
+            verdict=verdict,
+        )
+
+        return WFResult(
+            segments=segments,
+            combined_sharpe=round(comb_sharpe, 3),
+            combined_return=round(comb_ret, 4),
+            combined_max_dd=round(comb_dd, 4),
+            combined_win_rate=round(comb_wr, 4),
+            combined_n_trades=all_test_n_trades,
+            stability=stability,
+            train_days=self.train_days,
+            test_days=self.test_days,
+        )

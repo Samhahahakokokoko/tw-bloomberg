@@ -41,6 +41,11 @@ from .strategy_engine import StrategyEngine, MOCK_STOCKS as _MOCK_STOCKS
 from .confidence_engine import ConfidenceEngine
 from .odd_lot_engine import OddLotEngine
 from .signal_db import SignalDB, get_signal_db
+from .factor_ic_engine import FactorICEngine, DEFAULT_FACTORS
+from .dynamic_weight_engine import DynamicWeightEngine, WeightMode, get_dynamic_weight_engine
+from .regime_engine import RegimeEngine, get_regime_engine
+from .alpha_portfolio_engine import AlphaPortfolioEngine, get_alpha_portfolio_engine
+from .risk_engine import RiskManagerV2, get_risk_manager_v2
 
 logger = logging.getLogger(__name__)
 
@@ -765,6 +770,219 @@ async def _save_feedback_task(
         fb.record_backtest(report, stock_code=stock_code, strategy=strategy, regime=regime)
     except Exception as e:
         logger.warning(f"[quant] feedback 儲存失敗: {e}")
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  第六批整合端點：/run_full_pipeline / /get_factor_ic / /get_regime
+# ═══════════════════════════════════════════════════════════════════
+
+class PipelineRequest(BaseModel):
+    stock_code:    str = "2330"
+    strategy:      str = "rule_based"
+    train_days:    int = Field(120, ge=60, le=500)
+    test_days:     int = Field(20,  ge=10, le=60)
+    initial_capital: float = 1_000_000
+    commission_discount: float = Field(0.6, ge=0.1, le=1.0)
+
+
+@router.post("/run_full_pipeline", summary="完整量化流程（因子→IC→動態加權→Multi-Alpha→Walk-Forward）")
+async def run_full_pipeline(req: PipelineRequest):
+    """
+    執行完整機構級量化流程：
+      1. 抓取 K 線資料 → FeatureEngine 計算特徵
+      2. FactorICEngine → 計算每個因子 IC / ICIR → 動態權重
+      3. DynamicWeightEngine(adaptive) → 依盤態調整因子權重
+      4. RegimeEngine v2 → 偵測市場狀態
+      5. AlphaPortfolioEngine → Multi-Alpha 綜合評分
+      6. RiskManagerV2 → 風控檢查
+      7. WalkForwardEngine → Walk-Forward 回測（120/20）
+      8. 回傳完整績效報告
+    """
+    # ── 1. 資料 & 特徵 ────────────────────────────────────────────────
+    df      = await _fetch_kline(req.stock_code, req.start_date if hasattr(req, "start_date") else None)
+    if len(df) < req.train_days + req.test_days + 20:
+        raise HTTPException(422, f"資料不足（{len(df)}筆），需 {req.train_days + req.test_days + 20}")
+
+    feat_df = _build_features(df)
+
+    # ── 2. Factor IC ──────────────────────────────────────────────────
+    ic_engine = FactorICEngine(feat_df, forward_days=5)
+    factor_weights = ic_engine.get_factor_weights(DEFAULT_FACTORS)
+    ic_report      = ic_engine.full_report(DEFAULT_FACTORS)
+
+    # ── 3. Dynamic Weight（Adaptive）─────────────────────────────────
+    dw_engine = DynamicWeightEngine(mode=WeightMode.ADAPTIVE)
+
+    # ── 4. Regime v2 ─────────────────────────────────────────────────
+    regime_engine = RegimeEngine()
+    regime_result = regime_engine.detect(feat_df)
+    regime_str    = regime_result.regime.value
+
+    # DW 更新（傳入 regime + ic_weights）
+    dw_result = dw_engine.update(
+        feat_df, regime=regime_str, ic_weights=factor_weights
+    )
+
+    # ── 5. Multi-Alpha 評估 ───────────────────────────────────────────
+    ap_engine = AlphaPortfolioEngine(
+        ic_weights=dw_result.weights,
+    )
+    last = feat_df.iloc[-1]
+    alpha_data = {
+        "stock_id":         req.stock_code,
+        "momentum_20d":     float(last.get("ret_20d", 0)) + 1,
+        "foreign_buy_days": 0,
+        "volume_ratio":     float(last.get("vol_ratio", 1.0) or 1.0),
+        "dividend_yield":   0.0,
+        "pe_ratio":         0.0,
+        "eps_stability":    0.5,
+        "foreign_net":      0.0,
+        "trust_net":        0.0,
+        "dealer_net":       0.0,
+        "chip_concentration": 50.0,
+        "close":            float(last.get("close", 100)),
+        "ma20":             float(last.get("ma20", 0) or 0),
+        "ma60":             float(last.get("ma60", 0) or 0),
+        "k":                float(last.get("k", 50) or 50),
+        "d":                float(last.get("d", 50) or 50),
+        "boll_b":           float(last.get("boll_b", 0.5) or 0.5),
+        "macd_golden":      int(last.get("macd_golden", 0) or 0),
+    }
+    alpha_result = ap_engine.evaluate(alpha_data, regime=regime_str)
+
+    # ── 6. Risk check ─────────────────────────────────────────────────
+    from .risk_engine import PositionSizerV2, PortfolioSnapshot, DynamicStopLoss
+    stop_result = DynamicStopLoss(atr_mult=2.0, fixed_pct=0.08).calc(
+        entry=float(last.get("close", 100)),
+        atr=float(last.get("atr14", 0) or 0),
+    )
+
+    # ── 7. Walk-Forward 回測 ──────────────────────────────────────────
+    from .backtest_engine import WalkForwardEngine
+    from .alpha_model import RuleBasedAlpha
+
+    def _signal_fn(train_df):
+        alpha = RuleBasedAlpha()
+        return pd.Series([alpha.evaluate(row).signal.value
+                          for _, row in train_df.iterrows()])
+
+    wf_engine = WalkForwardEngine(
+        train_days=req.train_days,
+        test_days=req.test_days,
+        initial_capital=req.initial_capital,
+        commission_discount=req.commission_discount,
+    )
+    try:
+        wf_result = wf_engine.run(feat_df, signal_fn=_signal_fn, stop_loss_pct=0.08)
+        wf_dict   = wf_result.to_dict()
+        wf_summary = wf_result.summary()
+    except Exception as e:
+        logger.warning(f"[pipeline] WalkForward failed: {e}")
+        wf_dict    = {"error": str(e)}
+        wf_summary = f"Walk-Forward 失敗: {e}"
+
+    # ── 8. 整合回傳 ───────────────────────────────────────────────────
+    return {
+        "stock_code":    req.stock_code,
+        "pipeline_ts":   str(pd.Timestamp.now())[:19],
+        "data_points":   len(feat_df),
+        "regime": {
+            "regime":      regime_result.regime.value,
+            "sub_label":   regime_result.sub_label,
+            "confidence":  regime_result.confidence,
+            "position_scale": regime_result.position_scale,
+            "note":        regime_result.note,
+        },
+        "factor_ic": {
+            "valid_factors": ic_report["valid_factors"],
+            "top5":          ic_report["top5"],
+            "weights_snapshot": dict(list(factor_weights.items())[:8]),
+        },
+        "dynamic_weights": {
+            "mode":     dw_result.mode.value,
+            "top5":     dw_result.top5,
+        },
+        "alpha_portfolio": alpha_result.to_dict(),
+        "risk_stop_loss":  stop_result,
+        "walk_forward":    wf_dict,
+        "wf_summary":      wf_summary,
+    }
+
+
+@router.get("/get_factor_ic", summary="取得因子 IC / ICIR 動態權重")
+async def get_factor_ic(
+    stock_code:   str = "2330",
+    forward_days: int = 5,
+):
+    """
+    計算指定股票的因子 IC / ICIR，套用淘汰規則後回傳動態權重字典。
+    """
+    df      = await _fetch_kline(stock_code)
+    feat_df = _build_features(df)
+
+    if len(feat_df) < 80:
+        raise HTTPException(422, f"資料不足（{len(feat_df)}筆），需 ≥ 80")
+
+    engine  = FactorICEngine(feat_df, forward_days=forward_days)
+    report  = engine.full_report(DEFAULT_FACTORS)
+    return {
+        "stock_code":     stock_code,
+        "forward_days":   forward_days,
+        "data_points":    len(feat_df),
+        **report,
+    }
+
+
+@router.get("/get_regime", summary="取得 Market Regime v2 盤態")
+async def get_regime_v2(stock_code: str = "2330"):
+    """
+    使用 RegimeEngine v2 偵測盤態（bull/bear/sideways/volatile）。
+    回傳策略分配建議與倉位乘數。
+    """
+    df      = await _fetch_kline(stock_code)
+    feat_df = _build_features(df)
+
+    engine = RegimeEngine()
+    result = engine.detect(feat_df)
+    return {
+        "stock_code": stock_code,
+        "data_points": len(feat_df),
+        **result.to_dict(),
+    }
+
+
+@router.post("/walk_forward", summary="Walk-Forward 防過擬合回測")
+async def walk_forward_backtest(req: PipelineRequest):
+    """
+    執行 Walk-Forward 回測，輸出每段績效 + 穩定性分析。
+    """
+    from .backtest_engine import WalkForwardEngine
+    from .alpha_model import RuleBasedAlpha
+
+    df      = await _fetch_kline(req.stock_code)
+    feat_df = _build_features(df)
+
+    if len(feat_df) < req.train_days + req.test_days:
+        raise HTTPException(422, f"資料不足（{len(feat_df)}筆）")
+
+    def _signal_fn(train_df):
+        alpha = RuleBasedAlpha()
+        return pd.Series([alpha.evaluate(row).signal.value
+                          for _, row in train_df.iterrows()])
+
+    wf = WalkForwardEngine(
+        train_days=req.train_days,
+        test_days=req.test_days,
+        initial_capital=req.initial_capital,
+        commission_discount=req.commission_discount,
+    )
+    try:
+        result = wf.run(feat_df, signal_fn=_signal_fn, stop_loss_pct=0.08)
+        d = result.to_dict()
+        d["summary_text"] = result.summary()
+        return d
+    except Exception as e:
+        raise HTTPException(422, str(e))
 
 
 # ── 將 router 掛到 app（獨立啟動時）─────────────────────────────────────────

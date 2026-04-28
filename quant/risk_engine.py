@@ -486,3 +486,187 @@ if __name__ == "__main__":
     var = re.calc_var(returns, confidence=0.95, method="historical", portfolio_value=1_000_000)
     print(f"歷史 VaR(95%): {var['var_pct']*100:.2f}%  金額: NT${var['var_amount']:,.0f}")
     print(f"CVaR(95%):    {var['cvar_pct']*100:.2f}%  金額: NT${var['cvar_amount']:,.0f}")
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  風控系統 v2 — PositionSizer / DrawdownController / VolAdjuster
+# ═══════════════════════════════════════════════════════════════════
+
+from dataclasses import dataclass as _dc
+from typing import Optional as _Opt
+
+@_dc
+class PositionSizeResult:
+    stock_code:    str
+    sector:        str
+    raw_pct:       float      # 原始計算倉位%
+    adjusted_pct:  float      # 套用所有限制後
+    blocked:       bool
+    block_reason:  str
+
+@_dc
+class PortfolioSnapshot:
+    holdings: dict          # {code: {sector, weight}}
+    total_value: float
+
+class PositionSizerV2:
+    """
+    倉位管理 v2：
+      - 單一股票 <= max_single_pct（預設 10%）
+      - 單一產業 <= max_sector_pct（預設 30%）
+    """
+    def __init__(self, max_single_pct=0.10, max_sector_pct=0.30):
+        self.max_single = max_single_pct
+        self.max_sector = max_sector_pct
+
+    def check(self, code, sector, proposed_pct, portfolio: PortfolioSnapshot) -> PositionSizeResult:
+        blocked, reason = False, ""
+        adj = min(proposed_pct, self.max_single)
+        if adj < proposed_pct:
+            reason = f"單一股票上限 {self.max_single*100:.0f}%（原{proposed_pct*100:.1f}%）"
+
+        # 計算該產業目前倉位
+        sector_now = sum(
+            v["weight"] for v in portfolio.holdings.values()
+            if v.get("sector") == sector
+        )
+        if sector_now + adj > self.max_sector:
+            headroom = max(0.0, self.max_sector - sector_now)
+            if headroom < 0.01:
+                blocked = True
+                reason = f"產業 {sector} 已達上限 {self.max_sector*100:.0f}%"
+                adj = 0.0
+            else:
+                adj = headroom
+                reason += f"; 產業 {sector} 限縮至 {adj*100:.1f}%"
+
+        return PositionSizeResult(
+            stock_code=code, sector=sector,
+            raw_pct=proposed_pct, adjusted_pct=round(adj, 4),
+            blocked=blocked, block_reason=reason,
+        )
+
+class DynamicStopLoss:
+    """
+    動態停損 v2：min(ATR*mult, fixed_pct) 取較小值（保護更嚴格）
+    預設：ATR*2 或 -8%，取絕對值較小者（即保護效果更強）
+    """
+    def __init__(self, atr_mult=2.0, fixed_pct=0.08):
+        self.atr_mult  = atr_mult
+        self.fixed_pct = fixed_pct
+
+    def calc(self, entry: float, atr: float) -> dict:
+        atr_stop_pct   = (atr * self.atr_mult) / entry if entry > 0 else self.fixed_pct
+        stop_pct       = min(atr_stop_pct, self.fixed_pct)   # 取較嚴格（較小）
+        stop_price     = round(entry * (1 - stop_pct), 2)
+        return {
+            "entry":        round(entry, 2),
+            "stop_price":   stop_price,
+            "stop_pct":     round(stop_pct, 4),
+            "atr_stop_pct": round(atr_stop_pct, 4),
+            "fixed_pct":    self.fixed_pct,
+            "method":       "atr" if atr_stop_pct < self.fixed_pct else "fixed",
+        }
+
+class DrawdownControllerV2:
+    """
+    回撤控制 v2：
+      DD > 15% → 倉位 × 0.5（減半）
+      DD > 25% → 清倉（position=0）
+    回傳倉位乘數 0~1。
+    """
+    def __init__(self, warn_dd=0.15, clear_dd=0.25):
+        self.warn_dd  = warn_dd
+        self.clear_dd = clear_dd
+        self._peak    = 0.0
+
+    def update_and_scale(self, equity: float) -> dict:
+        self._peak = max(self._peak, equity)
+        dd = (self._peak - equity) / self._peak if self._peak > 0 else 0.0
+        if dd >= self.clear_dd:
+            scale, state = 0.0, "clear"
+        elif dd >= self.warn_dd:
+            scale, state = 0.5, "half"
+        else:
+            scale, state = 1.0, "normal"
+        return {"drawdown_pct": round(dd, 4), "position_scale": scale, "state": state, "peak": self._peak}
+
+class VolatilityAdjusterV2:
+    """
+    波動率調整 v2：
+      20日波動率 > 歷史均值 × vol_threshold → 倉位 × vol_scale
+    """
+    def __init__(self, vol_threshold=1.5, vol_scale=0.7):
+        self.threshold = vol_threshold
+        self.scale     = vol_scale
+
+    def adjust(self, vol_20d: float, vol_mean: float) -> dict:
+        ratio  = vol_20d / vol_mean if vol_mean > 0 else 1.0
+        scale  = self.scale if ratio > self.threshold else 1.0
+        return {
+            "vol_20d":   round(vol_20d, 4),
+            "vol_mean":  round(vol_mean, 4),
+            "vol_ratio": round(ratio, 3),
+            "scale":     scale,
+            "triggered": ratio > self.threshold,
+        }
+
+class RiskManagerV2:
+    """
+    整合風控 v2 所有子模組的門面類別。
+    供 execution_engine 呼叫：
+        rm = RiskManagerV2()
+        scale = rm.full_check(code, sector, entry, atr, equity, vol_20d, vol_mean, portfolio)
+    """
+    def __init__(
+        self,
+        max_single_pct=0.10, max_sector_pct=0.30,
+        atr_mult=2.0, fixed_stop=0.08,
+        warn_dd=0.15, clear_dd=0.25,
+        vol_threshold=1.5, vol_scale=0.7,
+    ):
+        self.position_sizer = PositionSizerV2(max_single_pct, max_sector_pct)
+        self.stop_loss      = DynamicStopLoss(atr_mult, fixed_stop)
+        self.dd_ctrl        = DrawdownControllerV2(warn_dd, clear_dd)
+        self.vol_adj        = VolatilityAdjusterV2(vol_threshold, vol_scale)
+
+    def full_check(
+        self, code, sector, entry, atr,
+        equity, vol_20d, vol_mean,
+        portfolio: PortfolioSnapshot,
+        proposed_pct=0.10,
+    ) -> dict:
+        """
+        執行所有風控檢查，回傳最終倉位乘數和停損價。
+        """
+        pos_result = self.position_sizer.check(code, sector, proposed_pct, portfolio)
+        stop_result = self.stop_loss.calc(entry, atr)
+        dd_result   = self.dd_ctrl.update_and_scale(equity)
+        vol_result  = self.vol_adj.adjust(vol_20d, vol_mean)
+
+        final_scale = pos_result.adjusted_pct
+        final_scale *= dd_result["position_scale"]
+        final_scale *= vol_result["scale"]
+
+        trade_ok = not pos_result.blocked and dd_result["state"] != "clear"
+
+        return {
+            "trade_ok":       trade_ok,
+            "final_pct":      round(final_scale, 4),
+            "stop_price":     stop_result["stop_price"],
+            "stop_pct":       stop_result["stop_pct"],
+            "stop_method":    stop_result["method"],
+            "dd_state":       dd_result["state"],
+            "dd_pct":         dd_result["drawdown_pct"],
+            "vol_triggered":  vol_result["triggered"],
+            "position_block": pos_result.blocked,
+            "block_reason":   pos_result.block_reason,
+        }
+
+_global_rm_v2: _Opt[RiskManagerV2] = None
+
+def get_risk_manager_v2() -> RiskManagerV2:
+    global _global_rm_v2
+    if _global_rm_v2 is None:
+        _global_rm_v2 = RiskManagerV2()
+    return _global_rm_v2

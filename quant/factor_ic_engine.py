@@ -1,21 +1,25 @@
 """
-factor_ic_engine.py — 因子 IC / ICIR 評估引擎
+factor_ic_engine.py — 因子 IC / ICIR 評估引擎 v2（機構級）
 
-IC (Information Coefficient) = 因子值與未來報酬率的相關係數（Spearman）
-ICIR = IC.mean() / IC.std()  —— 越高代表因子越穩定有效
+核心指標：
+  IC      = Spearman(factor_t, fwd_return_t)  每日計算
+  IC_mean = rolling(IC, 60).mean()
+  IC_std  = rolling(IC, 60).std()
+  ICIR    = IC_mean / IC_std
 
-核心功能：
-  1. 計算單因子的滾動 IC（每期 vs 下 N 日報酬）
-  2. 計算 IC 均值、IC 標準差、ICIR、IC>0 勝率
-  3. 批次評估多因子，依 ICIR 排序篩選有效因子
-  4. 因子 IC 衰退加權（越新的 IC 佔比越高）
-  5. 輸出 FactorReport 可直接供 ensemble_engine 使用
+因子淘汰規則：
+  IC_mean < 0      → weight = 0（反向因子，不使用）
+  ICIR    < 0.1    → weight *= 0.5（不穩定因子，減半）
+  ICIR    < 0      → weight = 0（IC 均值為負）
+
+輸出：
+  get_factor_weights() → {feature_name: weight}  動態權重字典
+  可直接 plug 到 DynamicWeightEngine / EnsembleEngine
 
 使用方式：
     engine = FactorICEngine(feat_df, forward_days=5)
-    report = engine.evaluate_factor("rsi14")
-    summary = engine.evaluate_all(DEFAULT_FACTORS)
-    top = engine.top_factors(summary, n=5)
+    weights = engine.get_factor_weights()   # {factor: weight}
+    report  = engine.full_report()          # 完整分析表
 """
 
 from __future__ import annotations
@@ -30,297 +34,260 @@ from scipy import stats as scipy_stats
 
 logger = logging.getLogger(__name__)
 
-# 有效因子門檻
-MIN_IC_ABS       = 0.02     # |IC 均值| 最小值
-MIN_ICIR         = 0.30     # ICIR 最小值（穩定性）
-MIN_IC_WIN_RATE  = 0.50     # IC>0 勝率最小值（方向一致性）
-MIN_VALID_PERIODS = 20      # 計算 ICIR 所需最少期數
+# ── 預設評估因子 ──────────────────────────────────────────────────────────────
 
-DECAY_ALPHA = 0.95          # IC 時序指數衰退係數（最近 IC 權重較高）
-
-# 預設評估的因子列表（對應 FeatureEngine 欄位名）
 DEFAULT_FACTORS = [
-    "rsi14",
-    "macd_hist",
-    "vol_ratio",
-    "boll_b",
-    "obv_slope5",
-    "ma5",
-    "ma20",
-    "ma60",
-    "k", "d",
+    "rsi14", "macd_hist", "vol_ratio", "boll_b", "obv_slope5",
+    "ma5", "ma20", "ma60", "k", "d",
     "ret_1d", "ret_5d", "ret_10d", "ret_20d",
-    "atr14",
-    "excess_ret",
-    "body_ratio",
-    "hl_ratio",
-    "boll_width",
+    "atr14", "excess_ret", "body_ratio", "hl_ratio", "boll_width",
 ]
+
+# 因子淘汰門檻
+IC_MEAN_MIN   =  0.0    # IC_mean < 0 → weight = 0
+ICIR_HALF_THR =  0.10   # ICIR < 0.1 → weight × 0.5
+ICIR_ZERO_THR =  0.0    # ICIR < 0   → weight = 0
+IC_WINDOW     = 60      # 滾動計算窗口（天）
 
 
 @dataclass
 class FactorReport:
-    """單一因子的 IC 分析報告"""
-    factor:       str
-    n_periods:    int           # 有效計算期數
-    ic_mean:      float         # IC 均值（Spearman）
-    ic_std:       float         # IC 標準差
-    icir:         float         # = ic_mean / ic_std
-    ic_win_rate:  float         # IC > 0 的比例
-    ic_decay_mean: float        # 衰退加權 IC 均值
-    is_valid:     bool          # 是否通過有效門檻
-    direction:    int           # +1 / -1（因子正向或負向）
-    invalidate_reason: str = ""  # 不通過原因（is_valid=False 時填入）
+    """單一因子完整 IC 分析結果"""
+    factor:        str
+    n_obs:         int         # 有效觀測期數
+    ic_mean:       float       # 60日滾動 IC 均值（最新）
+    ic_std:        float       # 60日滾動 IC 標準差
+    icir:          float       # = ic_mean / ic_std
+    ic_win_rate:   float       # IC > 0 的比例
+    ic_decay_mean: float       # 指數衰退加權 IC 均值
+    weight:        float       # 最終動態權重（已套用淘汰規則）
+    is_valid:      bool
+    elimination_reason: str = ""
+    daily_ic:      list[float] = field(default_factory=list)   # IC 時序
 
     def to_dict(self) -> dict:
         return {
-            "factor":         self.factor,
-            "n_periods":      self.n_periods,
-            "ic_mean":        round(self.ic_mean, 4),
-            "ic_std":         round(self.ic_std, 4),
-            "icir":           round(self.icir, 3),
-            "ic_win_rate":    round(self.ic_win_rate, 3),
-            "ic_decay_mean":  round(self.ic_decay_mean, 4),
-            "is_valid":       self.is_valid,
-            "direction":      self.direction,
-            "invalidate_reason": self.invalidate_reason,
+            "factor":             self.factor,
+            "n_obs":              self.n_obs,
+            "ic_mean":            round(self.ic_mean, 4),
+            "ic_std":             round(self.ic_std, 4),
+            "icir":               round(self.icir, 3),
+            "ic_win_rate":        round(self.ic_win_rate, 3),
+            "ic_decay_mean":      round(self.ic_decay_mean, 4),
+            "weight":             round(self.weight, 4),
+            "is_valid":           self.is_valid,
+            "elimination_reason": self.elimination_reason,
         }
-
-
-@dataclass
-class EnsembleWeight:
-    """供 ensemble_engine 使用的因子加權資訊"""
-    factor:    str
-    weight:    float    # ICIR 歸一化後的權重（0~1）
-    direction: int      # +1 / -1（決定訊號方向）
-    icir:      float
 
 
 class FactorICEngine:
     """
     因子 IC / ICIR 計算引擎。
 
-    feat_df: FeatureEngine.compute_all() 的輸出 DataFrame
-             必須包含 close 欄位用於計算前瞻報酬率。
-    forward_days: 計算前瞻報酬的天數（預設 5 日）
-    rolling_window: 滾動 IC 的視窗長度（預設 60 期）
+    feat_df    : FeatureEngine.compute_all() 輸出，必須含 close 欄位
+    forward_days: 前瞻報酬天數（預設 5 日）
+    ic_window  : 滾動 IC 統計窗口（預設 60 日）
     """
 
     def __init__(
         self,
         feat_df: pd.DataFrame,
         forward_days: int = 5,
-        rolling_window: int = 60,
+        ic_window: int = IC_WINDOW,
+        decay_alpha: float = 0.95,
     ):
         if "close" not in feat_df.columns:
-            raise ValueError("feat_df 必須包含 close 欄位")
+            raise ValueError("feat_df 必須含 close 欄位")
 
-        self.df = feat_df.copy().reset_index(drop=True)
-        self.forward_days  = forward_days
-        self.rolling_window = rolling_window
+        self.df           = feat_df.copy().reset_index(drop=True)
+        self.forward_days = forward_days
+        self.ic_window    = ic_window
+        self.decay_alpha  = decay_alpha
 
-        # 計算前瞻報酬（shift 避免未來資料洩漏）
+        # 預計算前瞻報酬（shift 避免未來資料洩漏）
         self.df["_fwd_ret"] = (
             self.df["close"].pct_change(forward_days).shift(-forward_days)
         )
 
-    # ── 單因子 IC ─────────────────────────────────────────────────────────
+    # ── 單因子每日 IC ─────────────────────────────────────────────────────────
 
-    def _rolling_ic(self, factor_col: str) -> pd.Series:
-        """計算逐期（滾動視窗）Spearman IC 序列"""
-        ic_vals: list[float] = []
-        n = len(self.df)
-        window = self.rolling_window
+    def compute_daily_ic(self, factor: str) -> pd.Series:
+        """
+        每日計算 IC：
+        day t 的 IC = Spearman corr(factor[t-window:t], fwd_ret[t-window:t])
 
-        for i in range(window, n):
-            window_df = self.df.iloc[i - window: i]
-            x = window_df[factor_col].values
-            y = window_df["_fwd_ret"].values
-            mask = ~(np.isnan(x) | np.isnan(y))
+        回傳長度 = len(df)，前 ic_window 期為 NaN。
+        """
+        if factor not in self.df.columns:
+            return pd.Series([np.nan] * len(self.df))
+
+        ic_vals = [np.nan] * len(self.df)
+        x_arr   = self.df[factor].values
+        y_arr   = self.df["_fwd_ret"].values
+        W       = self.ic_window
+
+        for t in range(W, len(self.df)):
+            x_win = x_arr[t - W: t]
+            y_win = y_arr[t - W: t]
+            mask  = ~(np.isnan(x_win) | np.isnan(y_win))
             if mask.sum() < 10:
-                ic_vals.append(np.nan)
                 continue
-            rho, _ = scipy_stats.spearmanr(x[mask], y[mask])
-            ic_vals.append(float(rho) if not np.isnan(rho) else np.nan)
+            try:
+                rho, _ = scipy_stats.spearmanr(x_win[mask], y_win[mask])
+                if not np.isnan(rho):
+                    ic_vals[t] = float(rho)
+            except Exception:
+                pass
 
         return pd.Series(ic_vals, dtype=float)
 
-    def _decay_weighted_mean(self, ic_series: pd.Series) -> float:
-        """對 IC 序列套用指數衰退加權，越新的 IC 佔比越高"""
-        vals = ic_series.dropna().values
-        if len(vals) == 0:
-            return 0.0
-        n = len(vals)
-        weights = np.array([DECAY_ALPHA ** (n - 1 - i) for i in range(n)])
-        weights /= weights.sum()
-        return float(np.dot(weights, vals))
+    # ── 單因子完整評估 ────────────────────────────────────────────────────────
 
     def evaluate_factor(self, factor: str) -> FactorReport:
-        """評估單一因子的 IC 統計量，回傳 FactorReport"""
-        if factor not in self.df.columns:
+        """計算單因子所有 IC 統計，套用淘汰規則，回傳 FactorReport"""
+        daily_ic = self.compute_daily_ic(factor)
+        valid    = daily_ic.dropna()
+        n        = len(valid)
+
+        # 資料不足
+        if n < 20:
             return FactorReport(
-                factor=factor, n_periods=0,
-                ic_mean=0.0, ic_std=0.0, icir=0.0,
-                ic_win_rate=0.0, ic_decay_mean=0.0,
-                is_valid=False, direction=0,
-                invalidate_reason=f"欄位 '{factor}' 不存在",
+                factor=factor, n_obs=n,
+                ic_mean=0.0, ic_std=1e-8, icir=0.0, ic_win_rate=0.5,
+                ic_decay_mean=0.0, weight=0.0, is_valid=False,
+                elimination_reason=f"有效觀測 {n} < 20",
+                daily_ic=[],
             )
 
-        ic_series = self._rolling_ic(factor)
-        valid = ic_series.dropna()
-        n = len(valid)
+        ic_mean  = float(valid.mean())
+        ic_std   = float(valid.std()) if valid.std() > 1e-8 else 1e-8
+        icir     = ic_mean / ic_std
+        win_rate = float((valid > 0).mean())
 
-        if n < MIN_VALID_PERIODS:
-            return FactorReport(
-                factor=factor, n_periods=n,
-                ic_mean=0.0, ic_std=0.0, icir=0.0,
-                ic_win_rate=0.0, ic_decay_mean=0.0,
-                is_valid=False, direction=0,
-                invalidate_reason=f"有效期數 {n} < 門檻 {MIN_VALID_PERIODS}",
-            )
+        # 指數衰退加權均值（越新的 IC 佔比越大）
+        vals_arr = valid.values
+        n_v      = len(vals_arr)
+        w_arr    = np.array([self.decay_alpha ** (n_v - 1 - i) for i in range(n_v)])
+        w_arr   /= w_arr.sum()
+        ic_decay = float(np.dot(w_arr, vals_arr))
 
-        ic_mean      = float(valid.mean())
-        ic_std       = float(valid.std()) if valid.std() > 1e-8 else 1e-8
-        icir         = ic_mean / ic_std
-        ic_win_rate  = float((valid > 0).mean())
-        ic_decay_mean = self._decay_weighted_mean(valid)
-        direction    = 1 if ic_mean >= 0 else -1
-
-        # 有效性判斷
+        # ── 淘汰規則 ─────────────────────────────────────────────────────
+        weight = 1.0
         reasons: list[str] = []
-        if abs(ic_mean) < MIN_IC_ABS:
-            reasons.append(f"|IC均值|={abs(ic_mean):.4f} < {MIN_IC_ABS}")
-        if abs(icir) < MIN_ICIR:
-            reasons.append(f"|ICIR|={abs(icir):.3f} < {MIN_ICIR}")
-        # 方向一致性：勝率在方向上需 >= 50%
-        directional_win = ic_win_rate if ic_mean >= 0 else (1 - ic_win_rate)
-        if directional_win < MIN_IC_WIN_RATE:
-            reasons.append(f"方向勝率={directional_win*100:.1f}% < {MIN_IC_WIN_RATE*100:.0f}%")
 
-        is_valid = len(reasons) == 0
+        if ic_mean < IC_MEAN_MIN:
+            weight = 0.0
+            reasons.append(f"IC均值={ic_mean:.4f}<0（反向因子）")
+        if icir < ICIR_ZERO_THR:
+            weight = 0.0
+            reasons.append(f"ICIR={icir:.3f}<0")
+        if weight > 0 and icir < ICIR_HALF_THR:
+            weight *= 0.5
+            reasons.append(f"ICIR={icir:.3f}<{ICIR_HALF_THR}（不穩定，減半）")
+
+        # 有效因子：以 |ICIR| 作為基礎權重（後續歸一化）
+        if weight > 0:
+            weight = weight * abs(icir)
+
+        is_valid = weight > 0 and not reasons[:1]  # 第一條 reason 為淘汰理由
 
         return FactorReport(
             factor=factor,
-            n_periods=n,
+            n_obs=n,
             ic_mean=round(ic_mean, 4),
             ic_std=round(ic_std, 4),
             icir=round(icir, 3),
-            ic_win_rate=round(ic_win_rate, 3),
-            ic_decay_mean=round(ic_decay_mean, 4),
+            ic_win_rate=round(win_rate, 3),
+            ic_decay_mean=round(ic_decay, 4),
+            weight=round(weight, 4),
             is_valid=is_valid,
-            direction=direction,
-            invalidate_reason="; ".join(reasons),
+            elimination_reason="; ".join(reasons),
+            daily_ic=valid.tolist()[-30:],   # 只保留最近 30 日 IC，節省記憶體
         )
 
-    # ── 多因子批次評估 ───────────────────────────────────────────────────
+    # ── 批次評估 ─────────────────────────────────────────────────────────────
 
     def evaluate_all(self, factors: list[str] = DEFAULT_FACTORS) -> list[FactorReport]:
-        """批次評估多因子，依 |ICIR| 排序（有效在前）"""
-        reports = []
+        """批次評估所有因子，依 weight 排序（有效在前）"""
+        reports: list[FactorReport] = []
         for f in factors:
             try:
                 r = self.evaluate_factor(f)
             except Exception as e:
-                logger.warning(f"[FactorIC] {f} 評估失敗: {e}")
+                logger.warning("[FactorIC] %s 評估失敗: %s", f, e)
                 r = FactorReport(
-                    factor=f, n_periods=0,
-                    ic_mean=0.0, ic_std=0.0, icir=0.0,
-                    ic_win_rate=0.0, ic_decay_mean=0.0,
-                    is_valid=False, direction=0,
-                    invalidate_reason=str(e),
+                    factor=f, n_obs=0,
+                    ic_mean=0.0, ic_std=1e-8, icir=0.0, ic_win_rate=0.5,
+                    ic_decay_mean=0.0, weight=0.0, is_valid=False,
+                    elimination_reason=str(e),
                 )
             reports.append(r)
-            logger.debug(
-                f"[FactorIC] {f:20s} IC={r.ic_mean:+.4f} "
-                f"ICIR={r.icir:+.3f} valid={r.is_valid}"
-            )
+            logger.debug("[FactorIC] %-20s IC=%.4f ICIR=%.3f w=%.4f valid=%s",
+                         f, r.ic_mean, r.icir, r.weight, r.is_valid)
 
-        # 有效因子優先，再依 |ICIR| 排序
-        return sorted(reports, key=lambda r: (not r.is_valid, -abs(r.icir)))
+        return sorted(reports, key=lambda r: -r.weight)
 
-    def top_factors(
+    # ── 動態權重字典（主要輸出）─────────────────────────────────────────────
+
+    def get_factor_weights(
         self,
-        reports: list[FactorReport],
-        n: int = 5,
-        valid_only: bool = True,
-    ) -> list[FactorReport]:
-        """取前 N 個有效因子"""
-        filtered = [r for r in reports if r.is_valid] if valid_only else reports
-        return filtered[:n]
+        factors: list[str] = DEFAULT_FACTORS,
+        normalize: bool = True,
+    ) -> dict[str, float]:
+        """
+        主要輸出：{feature_name: weight} 動態權重字典。
+        已套用淘汰規則，可直接 plug 到 DynamicWeightEngine。
 
-    # ── 轉換為 ensemble_engine 加權格式 ─────────────────────────────────
+        normalize=True：所有有效因子權重歸一化，總和 = 1.0
+        """
+        reports = self.evaluate_all(factors)
+        weights = {r.factor: r.weight for r in reports}
 
-    def to_ensemble_weights(
+        if normalize:
+            total = sum(w for w in weights.values() if w > 0)
+            if total > 0:
+                weights = {
+                    k: round(v / total, 6) if v > 0 else 0.0
+                    for k, v in weights.items()
+                }
+        return weights
+
+    # ── 完整報告 ─────────────────────────────────────────────────────────────
+
+    def full_report(
         self,
-        reports: list[FactorReport],
-        valid_only: bool = True,
-    ) -> list[EnsembleWeight]:
+        factors: list[str] = DEFAULT_FACTORS,
+    ) -> dict:
+        """回傳完整分析報告（用於 API 輸出）"""
+        reports = self.evaluate_all(factors)
+        valid_n = sum(1 for r in reports if r.is_valid)
+        weights = self.get_factor_weights(factors)
+
+        return {
+            "forward_days":  self.forward_days,
+            "ic_window":     self.ic_window,
+            "n_factors":     len(reports),
+            "valid_factors": valid_n,
+            "weights":       weights,
+            "factors": [r.to_dict() for r in reports],
+            "top5": [
+                {"factor": r.factor, "icir": r.icir, "weight": r.weight}
+                for r in reports[:5]
+            ],
+        }
+
+    # ── 快速更新（每日增量計算）──────────────────────────────────────────────
+
+    @classmethod
+    def from_updated_df(
+        cls,
+        new_feat_df: pd.DataFrame,
+        factors: list[str] = DEFAULT_FACTORS,
+        forward_days: int = 5,
+    ) -> dict[str, float]:
         """
-        將 FactorReport 列表轉換為 EnsembleWeight，
-        以 |ICIR| 歸一化為 0~1 權重。
+        便利方法：直接傳入最新 feat_df，回傳更新後的因子權重字典。
+        適合每日排程呼叫。
         """
-        valid_reports = [r for r in reports if (r.is_valid or not valid_only) and r.n_periods > 0]
-        if not valid_reports:
-            return []
-
-        icirs = np.array([abs(r.icir) for r in valid_reports])
-        total = icirs.sum()
-        if total < 1e-8:
-            weights = np.ones(len(icirs)) / len(icirs)
-        else:
-            weights = icirs / total
-
-        return [
-            EnsembleWeight(
-                factor=r.factor,
-                weight=round(float(w), 4),
-                direction=r.direction,
-                icir=r.icir,
-            )
-            for r, w in zip(valid_reports, weights)
-        ]
-
-    # ── IC 摘要表 ────────────────────────────────────────────────────────
-
-    def summary_df(self, reports: list[FactorReport]) -> pd.DataFrame:
-        """轉換為 DataFrame，方便列印或輸出"""
-        rows = [r.to_dict() for r in reports]
-        df = pd.DataFrame(rows)
-        if df.empty:
-            return df
-        return df[[
-            "factor", "n_periods", "ic_mean", "ic_std", "icir",
-            "ic_win_rate", "ic_decay_mean", "direction", "is_valid",
-            "invalidate_reason",
-        ]]
-
-
-# ── 獨立測試 ─────────────────────────────────────────────────────────────────
-
-if __name__ == "__main__":
-    import sys
-    from pathlib import Path
-    sys.path.insert(0, str(Path(__file__).parent.parent))
-    from quant.feature_engine import FeatureEngine, _generate_mock_ohlcv
-
-    mock_df = _generate_mock_ohlcv(500)
-    fe = FeatureEngine(mock_df)
-    feat_df = fe.compute_all()
-
-    engine = FactorICEngine(feat_df, forward_days=5, rolling_window=60)
-
-    print("=== 因子 IC / ICIR 評估 ===")
-    reports = engine.evaluate_all(DEFAULT_FACTORS)
-    df = engine.summary_df(reports)
-    print(df.to_string(index=False))
-
-    print("\n=== 前 5 有效因子 ===")
-    top5 = engine.top_factors(reports, n=5)
-    for r in top5:
-        print(f"  {r.factor:20s} IC={r.ic_mean:+.4f}  ICIR={r.icir:+.3f}  "
-              f"勝率={r.ic_win_rate*100:.1f}%  方向={'多' if r.direction>0 else '空'}")
-
-    print("\n=== Ensemble 加權格式 ===")
-    weights = engine.to_ensemble_weights(reports)
-    for w in weights[:5]:
-        print(f"  {w.factor:20s} weight={w.weight:.4f}  dir={w.direction:+d}  ICIR={w.icir:+.3f}")
+        engine = cls(new_feat_df, forward_days=forward_days)
+        return engine.get_factor_weights(factors)
