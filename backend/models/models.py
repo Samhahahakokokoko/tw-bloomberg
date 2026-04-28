@@ -336,3 +336,72 @@ class IndustrySentiment(Base):
     ai_summary     = Column(Text)
     news_count     = Column(Integer, default=0)
     updated_at     = Column(DateTime, default=datetime.utcnow)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 進階功能 v3 — RL 回饋 + 分點追蹤 + 投組最佳化
+# ══════════════════════════════════════════════════════════════════════════════
+
+class RecommendationResult(Base):
+    """推薦結果追蹤 — 記錄每次 AI 推薦，並回填後續股價驗證準確率"""
+    __tablename__ = "recommendation_results"
+    __table_args__ = (UniqueConstraint("stock_code", "recommend_date"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    stock_code         = Column(String(10), index=True, nullable=False)
+    stock_name         = Column(String(50))
+    recommend_date     = Column(String(10), nullable=False, index=True)  # YYYY-MM-DD
+    recommend_price    = Column(Float)                                    # 推薦當日收盤
+    fundamental_score  = Column(Float, default=0)
+    chip_score         = Column(Float, default=0)
+    technical_score    = Column(Float, default=0)
+    total_score        = Column(Float, default=0)
+    confidence         = Column(Float, default=0)
+    ai_reason          = Column(Text)
+    # 後驗結果（每日回填）
+    price_5d           = Column(Float)     # 5 交易日後收盤
+    price_10d          = Column(Float)     # 10 交易日後收盤
+    return_5d          = Column(Float)     # 5 日報酬率 %
+    return_10d         = Column(Float)     # 10 日報酬率 %
+    hit_target_5d      = Column(Boolean)   # 5 日漲幅 > 3%
+    hit_target_10d     = Column(Boolean)   # 10 日漲幅 > 3%
+    is_filled_5d       = Column(Boolean, default=False)
+    is_filled_10d      = Column(Boolean, default=False)
+    created_at         = Column(DateTime, default=datetime.utcnow)
+
+
+class ScoringWeight(Base):
+    """動態評分權重 — 每週根據推薦準確率自動調整"""
+    __tablename__ = "scoring_weights"
+
+    id = Column(Integer, primary_key=True, index=True)
+    effective_date      = Column(String(10), unique=True, nullable=False, index=True)
+    fundamental_weight  = Column(Float, default=0.35)
+    chip_weight         = Column(Float, default=0.35)
+    technical_weight    = Column(Float, default=0.30)
+    # 上週各維度推薦成功率（回填完成後計算）
+    fundamental_win_rate = Column(Float)
+    chip_win_rate        = Column(Float)
+    technical_win_rate   = Column(Float)
+    overall_win_rate     = Column(Float)
+    notes               = Column(String(500))
+    created_at          = Column(DateTime, default=datetime.utcnow)
+
+
+class BrokerActivity(Base):
+    """券商分點交易快取 — 來源 FinMind BrokerTradingDetail"""
+    __tablename__ = "broker_activity"
+    __table_args__ = (UniqueConstraint("date", "stock_code", "broker_id"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    date          = Column(String(10), nullable=False, index=True)
+    stock_code    = Column(String(10), nullable=False, index=True)
+    stock_name    = Column(String(50))
+    broker_id     = Column(String(20), nullable=False)
+    broker_name   = Column(String(100), index=True)
+    buy_shares    = Column(Integer, default=0)    # 買進張數
+    sell_shares   = Column(Integer, default=0)    # 賣出張數
+    net_shares    = Column(Integer, default=0)    # 淨買超張數
+    buy_price     = Column(Float)                 # 均買價
+    sell_price    = Column(Float)                 # 均賣價
+    created_at    = Column(DateTime, default=datetime.utcnow)

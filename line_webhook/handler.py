@@ -234,6 +234,13 @@ async def _handle_text(text: str, uid: str) -> list:
     if cmd == "/help":                          return [_text(_help_text(), _home_qr())]
     if cmd == "/screener":                      return await _cmd_screener(parts[1] if len(parts) > 1 else "top")
     if cmd == "/find"     and len(parts) >= 2:  return await _cmd_nl_screener(" ".join(parts[1:]))
+    if cmd == "/accuracy":                      return await _cmd_accuracy()
+    if cmd == "/broker"   and len(parts) >= 2:  return await _cmd_broker(parts[1])
+    if cmd == "/track"    and len(parts) >= 2:  return await _cmd_track(" ".join(parts[1:]))
+    if cmd == "/smart":                         return await _cmd_smart_money()
+    if cmd == "/optimize":                      return await _cmd_optimize(uid)
+    if cmd == "/var":                           return await _cmd_var(uid)
+    if cmd == "/correlation":                   return await _cmd_correlation(uid)
 
     # ── 純數字 4-6 碼 → 直接查報價 ─────────────────────────────────────────
     t = text.strip()
@@ -684,6 +691,208 @@ async def _cmd_apply_rec(code: str, strategy: str, uid: str) -> list:
     )]
 
 
+async def _cmd_accuracy() -> list:
+    """查看 AI 推薦準確率統計"""
+    try:
+        from backend.services.recommendation_tracker import get_accuracy_stats
+        stats = await get_accuracy_stats(30)
+        if stats.get("total", 0) == 0:
+            return [_text(
+                "📊 推薦準確率\n\n"
+                "尚無回填完成的推薦記錄\n"
+                "（推薦後 5 個交易日才會計算）",
+                _home_qr()
+            )]
+        lines = [
+            "📊 AI 推薦準確率（近30日）",
+            "─" * 22,
+            f"總推薦：{stats['total']} 筆",
+            f"5日勝率：{stats['win_rate']:.1f}% ({stats['hits_5d']}/{stats['total']})",
+            f"平均報酬：{stats['avg_return']:+.2f}%",
+            f"成功門檻：+{stats['threshold']}%",
+        ]
+        if stats.get("best_picks"):
+            best = stats["best_picks"][0]
+            lines.append(f"\n🏆 最佳推薦：{best['stock_code']} {best.get('stock_name','')} ({best.get('return_5d',0):+.1f}%)")
+        if stats.get("worst_picks"):
+            worst = stats["worst_picks"][0]
+            lines.append(f"💔 最差推薦：{worst['stock_code']} {worst.get('stock_name','')} ({worst.get('return_5d',0):+.1f}%)")
+        return [_text("\n".join(lines), qr_items(("💼 庫存","/portfolio"),("📊 選股","/screener")))]
+    except Exception as e:
+        return [_text(f"❌ 查詢失敗：{e}")]
+
+
+async def _cmd_broker(stock_code: str) -> list:
+    """查詢特定股票前 10 大買超分點"""
+    try:
+        from backend.services.broker_tracker import get_top_brokers, fetch_broker_detail
+        # 先確保有快取資料
+        await fetch_broker_detail(stock_code, 10)
+        data = await get_top_brokers(stock_code, 10)
+        brokers = data.get("brokers", [])
+        if not brokers:
+            return [_text(
+                f"❌ {stock_code} 無分點資料\n"
+                "（免費版 FinMind 可能需要 token）",
+                _home_qr()
+            )]
+        lines = [f"🏦 {stock_code} 前10大買超分點（近10日）", "─" * 22]
+        for i, b in enumerate(brokers[:8], 1):
+            net = b.get("net_shares", 0)
+            sign = "+" if net >= 0 else ""
+            lines.append(f"{i}. {b.get('broker_name','?')}\n   {sign}{net:,}張  連買{b.get('days_bought',0)}日")
+        return [_text(
+            "\n".join(lines),
+            qr_items(("📈 報價", f"/quote {stock_code}"), ("🕵️ 主力訊號", "/smart"))
+        )]
+    except Exception as e:
+        return [_text(f"❌ 分點查詢失敗：{e}")]
+
+
+async def _cmd_track(broker_name: str) -> list:
+    """追蹤特定分點最近買了哪些股票"""
+    try:
+        from backend.services.broker_tracker import track_broker
+        data = await track_broker(broker_name, days=5)
+        stocks = data.get("stocks", [])
+        if not stocks:
+            return [_text(
+                f"🕵️ 分點追蹤：{broker_name}\n\n"
+                f"{data.get('message','無資料')}\n\n"
+                "💡 先用 /broker 代碼 查詢感興趣的股票建立快取",
+                _home_qr()
+            )]
+        lines = [f"🕵️ {broker_name} 近5日動向", "─" * 22]
+        for s in stocks[:6]:
+            lines.append(f"• {s['stock_code']} {s.get('stock_name','')} +{s['net_shares']:,}張 ({s['active_days']}日)")
+        return [_text("\n".join(lines), qr_items(("🕵️ 主力訊號", "/smart"), ("💼 庫存", "/portfolio")))]
+    except Exception as e:
+        return [_text(f"❌ 分點追蹤失敗：{e}")]
+
+
+async def _cmd_smart_money() -> list:
+    """偵測今日主力分點異動最大訊號"""
+    try:
+        from backend.services.broker_tracker import detect_smart_money
+        signals = await detect_smart_money()
+        if not signals:
+            return [_text(
+                "🕵️ 今日無明顯主力分點訊號\n"
+                "（需要先累積分點快取資料）\n\n"
+                "先用 /broker 代碼 查詢幾檔股票",
+                _home_qr()
+            )]
+        lines = ["🕵️ 聰明錢訊號", "─" * 22]
+        for s in signals[:6]:
+            lines.append(f"• {s['message']}")
+        return [_text(
+            "\n".join(lines),
+            qr_items(("📊 選股", "/screener"), ("💼 庫存", "/portfolio"))
+        )]
+    except Exception as e:
+        return [_text(f"❌ 訊號偵測失敗：{e}")]
+
+
+async def _cmd_optimize(uid: str) -> list:
+    """馬可維茲最佳持股比例推薦"""
+    try:
+        from backend.services.portfolio_optimizer import full_portfolio_analysis
+        result = await full_portfolio_analysis(uid)
+        if "error" in result:
+            return [_text(f"❌ {result['error']}", qr_items(("💼 庫存", "/portfolio")))]
+
+        opt   = result.get("optimal_portfolio", {})
+        curr  = result.get("current_performance", {})
+        suggs = result.get("rebalance_suggestions", [])
+        codes = result.get("codes", [])
+        opt_w = opt.get("weights", [])
+
+        lines = [
+            "📐 投組最佳化建議",
+            "─" * 22,
+            f"現有：報酬{curr.get('return',0):+.1f}% 波動{curr.get('volatility',0):.1f}% Sharpe{curr.get('sharpe',0):.2f}",
+            f"最佳：報酬{opt.get('return',0):+.1f}% 波動{opt.get('volatility',0):.1f}% Sharpe{opt.get('sharpe',0):.2f}",
+            "",
+            "調整建議（≥2% 差異）：",
+        ]
+        if suggs:
+            for s in suggs[:5]:
+                sign = "+" if s["change"] > 0 else ""
+                lines.append(f"• {s['stock_code']} {s['name']}: {s['current']}%→{s['optimal']}% ({sign}{s['change']}%，{s['action']})")
+        else:
+            lines.append("• 現有組合已接近最佳配置")
+
+        return [_text("\n".join(lines), qr_items(("💰 VaR", "/var"), ("🔗 相關性", "/correlation"), ("💼 庫存", "/portfolio")))]
+    except Exception as e:
+        return [_text(f"❌ 最佳化失敗：{e}")]
+
+
+async def _cmd_var(uid: str) -> list:
+    """計算庫存今日 VaR 風險值"""
+    try:
+        from backend.services.portfolio_optimizer import full_portfolio_analysis
+        result = await full_portfolio_analysis(uid)
+        if "error" in result:
+            return [_text(f"❌ {result['error']}")]
+        var = result.get("var", {})
+        if not var:
+            return [_text("❌ VaR 計算失敗，歷史資料不足")]
+        inv = var.get("investment", 0)
+        lines = [
+            "💰 庫存風險值 (VaR 95%)",
+            "─" * 22,
+            f"投資總額：{inv:,.0f} 元",
+            "",
+            "📊 歷史模擬法",
+            f"  單日最大虧損：{var.get('hist_var_amount',0):,.0f} 元 ({var.get('hist_var_pct',0):.2f}%)",
+            "",
+            "📐 參數法（常態假設）",
+            f"  單日最大虧損：{var.get('param_var_amount',0):,.0f} 元 ({var.get('param_var_pct',0):.2f}%)",
+            "",
+            f"CVaR（極端損失均值）：{var.get('cvar_amount',0):,.0f} 元",
+            f"歷史最差日：{var.get('worst_day_pct',0):.2f}%",
+        ]
+        return [_text("\n".join(lines), qr_items(("📐 最佳化", "/optimize"), ("🔗 相關性", "/correlation")))]
+    except Exception as e:
+        return [_text(f"❌ VaR 計算失敗：{e}")]
+
+
+async def _cmd_correlation(uid: str) -> list:
+    """分析庫存持股相關性"""
+    try:
+        from backend.services.portfolio_optimizer import full_portfolio_analysis
+        result = await full_portfolio_analysis(uid)
+        if "error" in result:
+            return [_text(f"❌ {result['error']}")]
+        corr = result.get("correlation", {})
+        if not corr:
+            return [_text("❌ 相關性計算失敗")]
+        warnings = corr.get("warnings", [])
+        lines = [
+            "🔗 持股相關性分析",
+            "─" * 22,
+        ]
+        if warnings:
+            lines.append(f"⚠️ 高度相關 (>0.8) 股票對：")
+            for w in warnings[:5]:
+                lines.append(f"  {w}")
+            lines.append("\n集中風險提示：高相關持股對分散效果有限")
+        else:
+            lines.append("✓ 持股相關性良好，分散效果佳")
+
+        codes = corr.get("codes", [])
+        matrix = corr.get("matrix", [])
+        if len(codes) >= 2 and matrix:
+            lines.append("\n相關係數矩陣（部分）：")
+            for i in range(min(3, len(codes))):
+                row = " ".join(f"{matrix[i][j]:+.2f}" for j in range(min(3, len(codes))))
+                lines.append(f"  {codes[i]}: {row}")
+
+        return [_text("\n".join(lines), qr_items(("📐 最佳化", "/optimize"), ("💰 VaR", "/var")))]
+    except Exception as e:
+        return [_text(f"❌ 相關性分析失敗：{e}")]
+
+
 async def _cmd_screener(preset_or_top: str = "top") -> list:
     """選股引擎 — 顯示前 10 高分股票或 preset"""
     try:
@@ -849,20 +1058,24 @@ def _help_text() -> str:
     return (
         "📋 指令說明\n"
         "─────────────\n"
-        "輸入 4 碼代碼   即時報價\n"
-        "「庫存」        查我的持股\n"
-        "「大盤」        大盤指數\n"
-        "「早報」        今日早報\n"
-        "/portfolio      我的庫存\n"
+        "輸入 4 碼        即時報價\n"
+        "「庫存」/「大盤」 口語查詢\n"
+        "/portfolio       我的庫存\n"
         "/buy 代碼 股數 成本\n"
-        "/sell 代碼 股數 價格\n"
         "/alert 代碼 類型 數值\n"
-        "/rec            策略推薦\n"
-        "/screener       多維度選股\n"
-        "/find 條件      自然語言選股\n"
-        "  例：/find 找外資連買法人大買\n"
-        "/ai_portfolio   AI庫存分析\n"
-        "/morning  /week /subscribe"
+        "\n📊 選股\n"
+        "/screener        多維度選股\n"
+        "/find 條件       自然語言選股\n"
+        "/accuracy        AI推薦準確率\n"
+        "\n🕵️ 分點追蹤\n"
+        "/broker 代碼     前10大分點\n"
+        "/track 分點名    分點持股動向\n"
+        "/smart           聰明錢訊號\n"
+        "\n📐 投組分析\n"
+        "/optimize        最佳持股比例\n"
+        "/var             風險值(VaR)\n"
+        "/correlation     持股相關性\n"
+        "\n/morning /week /subscribe"
     )
 
 

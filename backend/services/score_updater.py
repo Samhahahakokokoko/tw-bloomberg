@@ -95,7 +95,16 @@ async def calc_and_save_score(stock_code: str, today: str) -> bool:
         chip_score_val, chip_detail = score_chip(chips)
 
         all_detail = {**fund_detail, **chip_detail, **tech_detail}
-        total = calc_total_score(fund_score, chip_score_val, tech_score)
+
+        # 動態權重（來自 ScoringWeight 表，預設 0.35/0.35/0.30）
+        try:
+            from .recommendation_tracker import get_current_weights
+            w = await get_current_weights()
+            weights = (w["fundamental"], w["chip"], w["technical"])
+        except Exception:
+            weights = (0.35, 0.35, 0.30)
+
+        total = calc_total_score(fund_score, chip_score_val, tech_score, weights)
         conf  = calc_confidence(total, all_detail)
 
         # 取股票名稱

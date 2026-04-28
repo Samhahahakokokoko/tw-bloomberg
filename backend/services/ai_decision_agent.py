@@ -76,6 +76,7 @@ async def _generate_batch_reasons(stocks: list[dict]) -> dict[str, tuple[str, fl
 
 
 async def _save_ai_reasons(reasons: dict[str, tuple[str, float]], today: str):
+    # Bug fix: commit 必須在 async with 區塊內，否則 session 已關閉
     async with AsyncSessionLocal() as db:
         for code, (reason, conf) in reasons.items():
             r = await db.execute(
@@ -89,11 +90,11 @@ async def _save_ai_reasons(reasons: dict[str, tuple[str, float]], today: str):
                 rec.ai_reason  = reason
                 rec.confidence = conf
                 rec.updated_at = datetime.utcnow()
-        await db.commit()
+        await db.commit()  # 在 with 內 — 正確
 
 
 async def run_ai_decision():
-    """每日 19:00 執行：為高分股票產生 AI 推薦理由"""
+    """每日 19:00 執行：為高分股票產生 AI 推薦理由，並存入 recommendation_results"""
     today = date.today().strftime("%Y-%m-%d")
     logger.info("[AgentC] 決策員啟動...")
 
@@ -102,16 +103,29 @@ async def run_ai_decision():
         logger.info("[AgentC] 無評分資料，跳過")
         return
 
-    # 分批處理
+    # 分批產生 AI 推薦理由
     all_reasons: dict[str, tuple[str, float]] = {}
     for i in range(0, len(top), BATCH_SIZE):
         batch = top[i:i + BATCH_SIZE]
         reasons = await _generate_batch_reasons(batch)
         all_reasons.update(reasons)
         if i + BATCH_SIZE < len(top):
-            await asyncio.sleep(3)   # 避免 API rate limit
+            await asyncio.sleep(3)
 
     await _save_ai_reasons(all_reasons, today)
+
+    # 把 AI 理由回填進 top 資料後存入推薦追蹤表
+    for s in top:
+        code = s["stock_code"]
+        if code in all_reasons:
+            s["ai_reason"], s["confidence"] = all_reasons[code]
+
+    try:
+        from .recommendation_tracker import save_recommendations
+        await save_recommendations(top, today)
+    except Exception as e:
+        logger.error(f"[AgentC] save_recommendations error: {e}")
+
     logger.info(f"[AgentC] 完成：產生 {len(all_reasons)} 檔 AI 理由")
 
 

@@ -775,3 +775,101 @@ async def trigger_scoring():
     from ..services.score_updater import run_score_update
     asyncio.create_task(run_score_update())
     return {"status": "started"}
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# v3 進階功能 API
+# ══════════════════════════════════════════════════════════════════════════════
+
+# ── Recommendation Tracker — 推薦績效 ─────────────────────────────────────────
+
+@router.get("/accuracy")
+async def get_accuracy(days: int = Query(30, ge=7, le=90)):
+    from ..services.recommendation_tracker import get_accuracy_stats
+    return await get_accuracy_stats(days)
+
+
+@router.get("/accuracy/weights")
+async def get_weight_history(limit: int = Query(20, ge=5, le=60)):
+    from ..services.recommendation_tracker import get_weight_history
+    return await get_weight_history(limit)
+
+
+@router.get("/accuracy/weights/current")
+async def current_weights():
+    from ..services.recommendation_tracker import get_current_weights
+    return await get_current_weights()
+
+
+@router.post("/accuracy/backfill")
+async def trigger_backfill():
+    import asyncio
+    from ..services.recommendation_tracker import backfill_prices
+    asyncio.create_task(backfill_prices())
+    return {"status": "started"}
+
+
+@router.post("/accuracy/adjust-weights")
+async def trigger_weight_adjustment():
+    from ..services.recommendation_tracker import adjust_weights
+    await adjust_weights()
+    return {"status": "done"}
+
+
+# ── Broker Tracker — 分點追蹤 ─────────────────────────────────────────────────
+
+@router.get("/broker/{stock_code}")
+async def get_top_brokers(stock_code: str, days: int = Query(10, ge=3, le=30)):
+    from ..services.broker_tracker import get_top_brokers
+    return await get_top_brokers(stock_code, days)
+
+
+@router.get("/broker/track/{broker_name}")
+async def track_broker(broker_name: str, days: int = Query(5, ge=3, le=20)):
+    from ..services.broker_tracker import track_broker as _track
+    return await _track(broker_name, days)
+
+
+@router.get("/broker/smart-money/signals")
+async def smart_money_signals():
+    from ..services.broker_tracker import detect_smart_money
+    return await detect_smart_money()
+
+
+@router.post("/broker/{stock_code}/fetch")
+async def fetch_broker_data(stock_code: str, days: int = Query(10, ge=3, le=30)):
+    """手動觸發抓取並快取特定股票的分點資料"""
+    from ..services.broker_tracker import fetch_broker_detail
+    data = await fetch_broker_detail(stock_code, days)
+    return {"stock_code": stock_code, "rows": len(data)}
+
+
+# ── Portfolio Optimizer — 投組最佳化 ──────────────────────────────────────────
+
+@router.get("/portfolio/optimize")
+async def optimize_portfolio(user_id: str = Query("")):
+    from ..services.portfolio_optimizer import full_portfolio_analysis
+    result = await full_portfolio_analysis(user_id)
+    if "error" in result:
+        raise HTTPException(422, result["error"])
+    return result
+
+
+@router.get("/portfolio/var")
+async def portfolio_var(user_id: str = Query(""), confidence: float = Query(0.95)):
+    from ..services.portfolio_optimizer import (
+        get_returns_matrix, calc_var, full_portfolio_analysis,
+    )
+    result = await full_portfolio_analysis(user_id)
+    if "error" in result:
+        raise HTTPException(422, result["error"])
+    return result.get("var", {})
+
+
+@router.get("/portfolio/correlation")
+async def portfolio_correlation(user_id: str = Query("")):
+    from ..services.portfolio_optimizer import full_portfolio_analysis
+    result = await full_portfolio_analysis(user_id)
+    if "error" in result:
+        raise HTTPException(422, result["error"])
+    return result.get("correlation", {})

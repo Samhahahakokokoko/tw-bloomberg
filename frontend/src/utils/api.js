@@ -101,4 +101,22 @@ export const refreshIndustrySentiment = () => api.post("/api/industry/sentiment/
 export const triggerPipeline = (code) => api.post("/api/pipeline/run", null, { params: code ? { stock_code: code } : {} }).then(r => r.data);
 export const triggerScoring  = () => api.post("/api/pipeline/score").then(r => r.data);
 
+// ── Recommendation Tracker ────────────────────────────────────────────────────
+export const getAccuracyStats   = (days = 30) => api.get("/api/accuracy", { params: { days } }).then(r => r.data);
+export const getWeightHistory   = (limit = 20) => api.get("/api/accuracy/weights", { params: { limit } }).then(r => r.data);
+export const getCurrentWeights  = () => api.get("/api/accuracy/weights/current").then(r => r.data);
+export const triggerBackfill    = () => api.post("/api/accuracy/backfill").then(r => r.data);
+export const triggerWeightAdjust= () => api.post("/api/accuracy/adjust-weights").then(r => r.data);
+
+// ── Broker Tracker ────────────────────────────────────────────────────────────
+export const getTopBrokers      = (code, days = 10) => api.get(`/api/broker/${code}`, { params: { days } }).then(r => r.data);
+export const trackBroker        = (name, days = 5) => api.get(`/api/broker/track/${encodeURIComponent(name)}`, { params: { days } }).then(r => r.data);
+export const getSmartMoney      = () => api.get("/api/broker/smart-money/signals").then(r => r.data);
+export const fetchBrokerData    = (code, days = 10) => api.post(`/api/broker/${code}/fetch`, null, { params: { days } }).then(r => r.data);
+
+// ── Portfolio Optimizer ───────────────────────────────────────────────────────
+export const optimizePortfolio  = (userId = "") => api.get("/api/portfolio/optimize", { params: { user_id: userId } }).then(r => r.data);
+export const getPortfolioVar    = (userId = "") => api.get("/api/portfolio/var", { params: { user_id: userId } }).then(r => r.data);
+export const getCorrelation     = (userId = "") => api.get("/api/portfolio/correlation", { params: { user_id: userId } }).then(r => r.data);
+
 export default api;

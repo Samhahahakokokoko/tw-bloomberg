@@ -3,7 +3,7 @@ import { Routes, Route, NavLink } from "react-router-dom";
 import {
   BarChart2, TrendingUp, BookOpen, Bell, Newspaper, Activity,
   Star, Cpu, Heart, Map, Trophy, Users, CalendarDays,
-  Filter, FileText,
+  Filter, FileText, Target, Layers,
 } from "lucide-react";
 import Dashboard       from "./pages/Dashboard";
 import Quote           from "./pages/Quote";
@@ -17,9 +17,11 @@ import StockHealth     from "./pages/StockHealth";
 import Industry        from "./pages/Industry";
 import Performance     from "./pages/Performance";
 import CopyTrade       from "./pages/CopyTrade";
-import EarningsReminder from "./pages/EarningsReminder";
-import Screener         from "./pages/Screener";
-import Financials       from "./pages/Financials";
+import EarningsReminder         from "./pages/EarningsReminder";
+import Screener                 from "./pages/Screener";
+import Financials               from "./pages/Financials";
+import RecommendationPerformance from "./pages/RecommendationPerformance";
+import PortfolioOptimizer       from "./pages/PortfolioOptimizer";
 
 const NAV = [
   { to: "/",           label: "DASHBOARD",  icon: Activity },
@@ -35,6 +37,8 @@ const NAV = [
   { to: "/alerts",     label: "ALERTS",     icon: Bell },
   { to: "/news",       label: "NEWS",       icon: Newspaper },
   { to: "/performance",label: "排行榜",      icon: Trophy },
+  { to: "/rec-perf",   label: "推薦績效",    icon: Target },
+  { to: "/optimizer",  label: "投組最佳化",   icon: Layers },
   { to: "/copytrade",  label: "跟單",        icon: Users },
   { to: "/backtest",   label: "BACKTEST",   icon: BookOpen },
 ];
@@ -89,6 +93,8 @@ export default function App() {
           <Route path="/alerts"      element={<Alerts />} />
           <Route path="/news"        element={<News />} />
           <Route path="/performance" element={<Performance />} />
+          <Route path="/rec-perf"    element={<RecommendationPerformance />} />
+          <Route path="/optimizer"   element={<PortfolioOptimizer />} />
           <Route path="/copytrade"   element={<CopyTrade />} />
           <Route path="/screener"    element={<Screener />} />
           <Route path="/financials"  element={<Financials />} />

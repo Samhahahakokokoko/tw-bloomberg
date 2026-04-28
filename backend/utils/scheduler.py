@@ -112,6 +112,27 @@ def start_scheduler() -> AsyncIOScheduler:
         id="industry_sentiment", replace_existing=True,
     )
 
+    # 推薦結果回填 — 每日 15:30 盤後回填 5d/10d 股價
+    scheduler.add_job(
+        _backfill_recommendation_prices,
+        CronTrigger(day_of_week="mon-fri", hour=15, minute=30, timezone="Asia/Taipei"),
+        id="rec_backfill", replace_existing=True,
+    )
+
+    # 評分權重自動調整 — 每週一 08:00
+    scheduler.add_job(
+        _adjust_scoring_weights,
+        CronTrigger(day_of_week="mon", hour=8, minute=0, timezone="Asia/Taipei"),
+        id="weight_adjust", replace_existing=True,
+    )
+
+    # 聰明錢訊號推播 — 每日 18:30（盤後）
+    scheduler.add_job(
+        _push_smart_money,
+        CronTrigger(day_of_week="mon-fri", hour=18, minute=30, timezone="Asia/Taipei"),
+        id="smart_money", replace_existing=True,
+    )
+
     scheduler.start()
     logger.info("Scheduler started (morning report 08:30 / weekly report Fri 14:30)")
     return scheduler
@@ -238,3 +259,27 @@ async def _run_industry_sentiment():
         await run_all_industries()
     except Exception as e:
         logger.error(f"Industry sentiment failed: {e}")
+
+
+async def _backfill_recommendation_prices():
+    try:
+        from ..services.recommendation_tracker import backfill_prices
+        await backfill_prices()
+    except Exception as e:
+        logger.error(f"Recommendation backfill failed: {e}")
+
+
+async def _adjust_scoring_weights():
+    try:
+        from ..services.recommendation_tracker import adjust_weights
+        await adjust_weights()
+    except Exception as e:
+        logger.error(f"Weight adjustment failed: {e}")
+
+
+async def _push_smart_money():
+    try:
+        from ..services.broker_tracker import push_smart_money_alerts
+        await push_smart_money_alerts()
+    except Exception as e:
+        logger.error(f"Smart money push failed: {e}")
