@@ -9,6 +9,8 @@ quant/ — 台股 AI 量化交易核心模組
   risk_engine.py      — 盤態偵測（Regime）+ 回撤控制 + VaR
   portfolio_engine.py — 馬可維茲最佳化 + 個股/產業權重約束
   backtest_engine.py  — 完整回測（手續費/交易稅/滑價/漲跌停/成交量限制）
+  feedback_engine.py  — 回饋學習：記錄回測結果 + 自動調整策略/特徵權重
+  main.py             — FastAPI：/run_backtest /get_signals /get_portfolio /get_performance
 """
 
 from .feature_engine import FeatureEngine
@@ -18,6 +20,7 @@ from .database import QuantDB
 from .risk_engine import RiskEngine, MarketRegime, DrawdownState
 from .portfolio_engine import PortfolioEngine, PortfolioResult
 from .backtest_engine import BacktestEngine, BacktestReport
+from .feedback_engine import FeedbackEngine, get_feedback_engine
 
 __all__ = [
     "FeatureEngine",
@@ -35,4 +38,6 @@ __all__ = [
     "PortfolioResult",
     "BacktestEngine",
     "BacktestReport",
+    "FeedbackEngine",
+    "get_feedback_engine",
 ]

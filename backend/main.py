@@ -19,6 +19,12 @@ except Exception as _e:
     backtest_router = None
     logger.warning(f"Backtest router not loaded: {_e}")
 
+try:
+    from quant.main import router as quant_router
+except Exception as _e:
+    quant_router = None
+    logger.warning(f"Quant router not loaded: {_e}")
+
 
 _startup_error: str | None = None
 
@@ -66,6 +72,8 @@ app.add_middleware(
 app.include_router(router, prefix="/api")
 if backtest_router:
     app.include_router(backtest_router, prefix="/api")
+if quant_router:
+    app.include_router(quant_router, prefix="/api")
 
 
 @app.get("/health")
