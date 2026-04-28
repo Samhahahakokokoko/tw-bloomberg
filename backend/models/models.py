@@ -405,3 +405,99 @@ class BrokerActivity(Base):
     buy_price     = Column(Float)                 # 均買價
     sell_price    = Column(Float)                 # 均賣價
     created_at    = Column(DateTime, default=datetime.utcnow)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# v4 — 回測 Feedback + Feature Engineering Schema
+# ══════════════════════════════════════════════════════════════════════════════
+
+class BacktestSession(Base):
+    """回測 Session 摘要"""
+    __tablename__ = "backtest_sessions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    session_id         = Column(String(50), unique=True, nullable=False, index=True)
+    stock_code         = Column(String(10), index=True)
+    strategy           = Column(String(30), index=True)
+    start_date         = Column(String(10))
+    end_date           = Column(String(10))
+    initial_capital    = Column(Float)
+    final_capital      = Column(Float)
+    total_return       = Column(Float)
+    annualized_return  = Column(Float)
+    max_drawdown       = Column(Float)
+    sharpe_ratio       = Column(Float)
+    win_rate           = Column(Float)
+    total_trades       = Column(Integer, default=0)
+    total_commission   = Column(Float, default=0)
+    total_tax          = Column(Float, default=0)
+    total_slippage     = Column(Float, default=0)
+    cost_impact        = Column(Float, default=0)   # 成本對報酬的影響%
+    market_regime      = Column(String(20))          # bull/bear/sideways
+    created_at         = Column(DateTime, default=datetime.utcnow)
+
+
+class BacktestTradeRecord(Base):
+    """回測個別交易記錄（含成本明細）"""
+    __tablename__ = "backtest_trade_records"
+
+    id = Column(Integer, primary_key=True, index=True)
+    session_id   = Column(String(50), index=True, nullable=False)
+    stock_code   = Column(String(10), index=True)
+    strategy     = Column(String(30))
+    entry_date   = Column(String(10))
+    exit_date    = Column(String(10))
+    entry_price  = Column(Float)
+    exit_price   = Column(Float)
+    shares       = Column(Integer)
+    gross_return = Column(Float)   # 未扣成本損益
+    net_return   = Column(Float)   # 扣成本後損益
+    commission   = Column(Float, default=0)
+    tax          = Column(Float, default=0)
+    slippage     = Column(Float, default=0)
+    holding_days = Column(Integer, default=0)
+    is_winner    = Column(Boolean, default=False)
+    created_at   = Column(DateTime, default=datetime.utcnow)
+
+
+class FeatureRecord(Base):
+    """技術/基本/籌碼 Feature 值快照（用於機器學習 / 回測特徵工程）"""
+    __tablename__ = "features"
+    __table_args__ = (UniqueConstraint("date", "stock_id", "feature_name"),)
+
+    id           = Column(Integer, primary_key=True, index=True)
+    date         = Column(String(10), nullable=False, index=True)
+    stock_id     = Column(String(10), nullable=False, index=True)
+    feature_name = Column(String(50), nullable=False, index=True)
+    value        = Column(Float)
+    created_at   = Column(DateTime, default=datetime.utcnow)
+
+
+class PredictionRecord(Base):
+    """AI 預測結果（每日對每檔股票的預測報酬和信心評分）"""
+    __tablename__ = "predictions"
+    __table_args__ = (UniqueConstraint("date", "stock_id"),)
+
+    id               = Column(Integer, primary_key=True, index=True)
+    date             = Column(String(10), nullable=False, index=True)
+    stock_id         = Column(String(10), nullable=False, index=True)
+    stock_name       = Column(String(50))
+    predicted_return = Column(Float)     # 預測 5 日報酬率 %
+    score            = Column(Float)     # 綜合評分 0-100
+    model_version    = Column(String(20), default="v1")
+    fundamental_score = Column(Float)
+    chip_score       = Column(Float)
+    technical_score  = Column(Float)
+    created_at       = Column(DateTime, default=datetime.utcnow)
+
+
+class FeatureWeight(Base):
+    """Feature 權重 — 由 feedback_engine 自動調整"""
+    __tablename__ = "feature_weights"
+
+    id                 = Column(Integer, primary_key=True, index=True)
+    fundamental_weight = Column(Float, default=0.35)
+    chip_weight        = Column(Float, default=0.35)
+    technical_weight   = Column(Float, default=0.30)
+    notes              = Column(String(500))
+    updated_at         = Column(DateTime, default=datetime.utcnow)

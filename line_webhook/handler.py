@@ -228,13 +228,19 @@ async def _handle_text(text: str, uid: str) -> list:
     if cmd == "/subscribe":                     return [await _cmd_subscribe(uid)]
     if cmd == "/unsubscribe":                   return [await _cmd_unsubscribe(uid)]
     if cmd == "/ai_portfolio":                  return [await _cmd_ai_portfolio(uid)]
-    if cmd == "/ai"       and len(parts) >= 2:  return [await _cmd_ai_ask(" ".join(parts[1:]), uid)]
+    if cmd == "/ai"       and len(parts) >= 2:
+        # 若是 4 碼數字 → 個股深度分析；否則 → 一般 AI 問答
+        arg = parts[1]
+        if arg.isdigit() and 4 <= len(arg) <= 6:
+            return await _cmd_ai_stock(arg)
+        return [await _cmd_ai_ask(" ".join(parts[1:]), uid)]
     if cmd in ("/news", "/news_guide"):         return [_news_guide()]
     if cmd == "/ai_guide":                      return [_ai_guide()]
     if cmd == "/help":                          return [_text(_help_text(), _home_qr())]
     if cmd == "/screener":                      return await _cmd_screener(parts[1] if len(parts) > 1 else "top")
     if cmd == "/find"     and len(parts) >= 2:  return await _cmd_nl_screener(" ".join(parts[1:]))
     if cmd == "/accuracy":                      return await _cmd_accuracy()
+    if cmd == "/advice":                        return await _cmd_daily_advice()
     if cmd == "/broker"   and len(parts) >= 2:  return await _cmd_broker(parts[1])
     if cmd == "/track"    and len(parts) >= 2:  return await _cmd_track(" ".join(parts[1:]))
     if cmd == "/smart":                         return await _cmd_smart_money()
@@ -691,6 +697,36 @@ async def _cmd_apply_rec(code: str, strategy: str, uid: str) -> list:
     )]
 
 
+async def _cmd_daily_advice() -> list:
+    """每日 AI 操作建議"""
+    try:
+        from backend.services.ai_trading_advisor import generate_daily_trading_advice
+        advice = await generate_daily_trading_advice()
+        return [_text(advice[:4000], qr_items(
+            ("📊 選股", "/screener"), ("💼 庫存", "/portfolio"), ("📈 早報", "/morning")
+        ))]
+    except Exception as e:
+        return [_text(f"❌ 建議生成失敗：{e}")]
+
+
+async def _cmd_ai_stock(stock_code: str) -> list:
+    """個股深度分析：趨勢 + 籌碼 + 建議操作"""
+    try:
+        from backend.services.ai_trading_advisor import analyze_stock_for_line, check_realtime_alerts
+        analysis = await analyze_stock_for_line(stock_code)
+        alerts   = await check_realtime_alerts(stock_code)
+        text     = analysis
+        if alerts:
+            text += "\n\n⚡ 即時訊號\n" + "\n".join(alerts)
+        return [_text(text[:4800], qr_items(
+            ("📈 報價",   f"/quote {stock_code}"),
+            ("🏛 分點",   f"/broker {stock_code}"),
+            ("💼 庫存",   "/portfolio"),
+        ))]
+    except Exception as e:
+        return [_text(f"❌ 個股分析失敗：{e}")]
+
+
 async def _cmd_accuracy() -> list:
     """查看 AI 推薦準確率統計"""
     try:
@@ -1075,6 +1111,8 @@ def _help_text() -> str:
         "/optimize        最佳持股比例\n"
         "/var             風險值(VaR)\n"
         "/correlation     持股相關性\n"
+        "/advice          今日操作建議\n"
+        "/ai 2330         個股深度分析\n"
         "\n/morning /week /subscribe"
     )
 

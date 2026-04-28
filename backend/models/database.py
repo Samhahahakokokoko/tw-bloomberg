@@ -70,6 +70,10 @@ _SQLITE_MIGRATIONS = [
     "CREATE INDEX IF NOT EXISTS ix_rec_code           ON recommendation_results(stock_code)",
     "CREATE INDEX IF NOT EXISTS ix_broker_date_code   ON broker_activity(date, stock_code)",
     "CREATE INDEX IF NOT EXISTS ix_broker_name        ON broker_activity(broker_name)",
+    "CREATE INDEX IF NOT EXISTS ix_bt_session         ON backtest_sessions(session_id)",
+    "CREATE INDEX IF NOT EXISTS ix_bt_trades_session  ON backtest_trade_records(session_id)",
+    "CREATE INDEX IF NOT EXISTS ix_features_date_sid  ON features(date, stock_id)",
+    "CREATE INDEX IF NOT EXISTS ix_predictions_date   ON predictions(date)",
 ]
 
 _PG_MIGRATIONS = [
@@ -96,6 +100,10 @@ _PG_MIGRATIONS = [
     "CREATE INDEX IF NOT EXISTS ix_rec_code           ON recommendation_results(stock_code)",
     "CREATE INDEX IF NOT EXISTS ix_broker_date_code   ON broker_activity(date, stock_code)",
     "CREATE INDEX IF NOT EXISTS ix_broker_name        ON broker_activity(broker_name)",
+    "CREATE INDEX IF NOT EXISTS ix_bt_session         ON backtest_sessions(session_id)",
+    "CREATE INDEX IF NOT EXISTS ix_bt_trades_session  ON backtest_trade_records(session_id)",
+    "CREATE INDEX IF NOT EXISTS ix_features_date_sid  ON features(date, stock_id)",
+    "CREATE INDEX IF NOT EXISTS ix_predictions_date   ON predictions(date)",
 ]
 
 

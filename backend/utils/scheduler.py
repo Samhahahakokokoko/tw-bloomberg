@@ -2,6 +2,7 @@
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from loguru import logger
+from ..models.database import AsyncSessionLocal
 
 
 def start_scheduler() -> AsyncIOScheduler:
@@ -110,6 +111,20 @@ def start_scheduler() -> AsyncIOScheduler:
         _run_industry_sentiment,
         CronTrigger(day_of_week="mon-fri", hour=20, minute=0, timezone="Asia/Taipei"),
         id="industry_sentiment", replace_existing=True,
+    )
+
+    # AI 日報操作建議 — 每日 19:30 推播
+    scheduler.add_job(
+        _push_daily_advice,
+        CronTrigger(day_of_week="mon-fri", hour=19, minute=30, timezone="Asia/Taipei"),
+        id="daily_advice", replace_existing=True,
+    )
+
+    # Feedback 自動調整 feature 權重 — 每週日 22:00
+    scheduler.add_job(
+        _auto_adjust_feature_weights,
+        CronTrigger(day_of_week="sun", hour=22, minute=0, timezone="Asia/Taipei"),
+        id="feature_weight_adjust", replace_existing=True,
     )
 
     # 推薦結果回填 — 每日 15:30 盤後回填 5d/10d 股價
@@ -283,3 +298,28 @@ async def _push_smart_money():
         await push_smart_money_alerts()
     except Exception as e:
         logger.error(f"Smart money push failed: {e}")
+
+
+async def _push_daily_advice():
+    try:
+        from ..services.ai_trading_advisor import generate_daily_trading_advice
+        from ..models.models import Subscriber
+        from sqlalchemy import select
+        from ..services.morning_report import _push_to_users
+        advice = await generate_daily_trading_advice()
+        async with AsyncSessionLocal() as db:
+            r = await db.execute(select(Subscriber).where(Subscriber.subscribed_morning == True))
+            subs = r.scalars().all()
+        if subs:
+            await _push_to_users([s.line_user_id for s in subs], advice)
+            logger.info(f"Daily advice pushed to {len(subs)} subscribers")
+    except Exception as e:
+        logger.error(f"Daily advice push failed: {e}")
+
+
+async def _auto_adjust_feature_weights():
+    try:
+        from backtest.feedback_engine import auto_adjust_feature_weights
+        await auto_adjust_feature_weights()
+    except Exception as e:
+        logger.error(f"Feature weight adjustment failed: {e}")

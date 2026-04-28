@@ -777,6 +777,60 @@ async def trigger_scoring():
     return {"status": "started"}
 
 
+# ── AI Trading Advisor ────────────────────────────────────────────────────────
+
+@router.get("/advice/daily")
+async def daily_advice():
+    from ..services.ai_trading_advisor import generate_daily_trading_advice
+    return {"advice": await generate_daily_trading_advice()}
+
+
+@router.get("/advice/stock/{stock_code}")
+async def stock_advice(stock_code: str):
+    from ..services.ai_trading_advisor import analyze_stock_for_line, check_realtime_alerts
+    analysis = await analyze_stock_for_line(stock_code)
+    alerts   = await check_realtime_alerts(stock_code)
+    return {"analysis": analysis, "alerts": alerts}
+
+
+@router.get("/advice/alerts/{stock_code}")
+async def realtime_alerts(stock_code: str):
+    from ..services.ai_trading_advisor import check_realtime_alerts
+    return {"alerts": await check_realtime_alerts(stock_code)}
+
+
+# ── Backtest Feedback ─────────────────────────────────────────────────────────
+
+@router.get("/backtest/feedback/summary")
+async def feedback_summary():
+    from backtest.feedback_engine import get_strategy_performance_summary
+    return await get_strategy_performance_summary()
+
+
+@router.post("/backtest/feedback/adjust-weights")
+async def adjust_feature_weights():
+    from backtest.feedback_engine import auto_adjust_feature_weights
+    await auto_adjust_feature_weights()
+    return {"status": "done"}
+
+
+@router.get("/backtest/feedback/weights")
+async def feedback_weights():
+    from backtest.feedback_engine import get_feature_weights
+    return await get_feature_weights()
+
+
+# ── Market Regime ─────────────────────────────────────────────────────────────
+
+@router.get("/market/regime")
+async def market_regime_api():
+    from backtest.market_regime import get_market_regime, REGIME_DESCRIPTION, REGIME_STRATEGY_TIPS
+    regime = await get_market_regime()
+    regime["description"] = REGIME_DESCRIPTION.get(regime.get("current", "unknown"), "")
+    regime["strategy_tip"] = REGIME_STRATEGY_TIPS.get(regime.get("current", ""), "")
+    return regime
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # v3 進階功能 API
 # ══════════════════════════════════════════════════════════════════════════════
