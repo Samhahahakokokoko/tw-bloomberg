@@ -3,6 +3,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 from loguru import logger
 
 # ── sys.path setup ────────────────────────────────────────────────────────────
@@ -74,6 +75,11 @@ if backtest_router:
     app.include_router(backtest_router, prefix="/api")
 if quant_router:
     app.include_router(quant_router, prefix="/api")
+
+# 靜態報告圖片（選股表圖片由此 URL 提供給 LINE Image Message）
+_STATIC_REPORTS = os.path.join(os.getcwd(), "static", "reports")
+os.makedirs(_STATIC_REPORTS, exist_ok=True)
+app.mount("/static/reports", StaticFiles(directory=_STATIC_REPORTS), name="reports")
 
 
 @app.get("/health")

@@ -134,6 +134,13 @@ def start_scheduler() -> AsyncIOScheduler:
         id="rec_backfill", replace_existing=True,
     )
 
+    # 族群連動選股表 — 每日 19:30 自動產生圖片並推送給訂閱者
+    scheduler.add_job(
+        _push_group_report,
+        CronTrigger(day_of_week="mon-fri", hour=19, minute=30, timezone="Asia/Taipei"),
+        id="group_report", replace_existing=True,
+    )
+
     # 評分權重自動調整 — 每週一 08:00
     scheduler.add_job(
         _adjust_scoring_weights,
@@ -323,3 +330,39 @@ async def _auto_adjust_feature_weights():
         await auto_adjust_feature_weights()
     except Exception as e:
         logger.error(f"Feature weight adjustment failed: {e}")
+
+
+async def _push_group_report():
+    """每日 19:30：產生族群連動選股表圖片 → 推送給所有訂閱者"""
+    try:
+        import os
+        from sqlalchemy import select
+        from ..models.models import Subscriber
+        from ..models.database import settings as cfg
+        from backend.services.generate_report_image import generate_and_push
+
+        async with AsyncSessionLocal() as db:
+            r = await db.execute(
+                select(Subscriber).where(Subscriber.subscribed_morning == True)
+            )
+            subs = r.scalars().all()
+
+        if not subs:
+            logger.info("[GroupReport] 無訂閱者，略過推送")
+            return
+
+        user_ids = [s.line_user_id for s in subs]
+        base_url  = os.getenv("BASE_URL", "")
+
+        # 主力族群（AI）+ 散熱族群 各產一張
+        for group in ["AI族群", "散熱族群"]:
+            path = await generate_and_push(
+                group=group,
+                user_ids=user_ids if base_url else [],
+                access_token=cfg.line_channel_access_token,
+                base_url=base_url,
+            )
+            logger.info(f"[GroupReport] {group} 圖片: {path}, 推送 {len(user_ids)} 人")
+
+    except Exception as e:
+        logger.error(f"Group report push failed: {e}")

@@ -248,6 +248,11 @@ async def _handle_text(text: str, uid: str) -> list:
     if cmd == "/var":                           return await _cmd_var(uid)
     if cmd == "/correlation":                   return await _cmd_correlation(uid)
 
+    # ── 族群連動選股表 ────────────────────────────────────────────────────
+    if cmd == "/report":
+        group = " ".join(parts[1:]) if len(parts) > 1 else "族群連動"
+        return await _cmd_report(group, uid)
+
     # ── 量化策略 / 零股系統 新增指令 ──────────────────────────────────────
     if cmd == "/recommend":
         regime_arg = parts[1] if len(parts) > 1 else "unknown"
@@ -1127,6 +1132,10 @@ def _help_text() -> str:
         "/correlation     持股相關性\n"
         "/advice          今日操作建議\n"
         "/ai 2330         個股深度分析\n"
+        "\n📊 族群選股表\n"
+        "/report          今日選股圖\n"
+        "/report AI       AI族群選股表\n"
+        "/report 散熱     散熱族群選股表\n"
         "\n/morning /week /subscribe"
     )
 
@@ -1160,6 +1169,85 @@ def _flex(alt_text: str, container: dict, quick_reply: dict = None) -> FlexMessa
 # ═══════════════════════════════════════════════════════════════════
 #  量化策略 / 零股 / 比較 — 新增 LINE 指令
 # ═══════════════════════════════════════════════════════════════════
+
+async def _cmd_report(group: str, uid: str) -> list:
+    """/report [族群名]  → 產生選股表圖片並推送"""
+    import asyncio
+    from datetime import date
+
+    # 立即回 ACK，背景產生圖片
+    group_label = {
+        "ai": "AI族群", "AI": "AI族群",
+        "散熱": "散熱族群",
+    }.get(group.strip(), group.strip() or "族群連動")
+
+    asyncio.create_task(_push_report_bg(group_label, uid))
+    return [_text(
+        f"📊 正在產生「{group_label}」選股表…\n約需 5 秒，完成後自動推送圖片",
+        qr_items(
+            ("AI族群", "/report AI"),
+            ("散熱族群", "/report 散熱"),
+            ("💼 庫存", "/portfolio"),
+        )
+    )]
+
+
+async def _push_report_bg(group: str, uid: str) -> None:
+    """背景：產生圖片 → LINE Image Message 推送"""
+    import httpx
+    from backend.services.generate_report_image import generate_report_image
+
+    try:
+        path = generate_report_image(group=group)
+        base_url = os.getenv("BASE_URL", "")
+
+        if not base_url:
+            # 無公開 URL → 改傳文字摘要
+            await _push_text_summary(group, uid)
+            return
+
+        image_url = f"{base_url.rstrip('/')}/static/reports/{path.name}"
+        headers = {"Authorization": f"Bearer {settings.line_channel_access_token}"}
+        payload = {
+            "to": uid,
+            "messages": [
+                {
+                    "type": "image",
+                    "originalContentUrl": image_url,
+                    "previewImageUrl": image_url,
+                }
+            ],
+        }
+        async with httpx.AsyncClient(timeout=20) as c:
+            r = await c.post("https://api.line.me/v2/bot/message/push",
+                             json=payload, headers=headers)
+            logger.info(f"[Report] push image to {uid[:8]}: {r.status_code}")
+    except Exception as e:
+        logger.error(f"[Report] bg push failed: {e}")
+        await _push_text_summary(group, uid)
+
+
+async def _push_text_summary(group: str, uid: str) -> None:
+    """無公開 URL 時，改推文字摘要"""
+    import httpx
+    from backend.services.generate_report_image import get_mock_data, LABEL_DEFS
+
+    stocks = get_mock_data(group)
+    lines = [f"📊 {group}選股表 {__import__('datetime').date.today()}", "─" * 22]
+    for s in stocks[:6]:
+        sign = "+" if s.change_pct > 0 else ""
+        tag_str = " ".join(s.tags) if s.tags else ""
+        lines.append(
+            f"{s.stock_id} {s.name} {sign}{s.change_pct:.2f}%\n"
+            f"  分:{s.model_score:.0f} 籌:{s.chip_5d/1000:+.1f}k {tag_str}"
+        )
+    text = "\n".join(lines)
+    headers = {"Authorization": f"Bearer {settings.line_channel_access_token}"}
+    payload = {"to": uid, "messages": [{"type": "text", "text": text[:5000]}]}
+    async with httpx.AsyncClient(timeout=10) as c:
+        await c.post("https://api.line.me/v2/bot/message/push",
+                     json=payload, headers=headers)
+
 
 async def _cmd_recommend(regime: str = "unknown") -> list:
     """/recommend [盤態]  → 推薦高信心選股"""
