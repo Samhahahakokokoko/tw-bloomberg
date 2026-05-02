@@ -167,8 +167,8 @@ async def _handle_postback(data: str, uid: str) -> list:
         return await _cmd_report(stype, uid)
     if act == "more":
         sub = params.get("sub", "")
-        if sub == "backtest": return await _cmd_rec_dispatch(uid)
-        if sub == "risk":     return await _cmd_var(uid)
+        if sub == "backtest": return await _cmd_backtest_menu(uid)
+        if sub == "risk":     return await _cmd_risk_report(uid)
         if sub == "odd":
             return [_text("零股計算\n\n格式：/odd 預算 代碼\n例：/odd 5000 2330",
                           qr_items(("示範5000", "/odd 5000 2330")))]
@@ -194,6 +194,19 @@ async def _handle_postback(data: str, uid: str) -> list:
     if act == "strategy_preset":
         preset = params.get("preset", "balanced")
         return await _cmd_strategy_preset(preset, uid)
+
+    if act == "backtest_run":
+        strategy = params.get("strategy", "momentum")
+        return await _cmd_backtest_run(strategy, uid)
+
+    if act == "risk_optimize":
+        import asyncio
+        asyncio.create_task(_risk_optimize_bg(uid))
+        return [_text(
+            "📐 馬可維茲最佳配置計算中…\n\n"
+            "正在分析歷史報酬率與相關性，約需 15-30 秒，完成後自動推送",
+            qr_items(("💼 庫存", "/p"), ("📊 選股", "/r")),
+        )]
 
     if act == "news_refresh":
         return await _cmd_news_feed(uid)
@@ -316,6 +329,17 @@ async def _handle_text(text: str, uid: str) -> list:
     if cmd == "/p":                             return await _cmd_portfolio(uid)
     if cmd == "/r":                             return [_flex_screen_menu()]
     if cmd == "/strategy":                      return await _cmd_strategy_manage(uid)
+    if cmd == "/risk":                          return await _cmd_risk_report(uid)
+    if cmd == "/risk_optimize":
+        import asyncio
+        asyncio.create_task(_risk_optimize_bg(uid))
+        return [_text("📐 計算馬可維茲最佳配置中…約需 15-30 秒，完成後自動推送",
+                      qr_items(("💼 庫存", "/p")))]
+    if cmd == "/backtest":
+        strategy = parts[1].lower() if len(parts) > 1 else ""
+        if strategy in ("momentum", "value", "chip", "breakout"):
+            return await _cmd_backtest_run(strategy, uid)
+        return await _cmd_backtest_menu(uid)
     if cmd == "/ai_guide":                      return [_ai_guide()]
     if cmd == "/help":                          return [_text(_help_text(), _home_qr())]
     if cmd == "/screener":                      return await _cmd_screener(parts[1] if len(parts) > 1 else "top")
@@ -1517,6 +1541,465 @@ def _flex_more_menu() -> FlexMessage:
         },
     }
     return FlexMessage(alt_text="更多功能選單", contents=bubble)
+
+
+# ── 回測功能 ─────────────────────────────────────────────────────────────────
+
+_BACKTEST_LABELS = {
+    "momentum": "⚡ 動能策略",
+    "value":    "💰 存股策略",
+    "chip":     "🏛 籌碼策略",
+    "breakout": "🚀 突破策略",
+}
+
+_BACKTEST_QR = qr_items(
+    ("⚡ 動能策略", "/backtest momentum"),
+    ("💰 存股策略", "/backtest value"),
+    ("🏛 籌碼策略", "/backtest chip"),
+    ("🚀 突破策略", "/backtest breakout"),
+)
+
+
+async def _cmd_backtest_menu(uid: str) -> list:
+    """點「📈 回測」→ 顯示 4 策略 Quick Reply"""
+    return [_text(
+        "📈 策略回測\n\n選擇策略查看近3個月回測績效：\n"
+        "（以台積電 2330 為代表股模擬）",
+        _BACKTEST_QR,
+    )]
+
+
+async def _cmd_backtest_run(strategy: str, uid: str) -> list:
+    """選擇策略 → ACK + 背景計算 + 推送結果"""
+    if strategy not in _BACKTEST_LABELS:
+        return [_text("❌ 未知策略", _BACKTEST_QR)]
+    label = _BACKTEST_LABELS[strategy]
+    import asyncio
+    asyncio.create_task(_backtest_bg(strategy, label, uid))
+    return [_text(
+        f"📈 {label}回測計算中...\n\n期間：近3個月\n約需 5-10 秒，完成後自動推送結果",
+        _BACKTEST_QR,
+    )]
+
+
+async def _backtest_bg(strategy: str, label: str, uid: str) -> None:
+    """背景：執行回測 → 格式化 → push LINE"""
+    import asyncio, httpx
+    from datetime import date, timedelta
+    from backend.models.database import settings as line_settings
+
+    try:
+        # ── 取得近3個月 K 線（代表股 2330）──────────────────────────
+        stock_code = "2330"
+        start_date = (date.today() - timedelta(days=100)).strftime("%Y-%m-%d")
+
+        try:
+            from backend.services.twse_service import fetch_kline
+            kline = await fetch_kline(stock_code, start_date)
+            if kline and len(kline) >= 40:
+                import pandas as pd
+                df = pd.DataFrame(kline)
+                for c in ["open","high","low","close","volume"]:
+                    if c in df.columns:
+                        df[c] = pd.to_numeric(df[c], errors="coerce")
+            else:
+                raise ValueError("kline too short")
+        except Exception:
+            df = _mock_kline_90d(stock_code)
+
+        # ── 計算特徵 ─────────────────────────────────────────────────
+        try:
+            from quant.feature_engine import FeatureEngine
+            feat_df = FeatureEngine(df).compute_all()
+        except Exception:
+            feat_df = df
+
+        # ── 產生訊號 ─────────────────────────────────────────────────
+        import pandas as pd
+        import numpy as np
+        signals = _gen_strategy_signals(feat_df, strategy)
+
+        # ── 執行回測 ─────────────────────────────────────────────────
+        from quant.backtest_engine import BacktestEngine
+        engine = BacktestEngine(
+            initial_capital=1_000_000,
+            commission_discount=0.6,
+        )
+        report = engine.run(feat_df, signals, stop_loss_pct=0.08)
+
+        # ── 期間標籤 ─────────────────────────────────────────────────
+        n = len(feat_df)
+        try:
+            d0 = str(feat_df.iloc[0].get("date", ""))[:7].replace("-", "/")
+            d1 = str(feat_df.iloc[-1].get("date", ""))[:7].replace("-", "/")
+        except Exception:
+            d0 = d1 = "近3個月"
+
+        # ── 格式化文字 ────────────────────────────────────────────────
+        ret_sign  = "+" if report.total_return >= 0 else ""
+        dd_pct    = f"{report.max_drawdown*100:.1f}"
+        text = (
+            f"📈 {label}回測結果\n"
+            f"{"─"*22}\n"
+            f"期間：{d0} ~ {d1}\n"
+            f"總報酬：{ret_sign}{report.total_return*100:.1f}%\n"
+            f"勝率：{report.win_rate*100:.0f}%\n"
+            f"最大回撤：-{dd_pct}%\n"
+            f"夏普比率：{report.sharpe_ratio:.2f}\n"
+            f"交易次數：{report.n_trades} 筆"
+        )
+
+        # ── 推送 LINE ─────────────────────────────────────────────────
+        detail_qr_data  = f"act=backtest_image&strategy={strategy}&stock={stock_code}"
+        flex_msg = _build_backtest_result_flex(
+            label=label, period=f"{d0} ~ {d1}",
+            total_return=report.total_return, win_rate=report.win_rate,
+            max_dd=report.max_drawdown, sharpe=report.sharpe_ratio,
+            n_trades=report.n_trades,
+            detail_data=detail_qr_data,
+        )
+        headers = {"Authorization": f"Bearer {line_settings.line_channel_access_token}"}
+        async with httpx.AsyncClient(timeout=20) as c:
+            await c.post(
+                "https://api.line.me/v2/bot/message/push",
+                json={"to": uid, "messages": [
+                    {"type": "flex", "altText": f"{label}回測結果", "contents": flex_msg},
+                ]},
+                headers=headers,
+            )
+    except Exception as e:
+        logger.error("[backtest_bg] %s", e)
+        try:
+            headers = {"Authorization": f"Bearer {line_settings.line_channel_access_token}"}
+            async with httpx.AsyncClient(timeout=10) as c:
+                await c.post(
+                    "https://api.line.me/v2/bot/message/push",
+                    json={"to": uid, "messages": [{"type": "text",
+                        "text": f"❌ 回測計算失敗：{e}"}]},
+                    headers=headers,
+                )
+        except Exception:
+            pass
+
+
+def _mock_kline_90d(stock_code: str) -> "pd.DataFrame":
+    """90 天 mock K 線（無 API 時使用）"""
+    import numpy as np
+    import pandas as pd
+    seed  = sum(ord(c) for c in stock_code)
+    rng   = np.random.default_rng(seed)
+    n     = 90
+    dates = pd.date_range(
+        (pd.Timestamp.now() - pd.Timedelta(days=130)).strftime("%Y-%m-%d"),
+        periods=n, freq="B"
+    )
+    close = 550.0 * np.cumprod(1 + rng.normal(0.0003, 0.012, n))
+    return pd.DataFrame({
+        "date":   dates,
+        "open":   close * rng.uniform(0.990, 1.010, n),
+        "high":   close * rng.uniform(1.000, 1.025, n),
+        "low":    close * rng.uniform(0.975, 1.000, n),
+        "close":  close,
+        "volume": rng.integers(20_000_000, 80_000_000, n).astype(float),
+    })
+
+
+def _gen_strategy_signals(feat_df: "pd.DataFrame", strategy: str) -> "pd.Series":
+    """根據策略名稱產生 buy/sell/hold 訊號"""
+    import numpy as np, pandas as pd
+    n       = len(feat_df)
+    signals = ["hold"] * n
+
+    try:
+        if strategy == "momentum":
+            for i, row in feat_df.iterrows():
+                ret5 = row.get("ret_5d", np.nan)
+                if np.isnan(float(ret5 or 0)): continue
+                if float(ret5) > 0.02:  signals[i] = "buy"
+                elif float(ret5) < -0.02: signals[i] = "sell"
+
+        elif strategy == "value":   # RSI 均值回歸（長線存股）
+            for i, row in feat_df.iterrows():
+                rsi = float(row.get("rsi14", np.nan) or 50)
+                if np.isnan(rsi): continue
+                if rsi < 30:  signals[i] = "buy"
+                elif rsi > 72: signals[i] = "sell"
+
+        elif strategy == "chip":    # MACD 黃金交叉
+            for i, row in feat_df.iterrows():
+                golden = row.get("macd_golden", 0)
+                hist   = float(row.get("macd_hist", 0) or 0)
+                if golden:           signals[i] = "buy"
+                elif hist < -0.5:    signals[i] = "sell"
+
+        elif strategy == "breakout":  # 布林突破
+            for i, row in feat_df.iterrows():
+                b = float(row.get("boll_b", 0.5) or 0.5)
+                if np.isnan(b): continue
+                if b < 0.05:    signals[i] = "buy"
+                elif b > 0.95:  signals[i] = "sell"
+    except Exception as e:
+        logger.warning("[backtest] signal gen failed: %s", e)
+
+    return pd.Series(signals)
+
+
+def _build_backtest_result_flex(
+    label: str, period: str,
+    total_return: float, win_rate: float,
+    max_dd: float, sharpe: float,
+    n_trades: int, detail_data: str,
+) -> dict:
+    """回測結果 Flex Message Bubble"""
+    ret_clr  = "#4ADE80" if total_return >= 0 else "#FF4455"
+    ret_sign = "+" if total_return >= 0 else ""
+    sh_clr   = "#4ADE80" if sharpe >= 1.0 else ("#FFAA00" if sharpe >= 0.5 else "#FF4455")
+
+    def _row(key: str, val: str, vclr: str = "#E8EEF8") -> dict:
+        return {
+            "type": "box", "layout": "horizontal", "margin": "sm",
+            "contents": [
+                {"type": "text", "text": key, "color": "#6A7E9C", "size": "sm", "flex": 3},
+                {"type": "text", "text": val, "color": vclr, "size": "sm",
+                 "weight": "bold", "flex": 3, "align": "end"},
+            ],
+        }
+
+    return {
+        "type": "bubble", "size": "kilo",
+        "header": {
+            "type": "box", "layout": "vertical", "paddingAll": "14px",
+            "backgroundColor": "#060B14",
+            "contents": [
+                {"type": "text", "text": f"📈 {label}回測結果",
+                 "color": "#E8EEF8", "weight": "bold", "size": "lg"},
+                {"type": "text", "text": f"期間：{period}",
+                 "color": "#6A7E9C", "size": "xs", "margin": "xs"},
+            ],
+        },
+        "body": {
+            "type": "box", "layout": "vertical", "paddingAll": "14px",
+            "spacing": "xs", "backgroundColor": "#0A0F1E",
+            "contents": [
+                _row("總報酬",   f"{ret_sign}{total_return*100:.1f}%",  ret_clr),
+                _row("勝率",     f"{win_rate*100:.0f}%",
+                     "#4ADE80" if win_rate >= 0.55 else "#FFAA00"),
+                _row("最大回撤", f"-{max_dd*100:.1f}%",  "#FF4455"),
+                _row("夏普比率", f"{sharpe:.2f}",          sh_clr),
+                _row("交易次數", f"{n_trades} 筆"),
+            ],
+        },
+        "footer": {
+            "type": "box", "layout": "vertical", "paddingAll": "10px",
+            "backgroundColor": "#060B14",
+            "contents": [{
+                "type": "button", "style": "secondary", "height": "sm",
+                "color": "#1A3A8F",
+                "action": {"type": "postback", "label": "查看詳細",
+                           "data": detail_data,
+                           "displayText": "📊 推送詳細回測圖"},
+                "contents": [
+                    {"type": "text", "text": "📊 查看詳細",
+                     "color": "#E8EEF8", "size": "sm"}
+                ],
+            }],
+        },
+    }
+
+
+# ── 風控分析 ──────────────────────────────────────────────────────────────────
+
+# 常見台股產業對照表（快速 fallback）
+_SECTOR_MAP: dict[str, str] = {
+    "2330": "半導體", "2454": "半導體", "2379": "半導體",
+    "3711": "半導體", "3034": "半導體", "2303": "半導體",
+    "2317": "電子零組件", "2308": "電子零組件", "2382": "電子零組件",
+    "2357": "電腦週邊", "2353": "電腦週邊",
+    "2412": "電信", "3045": "電信", "4904": "電信",
+    "2882": "金融", "2881": "金融", "2886": "金融",
+    "2891": "金融", "2884": "金融", "2885": "金融",
+    "2002": "鋼鐵", "2006": "鋼鐵",
+    "2603": "航運", "2609": "航運", "2615": "航運",
+    "2207": "汽車", "2201": "汽車",
+    "1303": "塑膠", "1301": "塑膠",
+    "6505": "石化", "1326": "石化",
+    "2912": "零售", "2903": "零售",
+    "6469": "生技醫療", "4743": "生技醫療",
+}
+
+_SECTOR_SUGGEST: dict[str, str] = {
+    "半導體":   "金融或航運類股",
+    "金融":     "半導體或航運類股",
+    "航運":     "金融或半導體類股",
+    "電子零組件": "金融或傳產類股",
+    "電腦週邊": "金融或傳產類股",
+    "電信":     "半導體或金融類股",
+    "鋼鐵":     "電子或金融類股",
+    "塑膠":     "電子或金融類股",
+}
+
+
+async def _cmd_risk_report(uid: str) -> list:
+    """
+    🛡️ 風控分析報告：集中度 + VaR + 市場狀態 + 建議
+    點「查看優化建議」觸發背景 Markowitz 推送
+    """
+    try:
+        # ── 取庫存 ───────────────────────────────────────────────────
+        async with AsyncSessionLocal() as db:
+            holdings = await portfolio_service.get_portfolio(db, uid)
+
+        if not holdings:
+            return [_text(
+                "🛡️ 風控分析\n\n庫存為空，請先新增持股",
+                qr_items(("新增示範", "/buy 2330 1000 850"), ("💼 庫存", "/p")),
+            )]
+
+        # ── 產業集中度 ───────────────────────────────────────────────
+        total_mv = sum(h.get("market_value", 0) or 0 for h in holdings)
+        if total_mv <= 0:
+            total_mv = sum(h["shares"] * h["cost_price"] for h in holdings)
+
+        sector_mv: dict[str, float] = {}
+        for h in holdings:
+            code   = h.get("stock_code", "")
+            mv     = h.get("market_value") or (h["shares"] * h["cost_price"])
+            sector = _SECTOR_MAP.get(code)
+            if not sector:
+                try:
+                    from backend.models.models import Stock
+                    from sqlalchemy import select
+                    async with AsyncSessionLocal() as db2:
+                        r = await db2.execute(select(Stock).where(Stock.code == code))
+                        s = r.scalar_one_or_none()
+                        sector = (s.industry or "其他") if s else "其他"
+                except Exception:
+                    sector = "其他"
+            sector_mv[sector] = sector_mv.get(sector, 0.0) + float(mv)
+
+        top_sector    = max(sector_mv, key=sector_mv.get)
+        top_pct       = sector_mv[top_sector] / total_mv * 100 if total_mv > 0 else 0.0
+        concentration = "⚠️ 過度集中" if top_pct > 60 else ("注意" if top_pct > 40 else "✓ 正常")
+        suggest_sector = _SECTOR_SUGGEST.get(top_sector, "分散至其他類股")
+
+        # ── VaR（複用 full_portfolio_analysis）──────────────────────
+        max_daily_loss = 0.0
+        var_95         = 0.0
+        try:
+            from backend.services.portfolio_optimizer import full_portfolio_analysis
+            analysis = await full_portfolio_analysis(uid)
+            var_data  = analysis.get("var", {})
+            if var_data:
+                max_daily_loss = abs(var_data.get("hist_var_amount") or var_data.get("param_var_amount", 0))
+                var_95         = abs(var_data.get("param_var_amount", 0))
+        except Exception:
+            max_daily_loss = total_mv * 0.025   # fallback ~2.5%
+            var_95         = total_mv * 0.018
+
+        # ── 市場狀態（RegimeEngine）──────────────────────────────────
+        market_note = "多頭"
+        hold_pct    = 70
+        try:
+            from quant.regime_engine import RegimeEngine
+            from quant.feature_engine import FeatureEngine
+            from backend.services.twse_service import fetch_kline
+            kl = await fetch_kline("2330")
+            if kl and len(kl) >= 65:
+                import pandas as pd
+                df = pd.DataFrame(kl)
+                for c in ["open","high","low","close","volume"]:
+                    if c in df.columns:
+                        df[c] = pd.to_numeric(df[c], errors="coerce")
+                feat = FeatureEngine(df).compute_all()
+                re   = RegimeEngine()
+                reg  = re.detect(feat)
+                regime_map = {"bull": ("多頭", 70), "bear": ("空頭", 30),
+                              "sideways": ("盤整", 50), "volatile": ("高波動", 40)}
+                market_note, hold_pct = regime_map.get(
+                    reg.regime.value, ("未知", 50))
+        except Exception:
+            pass
+
+        # ── 組合訊息 ─────────────────────────────────────────────────
+        lines = [
+            "🛡️ 風控分析報告",
+            "─" * 22,
+            f"投組集中度：{top_sector} {top_pct:.0f}%（{concentration}）",
+            f"最大單日虧損估計：-${max_daily_loss:,.0f}",
+            f"VaR 95%：-${var_95:,.0f}",
+        ]
+        if top_pct > 40:
+            lines.append(f"建議：分散至{suggest_sector}")
+        lines += [
+            "",
+            f"市場狀態：{market_note}，建議持股 {hold_pct}%",
+        ]
+
+        return [_text(
+            "\n".join(lines),
+            qr_items(
+                ("查看優化建議", "/risk_optimize"),
+                ("📐 相關性",    "/correlation"),
+                ("💼 庫存",      "/p"),
+            ),
+        )]
+
+    except Exception as e:
+        logger.error("[risk_report] %s", e)
+        return [_text(f"❌ 風控分析失敗：{e}",
+                      qr_items(("💼 庫存", "/p")))]
+
+
+async def _risk_optimize_bg(uid: str) -> None:
+    """背景：馬可維茲最佳配置 → push LINE"""
+    import httpx
+    from backend.models.database import settings as line_settings
+
+    try:
+        from backend.services.portfolio_optimizer import full_portfolio_analysis
+        result = await full_portfolio_analysis(uid)
+
+        if "error" in result:
+            msg = f"❌ 最佳化失敗：{result['error']}"
+        else:
+            opt   = result.get("optimal_portfolio", {})
+            curr  = result.get("current_performance", {})
+            suggs = result.get("rebalance_suggestions", [])
+
+            lines = [
+                "📐 馬可維茲最佳配置",
+                "─" * 22,
+                f"現有：報酬{curr.get('return',0):+.1f}%  "
+                f"波動{curr.get('volatility',0):.1f}%  "
+                f"Sharpe {curr.get('sharpe',0):.2f}",
+                f"最佳：報酬{opt.get('return',0):+.1f}%  "
+                f"波動{opt.get('volatility',0):.1f}%  "
+                f"Sharpe {opt.get('sharpe',0):.2f}",
+                "",
+                "調整建議（差異 ≥ 2%）：",
+            ]
+            if suggs:
+                for s in suggs[:5]:
+                    sign = "+" if s["change"] > 0 else ""
+                    lines.append(
+                        f"• {s['stock_code']} {s['name']}\n"
+                        f"  {s['current']}% → {s['optimal']}% "
+                        f"（{sign}{s['change']}%，{s['action']}）"
+                    )
+            else:
+                lines.append("• 現有組合已接近最佳配置 ✓")
+
+            msg = "\n".join(lines)
+
+        headers = {"Authorization": f"Bearer {line_settings.line_channel_access_token}"}
+        async with httpx.AsyncClient(timeout=30) as c:
+            await c.post(
+                "https://api.line.me/v2/bot/message/push",
+                json={"to": uid, "messages": [{"type": "text", "text": msg[:4800]}]},
+                headers=headers,
+            )
+    except Exception as e:
+        logger.error("[risk_optimize_bg] %s", e)
 
 
 # ── 策略管理指令 ─────────────────────────────────────────────────────────────

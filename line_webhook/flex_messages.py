@@ -41,10 +41,11 @@ def quick_reply_quote(code: str, price: float) -> dict:
 
 def quick_reply_portfolio() -> dict:
     return qr_items(
-        ("🤖 AI建議", "/ai_portfolio"),
-        ("📋 週報",   "/week"),
+        ("🤖 AI建議",  "/ai_portfolio"),
+        ("🛡️ 風控分析", "/risk"),
+        ("📋 週報",    "/week"),
         ("🔔 新增警報", "/alert_guide"),
-        ("📊 大盤",   "/market"),
+        ("📊 大盤",    "/market"),
     )
 
 
