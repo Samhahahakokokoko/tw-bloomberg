@@ -1592,7 +1592,7 @@ async def _cmd_movers(uid: str) -> list:
         results = await engine.scan()
         if not results:
             results = engine.scan_mock()
-        report = engine.format_line_report(results)
+        report = engine.format_report(results)
         return [_text(report, qr_items(
             ("📋 決策報告", "/daily"),
             ("🛡 持倉健康", "/overlay"),

@@ -1,15 +1,15 @@
 """
-filter_engine.py — 垃圾清洗過濾器（這步最重要）
+filter_engine.py — Layer 3: 六大過濾器
 
-砍掉以下條件：
-  1. 日均成交量 < 500 張（流動性太差）
-  2. 營收年增率 < -10%（基本面惡化）
-  3. 本益比 > 60（估值過熱無基本面支撐）
-  4. 近3月外資連續賣超（籌碼轉弱）
-  5. 純情緒炒作（Buzz 高但無法人買盤）
-  6. 商品循環股非趨勢期（鋼鐵/航運）
+任一觸發即踢出：
+  1. 流動性：avg_volume_20d < 500 張
+  2. 營收趨勢：revenue_yoy < -10%
+  3. 估值：PE > 60 且無高成長支撐（rev_yoy < 20%）
+  4. 籌碼：外資連續賣超 > 10 日
+  5. 炒作偵測：單日爆量 > 5x 均量 且無基本面（f_days<=0 且 rev_yoy<0）
+  6. 循環股：鋼鐵/航運/塑化 非景氣上升期（rev_yoy < 0）
 
-只留下「真正值得研究的股票」
+輸出：{"passed": [...], "rejected": [...], "reason": {stock_id: [reasons...]}}
 """
 from __future__ import annotations
 
@@ -19,230 +19,162 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-# ── 過濾門檻 ──────────────────────────────────────────────────────────────────
-MIN_VOL_K         = 500      # 日均成交量最低 500 張
-MAX_REV_DECLINE   = -0.10    # 營收年增 > -10%（低於此砍掉）
-MAX_PE_RATIO      = 60.0     # 本益比 ≤ 60
-FOREIGN_SELL_DAYS = -3       # 外資連賣 ≥ 3 天 → 砍掉（用負值）
-BUZZ_NO_INST_BUZZ = 50       # Buzz > 50 但外資/投信 ≤ 0 → 純炒作
-CYCLICAL_SECTORS  = {"鋼鐵", "航運", "散裝", "貨櫃", "原物料", "塑膠"}
+CYCLICAL_SECTORS = {"鋼鐵", "航運", "散裝", "貨櫃", "塑化", "原物料", "石化"}
+
+# 估值過熱例外：高成長股可接受高PE
+HIGH_GROWTH_REV_THRESHOLD = 0.20   # 營收YoY > 20% 可接受高PE
 
 
 @dataclass
-class FilterReason:
-    rule:    str
-    detail:  str
-    blocked: bool
-
-
-@dataclass
-class FilterResult:
-    stock_code:  str
-    stock_name:  str
-    passed:      bool
-    fail_reasons: list[FilterReason] = field(default_factory=list)
-    pass_notes:   list[str]          = field(default_factory=list)
-
-    def to_dict(self) -> dict:
-        return {
-            "code":    self.stock_code,
-            "name":    self.stock_name,
-            "passed":  self.passed,
-            "fail_reasons": [{"rule": r.rule, "detail": r.detail}
-                              for r in self.fail_reasons if r.blocked],
-            "pass_notes": self.pass_notes,
-        }
+class FilterRecord:
+    stock_id:  str
+    name:      str
+    passed:    bool
+    reasons:   list[str] = field(default_factory=list)  # 失敗原因
 
 
 class FilterEngine:
     """
-    垃圾清洗過濾器。接受候選股票列表，逐一檢查 6 條過濾規則。
+    六大過濾器。接受任意含有基本欄位的物件列表，輸出通過/未通過分組。
 
     使用方式：
         engine = FilterEngine()
-        passed, rejected = engine.filter(candidates)
+        result = engine.filter(candidates)
+        # result["passed"]   → 通過的物件列表
+        # result["rejected"] → 被篩掉的物件列表
+        # result["reason"]   → {stock_id: [reason, ...]}
     """
 
-    def __init__(
-        self,
-        min_vol_k:       float = MIN_VOL_K,
-        max_rev_decline: float = MAX_REV_DECLINE,
-        max_pe:          float = MAX_PE_RATIO,
-        allow_cyclical:  bool  = False,   # 趨勢期可以放行循環股
-    ):
-        self.min_vol_k       = min_vol_k
-        self.max_rev_decline = max_rev_decline
-        self.max_pe          = max_pe
-        self.allow_cyclical  = allow_cyclical
+    def __init__(self, allow_cyclical_trend: bool = False):
+        """allow_cyclical_trend: 景氣上升期可放行循環股"""
+        self.allow_cyclical = allow_cyclical_trend
 
-    def filter(self, candidates: list) -> tuple[list, list]:
+    def filter(self, candidates: list) -> dict:
         """
-        回傳 (passed_list, rejected_list)，皆為 FilterResult。
+        主過濾函式。
+        回傳 {"passed": [...], "rejected": [...], "reason": {stock_id: [reasons]}}
         """
-        passed:   list[FilterResult] = []
-        rejected: list[FilterResult] = []
+        passed:   list = []
+        rejected: list = []
+        reason:   dict[str, list[str]] = {}
 
         for item in candidates:
-            result = self._check(item)
-            (passed if result.passed else rejected).append(result)
+            rec = self._check(item)
+            if rec.passed:
+                passed.append(item)
+            else:
+                rejected.append(item)
+                reason[rec.stock_id] = rec.reasons
 
-        return passed, rejected
+        return {"passed": passed, "rejected": rejected, "reason": reason}
 
-    def filter_candidates(self, candidates: list) -> list:
-        """
-        只回傳通過過濾的原始物件（保留輸入型別）。
-        """
-        passed_results, _ = self.filter(candidates)
-        passed_codes = {r.stock_code for r in passed_results}
-        return [c for c in candidates
-                if self._get_code(c) in passed_codes]
+    def filter_df(self, df) -> tuple:
+        """接受 DataFrame，回傳 (passed_df, rejected_df, reason_dict)"""
+        import pandas as pd
+        if df is None or len(df) == 0:
+            return pd.DataFrame(), pd.DataFrame(), {}
 
-    def _check(self, item) -> FilterResult:
-        def _g(attr, default=0.0):
+        result  = self.filter(df.to_dict("records"))
+        pass_ids = {self._get_id(r) for r in result["passed"]}
+        passed_df  = df[df["stock_id"].isin(pass_ids)].reset_index(drop=True)
+        rejected_df= df[~df["stock_id"].isin(pass_ids)].reset_index(drop=True)
+        return passed_df, rejected_df, result["reason"]
+
+    def _check(self, item) -> FilterRecord:
+        def g(attr, d=0.0):
             if hasattr(item, attr):
-                return getattr(item, attr)
+                v = getattr(item, attr)
+                return float(v) if v is not None else d
             if isinstance(item, dict):
-                return item.get(attr, default)
-            return default
+                return float(item.get(attr, d) or d)
+            return d
+        def gs(attr, d=""):
+            if hasattr(item, attr): return str(getattr(item, attr) or d)
+            if isinstance(item, dict): return str(item.get(attr, d) or d)
+            return d
 
-        code     = str(_g("stock_code", _g("stock_id", _g("code", ""))))
-        name     = str(_g("stock_name", _g("name", code)))
-        sector   = str(_g("sector", "其他"))
-        vol_k    = float(_g("volume", 0)) / 1000   # volume in shares → lots
-        rev_yoy  = float(_g("rev_yoy", 0))
-        pe_ratio = float(_g("pe_ratio", 20))
-        f_days   = int(_g("foreign_buy_days", 0))
-        trust_net= float(_g("trust_net", 0))
-        buzz     = float(_g("buzz_score", 0))
-        model_sc = float(_g("model_score", 50))
+        stock_id   = gs("stock_id", gs("code", ""))
+        name       = gs("name", stock_id)
+        sector     = gs("sector", "其他")
+        avg_vol_k  = g("avg_volume_k", g("volume", 0) / 1000)
+        rev_yoy    = g("rev_yoy", 0)
+        pe_ratio   = g("pe_ratio", 20)
+        f_days     = int(g("foreign_buy_days", 0))
+        vol_r      = g("volume_ratio", 1.0)
+        eps_growth = g("eps_growth", 0)
 
-        # 若 volume 已是張（如 StockRow volume 是股數），再除以 1000
-        # 但有時 vol_ratio 欄位會是量比，需要額外處理
-        if vol_k < 1:   # StockRow.volume 是股數（已知格式）
-            vol_k_raw = float(_g("volume", 0))
-            # StockRow.volume = 股數，1張=1000股
-            vol_k = vol_k_raw / 1000 if vol_k_raw > 1000 else vol_k_raw
+        reasons: list[str] = []
 
-        reasons: list[FilterReason] = []
-        pass_notes: list[str] = []
+        # ── Filter 1: 流動性 ──────────────────────────────────────────
+        if avg_vol_k > 0 and avg_vol_k < 500:
+            reasons.append(f"流動性不足：均量 {avg_vol_k:.0f} 張 < 500 張")
 
-        # ── Rule 1: 流動性 ──────────────────────────────────────────────
-        if vol_k > 0 and vol_k < self.min_vol_k:
-            reasons.append(FilterReason(
-                rule="liquidity",
-                detail=f"日均量 {vol_k:.0f} 張 < {self.min_vol_k:.0f} 張",
-                blocked=True,
-            ))
-        else:
-            pass_notes.append("流動性 OK")
+        # ── Filter 2: 營收趨勢 ────────────────────────────────────────
+        if rev_yoy < -0.10:
+            reasons.append(f"營收惡化：YoY {rev_yoy*100:.1f}% < -10%")
 
-        # ── Rule 2: 營收趨勢 ────────────────────────────────────────────
-        if rev_yoy < self.max_rev_decline:
-            reasons.append(FilterReason(
-                rule="revenue",
-                detail=f"營收YoY {rev_yoy*100:.1f}% < {self.max_rev_decline*100:.0f}%",
-                blocked=True,
-            ))
-        else:
-            pass_notes.append(f"營收 {rev_yoy*100:+.0f}% OK")
+        # ── Filter 3: 估值（高PE且無高成長支撐）───────────────────────
+        if pe_ratio > 60 and rev_yoy < HIGH_GROWTH_REV_THRESHOLD:
+            reasons.append(f"估值過熱：PE {pe_ratio:.0f} > 60，YoY僅{rev_yoy*100:.0f}%")
 
-        # ── Rule 3: 估值 ────────────────────────────────────────────────
-        if pe_ratio > self.max_pe:
-            reasons.append(FilterReason(
-                rule="valuation",
-                detail=f"PE {pe_ratio:.0f} > {self.max_pe:.0f}（估值過熱）",
-                blocked=True,
-            ))
-        elif pe_ratio > 0:
-            pass_notes.append(f"PE {pe_ratio:.0f} 合理")
+        # ── Filter 4: 籌碼轉弱（外資連賣 > 10 日）───────────────────
+        if f_days < -10:
+            reasons.append(f"籌碼轉弱：外資連賣 {abs(f_days)} 日 > 10 日")
 
-        # ── Rule 4: 外資籌碼 ────────────────────────────────────────────
-        if f_days <= FOREIGN_SELL_DAYS:
-            reasons.append(FilterReason(
-                rule="institutional",
-                detail=f"外資連賣 {abs(f_days)} 日",
-                blocked=True,
-            ))
-        elif f_days >= 1:
-            pass_notes.append(f"外資買超 {f_days} 日")
+        # ── Filter 5: 炒作偵測（爆量 > 5x 且無基本面）────────────────
+        if vol_r > 5.0 and f_days <= 0 and rev_yoy < 0:
+            reasons.append(f"疑似炒作：量比 {vol_r:.1f}x > 5x，無法人且營收衰退")
 
-        # ── Rule 5: 純情緒炒作 ─────────────────────────────────────────
-        if buzz >= BUZZ_NO_INST_BUZZ and f_days <= 0 and trust_net <= 0:
-            reasons.append(FilterReason(
-                rule="speculation",
-                detail=f"Buzz={buzz:.0f} 高但無法人買盤（純炒作）",
-                blocked=True,
-            ))
+        # ── Filter 6: 循環股非景氣期 ─────────────────────────────────
+        if not self.allow_cyclical:
+            is_cyclical = any(s in sector for s in CYCLICAL_SECTORS)
+            if is_cyclical and rev_yoy < 0:
+                reasons.append(f"循環股非景氣上升期：{sector} YoY {rev_yoy*100:.1f}%")
 
-        # ── Rule 6: 循環股非趨勢期 ─────────────────────────────────────
-        if not self.allow_cyclical and any(s in sector for s in CYCLICAL_SECTORS):
-            if rev_yoy < 0 or f_days < 0:
-                reasons.append(FilterReason(
-                    rule="cyclical",
-                    detail=f"{sector} 循環股非趨勢期",
-                    blocked=True,
-                ))
-
-        blocked = [r for r in reasons if r.blocked]
-        passed  = len(blocked) == 0
-
-        return FilterResult(
-            stock_code=code,
-            stock_name=name,
-            passed=passed,
-            fail_reasons=blocked,
-            pass_notes=pass_notes if passed else [],
+        return FilterRecord(
+            stock_id=stock_id,
+            name=name,
+            passed=len(reasons) == 0,
+            reasons=reasons,
         )
 
     @staticmethod
-    def _get_code(item) -> str:
-        if hasattr(item, "stock_code"): return item.stock_code
+    def _get_id(item) -> str:
         if hasattr(item, "stock_id"):   return item.stock_id
         if isinstance(item, dict):
-            return item.get("stock_code", item.get("stock_id", item.get("code", "")))
+            return item.get("stock_id", item.get("code", ""))
         return ""
 
-    def summary_report(self, passed: list, rejected: list) -> str:
-        """格式化過濾結果摘要"""
-        lines = [
-            f"🔍 過濾結果：通過 {len(passed)} 檔，排除 {len(rejected)} 檔",
+    def summary(self, result: dict) -> str:
+        passed   = result["passed"]
+        rejected = result["rejected"]
+        reason   = result["reason"]
+        lines    = [
+            f"🔍 過濾結果：通過 {len(passed)} / 排除 {len(rejected)}",
             "─" * 22,
         ]
-        if rejected:
-            lines.append("❌ 排除原因統計：")
+        if reason:
             rule_counts: dict[str, int] = {}
-            for r in rejected:
-                for fr in r.fail_reasons:
-                    rule_counts[fr.rule] = rule_counts.get(fr.rule, 0) + 1
-            for rule, count in sorted(rule_counts.items(), key=lambda x: -x[1]):
-                rule_names = {
-                    "liquidity":    "流動性不足",
-                    "revenue":      "營收惡化",
-                    "valuation":    "估值過熱",
-                    "institutional":"籌碼轉弱",
-                    "speculation":  "純情緒炒作",
-                    "cyclical":     "循環股非趨勢",
-                }
-                lines.append(f"  {rule_names.get(rule, rule)}: {count} 檔")
+            for reasons in reason.values():
+                for r in reasons:
+                    key = r.split("：")[0]
+                    rule_counts[key] = rule_counts.get(key, 0) + 1
+            lines.append("排除原因：")
+            for k, v in sorted(rule_counts.items(), key=lambda x: -x[1]):
+                lines.append(f"  {k}: {v} 檔")
         if passed:
-            lines.append(f"\n✅ 通過（值得研究）：")
-            for r in passed[:6]:
-                lines.append(f"  {r.stock_code} {r.stock_name}")
+            ids = [self._get_id(p) for p in passed[:5]]
+            lines.append(f"✅ 通過：{', '.join(ids)}")
         return "\n".join(lines)
 
 
-_global_filter: Optional[FilterEngine] = None
-
 def get_filter_engine() -> FilterEngine:
-    global _global_filter
-    if _global_filter is None:
-        _global_filter = FilterEngine()
-    return _global_filter
+    return FilterEngine()
 
 
 if __name__ == "__main__":
     from quant.movers_engine import MoversEngine
-    movers = MoversEngine().scan_mock()
+    movers = MoversEngine().scan_mock(20)
     engine = FilterEngine()
-    passed, rejected = engine.filter(movers)
-    print(engine.summary_report(passed, rejected))
+    result = engine.filter(movers)
+    print(engine.summary(result))

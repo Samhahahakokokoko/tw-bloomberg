@@ -1,67 +1,41 @@
 """
-research_checklist.py — 新標的研究清單
+research_checklist.py — Layer 4: 11 項研究清單
 
-任何新股票進入選股名單前必須通過 6 項研究確認：
-  1. 近兩季財報成長
-  2. 法說會 Guidance 是否上修
-  3. 產業地位（龍頭或快速成長）
-  4. 市場規模夠大（TAM）
-  5. 競爭優勢是否清楚
-  6. 成長邏輯可持續
+自動核查 6 項（可量化）：
+  1. revenue_growth：近兩季 YoY > 0
+  2. eps_trend：EPS 連續兩季成長
+  3. institutional_flow：法人近10日淨買超
+  4. trend_structure：MA5 > MA20 > MA60
+  5. volatility：20日波動率 < 40%
+  6. valuation：PE < 40 或 PEG < 1.5
 
-未確認項目 → 標記「需研究」，不直接推薦
+人工輔助 5 項（Claude AI 協助分析）：
+  7. competitive_analysis：競爭力分析
+  8. guidance_direction：法說會 Guidance 方向
+  9. moat：護城河評估
+  10. industry_trend：產業趨勢
+  11. management_quality：管理層品質
 
-LINE 指令：/research 2330 → 自動產生研究清單報告
+輸出：READY / NEEDS_RESEARCH / REJECTED
+LINE 指令：/research 2330 → 推送完整研究清單卡片
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import dataclass, field
 from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-# 可自動驗證的項目
-AUTO_CHECK_ITEMS = [
-    "revenue_growth_2q",   # 近兩季財報成長
-    "eps_positive",        # EPS 為正
-    "institutional_buy",   # 法人持續買超（代理 guidance 信心）
-    "valuation_ok",        # 估值不過熱（PE < 60）
-    "liquidity_ok",        # 流動性足夠
-    "momentum_ok",         # 有正向動能
-]
-
-# 需人工確認的項目（AI 只能猜測）
-MANUAL_CHECK_ITEMS = [
-    "guidance_revision",   # 法說會 Guidance 上修
-    "industry_position",   # 產業地位（龍頭/快速成長）
-    "market_size",         # 市場規模夠大（TAM）
-    "competitive_moat",    # 競爭優勢清楚
-    "growth_logic",        # 成長邏輯可持續
-]
-
-ITEM_LABELS = {
-    "revenue_growth_2q": "近兩季財報成長",
-    "eps_positive":      "EPS 為正值",
-    "institutional_buy": "法人持續買超",
-    "valuation_ok":      "估值合理（PE < 60）",
-    "liquidity_ok":      "流動性足夠（量 > 500 張）",
-    "momentum_ok":       "有正向動能",
-    "guidance_revision": "法說會 Guidance 上修",
-    "industry_position": "產業地位（龍頭或快速成長）",
-    "market_size":       "市場規模夠大（TAM）",
-    "competitive_moat":  "競爭優勢清楚",
-    "growth_logic":      "成長邏輯可持續",
-}
-
 
 @dataclass
 class CheckItem:
-    key:      str
-    label:    str
-    result:   str       # "pass" / "fail" / "unknown" / "needs_research"
-    detail:   str = ""
-    auto:     bool = True
+    key:     str
+    label:   str
+    result:  str    # pass / fail / unknown / needs_research
+    detail:  str = ""
+    auto:    bool = True
 
     @property
     def icon(self) -> str:
@@ -73,245 +47,317 @@ class CheckItem:
 class ResearchResult:
     stock_code: str
     stock_name: str
-    pass_all:   bool            # 全部通過才推薦
-    auto_pass:  int             # 自動通過項目數
-    auto_fail:  int             # 自動失敗項目數
-    needs_research: list[str]   # 需要人工研究的項目
     items:      list[CheckItem] = field(default_factory=list)
-    overall:    str = ""        # "READY" / "NEEDS_RESEARCH" / "REJECTED"
-    summary:    str = ""
+    overall:    str = "NEEDS_RESEARCH"   # READY / NEEDS_RESEARCH / REJECTED
+    auto_pass:  int = 0
+    auto_fail:  int = 0
+    ai_summary: str = ""
 
     def to_dict(self) -> dict:
         return {
-            "code":           self.stock_code,
-            "name":           self.stock_name,
-            "overall":        self.overall,
-            "pass_all":       self.pass_all,
-            "auto_pass":      self.auto_pass,
-            "auto_fail":      self.auto_fail,
-            "needs_research": self.needs_research,
-            "items": [
-                {"key": i.key, "label": i.label, "result": i.result,
-                 "detail": i.detail, "icon": i.icon}
-                for i in self.items
-            ],
-            "summary": self.summary,
+            "code":       self.stock_code,
+            "name":       self.stock_name,
+            "overall":    self.overall,
+            "auto_pass":  self.auto_pass,
+            "auto_fail":  self.auto_fail,
+            "ai_summary": self.ai_summary,
+            "items": [{"key": i.key, "label": i.label, "result": i.result,
+                       "detail": i.detail, "icon": i.icon}
+                      for i in self.items],
         }
 
     def format_line(self) -> str:
         icon_map = {"READY": "🟢", "NEEDS_RESEARCH": "🟡", "REJECTED": "🔴"}
         icon     = icon_map.get(self.overall, "📋")
         lines    = [
-            f"{icon} {self.stock_code} {self.stock_name} 研究清單",
+            f"{icon} {self.stock_code} {self.stock_name}",
+            f"自動核查：{self.auto_pass}/6 通過",
             "─" * 22,
         ]
         for item in self.items:
-            lines.append(f"{item.icon} {item.label}")
+            line = f"{item.icon} {item.label}"
             if item.detail:
-                lines.append(f"   {item.detail}")
-        lines.append("")
-        lines.append(f"📋 結論：{self.summary}")
-        if self.needs_research:
-            lines.append("需確認：" + "、".join(self.needs_research[:3]))
+                line += f"  ({item.detail})"
+            lines.append(line)
+        if self.ai_summary:
+            lines += ["", f"🤖 AI評估：{self.ai_summary[:120]}"]
+        lines += ["", f"📋 結論：{self.overall}"]
+        if self.overall == "NEEDS_RESEARCH":
+            gaps = [i.label for i in self.items if i.result in ("unknown", "needs_research")]
+            if gaps:
+                lines.append(f"待確認：{'、'.join(gaps[:3])}")
         return "\n".join(lines)
+
+    def build_flex_card(self) -> dict:
+        """生成 LINE Flex Message 研究清單卡片"""
+        icon_map  = {"READY": "🟢", "NEEDS_RESEARCH": "🟡", "REJECTED": "🔴"}
+        color_map = {"READY": "#1A5C2E", "NEEDS_RESEARCH": "#4A3A00", "REJECTED": "#5C1A1A"}
+        hdr_color = color_map.get(self.overall, "#0D1B2A")
+
+        def _row(item: CheckItem) -> dict:
+            return {
+                "type": "box", "layout": "horizontal",
+                "margin": "xs", "paddingAll": "4px",
+                "contents": [
+                    {"type": "text", "text": item.icon, "size": "sm", "flex": 1},
+                    {"type": "text", "text": item.label, "size": "xs",
+                     "color": "#E8EEF8", "flex": 5, "wrap": True},
+                    {"type": "text", "text": item.detail[:20] if item.detail else "",
+                     "size": "xxs", "color": "#6A7E9C", "flex": 4, "align": "end"},
+                ],
+            }
+
+        return {
+            "type": "bubble", "size": "kilo",
+            "header": {
+                "type": "box", "layout": "vertical",
+                "backgroundColor": hdr_color, "paddingAll": "14px",
+                "contents": [
+                    {"type": "text",
+                     "text": f"{icon_map.get(self.overall, '📋')} {self.stock_code} {self.stock_name}",
+                     "color": "#E8EEF8", "weight": "bold", "size": "md"},
+                    {"type": "text",
+                     "text": f"自動通過 {self.auto_pass}/6　結論：{self.overall}",
+                     "color": "#AAAAAA", "size": "xs", "margin": "xs"},
+                ],
+            },
+            "body": {
+                "type": "box", "layout": "vertical",
+                "backgroundColor": "#0A0F1E", "paddingAll": "10px",
+                "contents": [_row(i) for i in self.items],
+            },
+            "footer": {
+                "type": "box", "layout": "vertical",
+                "backgroundColor": "#060B14", "paddingAll": "10px",
+                "contents": [{
+                    "type": "text",
+                    "text": self.ai_summary[:100] if self.ai_summary else "AI 分析未執行",
+                    "color": "#6A7E9C", "size": "xs", "wrap": True,
+                }],
+            } if self.ai_summary else None,
+        }
 
 
 class ResearchChecklist:
     """
-    個股研究清單產生器。
+    11 項研究清單引擎。
 
     使用方式：
         checker = ResearchChecklist()
         result  = await checker.check("2330")
         print(result.format_line())
+        card    = result.build_flex_card()
     """
 
     async def check(self, stock_code: str) -> ResearchResult:
-        """從多個資料來源自動填寫研究清單"""
-        # 嘗試取得股票基本資料
-        data = await self._fetch_stock_data(stock_code)
-        return self._evaluate(stock_code, data)
+        data = await self._fetch(stock_code)
+        result = self._auto_check(stock_code, data)
+        ai_summary = await self._ai_analysis(stock_code, data)
+        result.ai_summary = ai_summary
+        self._finalize(result)
+        return result
 
-    def check_from_data(self, stock_code: str, data: dict) -> ResearchResult:
-        """同步版本，直接傳入資料 dict"""
-        return self._evaluate(stock_code, data)
+    def check_sync(self, stock_code: str, data: dict) -> ResearchResult:
+        result = self._auto_check(stock_code, data)
+        self._finalize(result)
+        return result
 
-    async def _fetch_stock_data(self, stock_code: str) -> dict:
-        """從多個來源彙整資料"""
+    # ── 資料抓取 ─────────────────────────────────────────────────────────────
+
+    async def _fetch(self, stock_code: str) -> dict:
         data: dict = {"code": stock_code}
         try:
             from backend.services.twse_service import fetch_realtime_quote
             q = await fetch_realtime_quote(stock_code)
             if q:
                 data.update({
-                    "close":      float(q.get("price", 0)),
-                    "change_pct": float(q.get("change_pct", 0)),
                     "name":       q.get("name", stock_code),
+                    "close":      float(q.get("price", 0)),
                 })
         except Exception:
             pass
-
         try:
             from backend.services.report_screener import all_screener
-            rows = all_screener(limit=300)
-            for row in rows:
-                rc = row.stock_id if hasattr(row, "stock_id") else ""
-                if rc == stock_code:
+            for row in all_screener(limit=300):
+                if getattr(row, "stock_id", "") == stock_code:
                     data.update({
+                        "name":            getattr(row, "name", stock_code),
                         "rev_yoy":         getattr(row, "rev_yoy", 0),
                         "eps_growth":      getattr(row, "eps_growth", 0),
                         "pe_ratio":        getattr(row, "pe_ratio", 20),
                         "foreign_buy_days":getattr(row, "foreign_buy_days", 0),
+                        "trust_net":       getattr(row, "chip_5d", 0),
                         "volume":          getattr(row, "volume", 0),
-                        "momentum_score":  getattr(row, "momentum_score", 50),
-                        "model_score":     getattr(row, "model_score", 50),
+                        "ma5":             getattr(row, "close", 0) * 0.99,
+                        "ma20":            getattr(row, "close", 0) * 0.97,
+                        "ma60":            getattr(row, "close", 0) * 0.94,
+                        "volatility":      getattr(row, "intraday_range", 0.02),
                         "sector":          getattr(row, "sector", ""),
-                        "name":            getattr(row, "name", data.get("name", stock_code)),
                     })
                     break
         except Exception:
             pass
-
         return data
 
-    def _evaluate(self, stock_code: str, data: dict) -> ResearchResult:
+    # ── 自動核查 6 項 ─────────────────────────────────────────────────────────
+
+    def _auto_check(self, stock_code: str, data: dict) -> ResearchResult:
         name     = data.get("name", stock_code)
         rev_yoy  = float(data.get("rev_yoy", 0))
         eps_g    = float(data.get("eps_growth", 0))
-        pe       = float(data.get("pe_ratio", 20))
         f_days   = int(data.get("foreign_buy_days", 0))
+        trust    = float(data.get("trust_net", 0))
+        pe       = float(data.get("pe_ratio", 20))
         vol      = float(data.get("volume", 0))
-        mom_sc   = float(data.get("momentum_score", 50))
-        sector   = str(data.get("sector", ""))
+        close    = float(data.get("close", 100))
+        ma5      = float(data.get("ma5",  close * 0.99))
+        ma20     = float(data.get("ma20", close * 0.97))
+        ma60     = float(data.get("ma60", close * 0.94))
+        vola     = float(data.get("volatility", 0.02))
 
         items: list[CheckItem] = []
 
-        # ── 自動可驗證項目 ─────────────────────────────────────────────────
-        # 1. 近兩季財報成長
-        if rev_yoy > 0.05 or eps_g > 0.05:
-            items.append(CheckItem("revenue_growth_2q", ITEM_LABELS["revenue_growth_2q"],
-                                   "pass", f"營收YoY {rev_yoy*100:+.1f}%  EPS成長 {eps_g*100:+.1f}%"))
-        elif rev_yoy < -0.10:
-            items.append(CheckItem("revenue_growth_2q", ITEM_LABELS["revenue_growth_2q"],
-                                   "fail", f"營收衰退 {rev_yoy*100:.1f}%"))
+        # 1. 近兩季 YoY > 0
+        if rev_yoy > 0.05:
+            items.append(CheckItem("revenue_growth", "近兩季YoY > 0", "pass",
+                                   f"YoY+{rev_yoy*100:.1f}%"))
+        elif rev_yoy < -0.05:
+            items.append(CheckItem("revenue_growth", "近兩季YoY > 0", "fail",
+                                   f"YoY{rev_yoy*100:.1f}%"))
         else:
-            items.append(CheckItem("revenue_growth_2q", ITEM_LABELS["revenue_growth_2q"],
-                                   "unknown", "數據不足，需查近兩季財報"))
+            items.append(CheckItem("revenue_growth", "近兩季YoY > 0", "unknown",
+                                   "數據待確認"))
 
-        # 2. EPS 為正
-        if eps_g >= 0 and mom_sc >= 45:
-            items.append(CheckItem("eps_positive", ITEM_LABELS["eps_positive"],
-                                   "pass", f"EPS趨勢正向"))
-        elif eps_g < -0.20:
-            items.append(CheckItem("eps_positive", ITEM_LABELS["eps_positive"],
-                                   "fail", f"EPS衰退 {eps_g*100:.1f}%"))
+        # 2. EPS 連續兩季成長
+        if eps_g > 0.05:
+            items.append(CheckItem("eps_trend", "EPS連續兩季成長", "pass",
+                                   f"+{eps_g*100:.1f}%"))
+        elif eps_g < -0.10:
+            items.append(CheckItem("eps_trend", "EPS連續兩季成長", "fail",
+                                   f"{eps_g*100:.1f}%"))
         else:
-            items.append(CheckItem("eps_positive", ITEM_LABELS["eps_positive"],
-                                   "unknown", "需查近兩季 EPS"))
+            items.append(CheckItem("eps_trend", "EPS連續兩季成長", "unknown",
+                                   "需查財報"))
 
-        # 3. 法人持續買超（Guidance 代理）
-        if f_days >= 3:
-            items.append(CheckItem("institutional_buy", ITEM_LABELS["institutional_buy"],
-                                   "pass", f"外資連買 {f_days} 日"))
-        elif f_days <= -3:
-            items.append(CheckItem("institutional_buy", ITEM_LABELS["institutional_buy"],
-                                   "fail", f"外資連賣 {abs(f_days)} 日"))
+        # 3. 法人近10日淨買超
+        net_inst = f_days + (1 if trust > 0 else 0)
+        if f_days >= 3 or (f_days > 0 and trust > 0):
+            items.append(CheckItem("institutional_flow", "法人近10日淨買超", "pass",
+                                   f"外資+{f_days}日，投信+{trust:.0f}張"))
+        elif f_days <= -5:
+            items.append(CheckItem("institutional_flow", "法人近10日淨買超", "fail",
+                                   f"外資連賣{abs(f_days)}日"))
         else:
-            items.append(CheckItem("institutional_buy", ITEM_LABELS["institutional_buy"],
-                                   "unknown", "法人動向不明確"))
+            items.append(CheckItem("institutional_flow", "法人近10日淨買超", "unknown",
+                                   "法人動向不明"))
 
-        # 4. 估值合理
-        if 0 < pe <= 40:
-            items.append(CheckItem("valuation_ok", ITEM_LABELS["valuation_ok"],
-                                   "pass", f"PE {pe:.0f}"))
+        # 4. 趨勢排列 MA5 > MA20 > MA60
+        if ma5 > ma20 > ma60:
+            items.append(CheckItem("trend_structure", "MA5>MA20>MA60", "pass",
+                                   f"{ma5:.1f}>{ma20:.1f}>{ma60:.1f}"))
+        elif ma5 < ma20 or ma20 < ma60:
+            items.append(CheckItem("trend_structure", "MA5>MA20>MA60", "fail",
+                                   "均線排列不佳"))
+        else:
+            items.append(CheckItem("trend_structure", "MA5>MA20>MA60", "unknown",
+                                   "均線待確認"))
+
+        # 5. 20日波動率 < 40%（年化）
+        vol_annual = vola * (252 ** 0.5) if vola < 1 else vola
+        if vol_annual < 0.40:
+            items.append(CheckItem("volatility", "波動率 < 40%", "pass",
+                                   f"年化波動{vol_annual*100:.0f}%"))
+        elif vol_annual >= 0.60:
+            items.append(CheckItem("volatility", "波動率 < 40%", "fail",
+                                   f"年化波動{vol_annual*100:.0f}% 過高"))
+        else:
+            items.append(CheckItem("volatility", "波動率 < 40%", "unknown",
+                                   f"年化波動{vol_annual*100:.0f}%"))
+
+        # 6. 估值 PE < 40 或 PEG < 1.5
+        peg = pe / (eps_g * 100) if eps_g > 0.05 else 99
+        if pe < 40 or peg < 1.5:
+            items.append(CheckItem("valuation", "PE<40 或 PEG<1.5", "pass",
+                                   f"PE={pe:.0f}, PEG={peg:.1f}" if peg < 99 else f"PE={pe:.0f}"))
         elif pe > 60:
-            items.append(CheckItem("valuation_ok", ITEM_LABELS["valuation_ok"],
-                                   "fail", f"PE {pe:.0f} 過高"))
+            items.append(CheckItem("valuation", "PE<40 或 PEG<1.5", "fail",
+                                   f"PE={pe:.0f} 過高"))
         else:
-            items.append(CheckItem("valuation_ok", ITEM_LABELS["valuation_ok"],
-                                   "unknown", "PE 待確認"))
+            items.append(CheckItem("valuation", "PE<40 或 PEG<1.5", "unknown",
+                                   f"PE={pe:.0f}"))
 
-        # 5. 流動性
-        vol_k = vol / 1000
-        if vol_k >= 500:
-            items.append(CheckItem("liquidity_ok", ITEM_LABELS["liquidity_ok"],
-                                   "pass", f"日均量 {vol_k:.0f} 張"))
-        elif vol_k > 0:
-            items.append(CheckItem("liquidity_ok", ITEM_LABELS["liquidity_ok"],
-                                   "fail", f"日均量 {vol_k:.0f} 張 < 500 張"))
-        else:
-            items.append(CheckItem("liquidity_ok", ITEM_LABELS["liquidity_ok"],
-                                   "unknown", "量能待確認"))
+        # 5 項人工研究（標記 needs_research）
+        for key, label in [
+            ("competitive_analysis", "競爭力分析"),
+            ("guidance_direction",   "法說會 Guidance 方向"),
+            ("moat",                 "護城河評估"),
+            ("industry_trend",       "產業趨勢"),
+            ("management_quality",   "管理層品質"),
+        ]:
+            items.append(CheckItem(key, label, "needs_research",
+                                   "需人工確認", auto=False))
 
-        # 6. 正向動能
-        if mom_sc >= 60:
-            items.append(CheckItem("momentum_ok", ITEM_LABELS["momentum_ok"],
-                                   "pass", f"動能分 {mom_sc:.0f}"))
-        elif mom_sc < 35:
-            items.append(CheckItem("momentum_ok", ITEM_LABELS["momentum_ok"],
-                                   "fail", f"動能弱（{mom_sc:.0f}）"))
-        else:
-            items.append(CheckItem("momentum_ok", ITEM_LABELS["momentum_ok"],
-                                   "unknown", "動能中性"))
-
-        # ── 需人工確認項目（標記需研究）─────────────────────────────────────
-        manual_keys = ["guidance_revision", "industry_position",
-                       "market_size", "competitive_moat", "growth_logic"]
-        for key in manual_keys:
-            items.append(CheckItem(
-                key=key, label=ITEM_LABELS[key],
-                result="needs_research",
-                detail="需人工確認",
-                auto=False,
-            ))
-
-        # ── 判斷整體結論 ──────────────────────────────────────────────────
-        auto_items    = [i for i in items if i.auto]
-        auto_pass     = sum(1 for i in auto_items if i.result == "pass")
-        auto_fail     = sum(1 for i in auto_items if i.result == "fail")
-        needs_research= [ITEM_LABELS[k] for k in manual_keys]
-
-        if auto_fail >= 2:
-            overall  = "REJECTED"
-            pass_all = False
-            summary  = f"自動項目失敗 {auto_fail} 項，建議排除此標的"
-        elif auto_pass >= 4 and auto_fail == 0:
-            overall  = "NEEDS_RESEARCH"   # 需確認人工項目後才推薦
-            pass_all = False
-            summary  = f"自動核查通過 {auto_pass}/6，需確認 {len(manual_keys)} 項人工研究點"
-        else:
-            overall  = "NEEDS_RESEARCH"
-            pass_all = False
-            summary  = f"資料不足（通過 {auto_pass}，失敗 {auto_fail}，未知 {len(auto_items)-auto_pass-auto_fail}），需補充研究"
+        auto_pass = sum(1 for i in items if i.auto and i.result == "pass")
+        auto_fail = sum(1 for i in items if i.auto and i.result == "fail")
 
         return ResearchResult(
-            stock_code=stock_code,
-            stock_name=name,
-            pass_all=pass_all,
-            auto_pass=auto_pass,
-            auto_fail=auto_fail,
-            needs_research=needs_research[:3],
-            items=items,
-            overall=overall,
-            summary=summary,
+            stock_code=stock_code, stock_name=name,
+            items=items, auto_pass=auto_pass, auto_fail=auto_fail,
         )
 
+    def _finalize(self, result: ResearchResult) -> None:
+        if result.auto_fail >= 2:
+            result.overall = "REJECTED"
+        elif result.auto_pass >= 5:
+            result.overall = "NEEDS_RESEARCH"  # 仍需人工確認5項
+        else:
+            result.overall = "NEEDS_RESEARCH"
 
-_global_checker: Optional[ResearchChecklist] = None
+    # ── AI 輔助分析 ───────────────────────────────────────────────────────────
+
+    async def _ai_analysis(self, stock_code: str, data: dict) -> str:
+        """用 Claude 對5項人工項目做初步評估（可選）"""
+        try:
+            from backend.models.database import settings
+            api_key = getattr(settings, "anthropic_api_key", "") or ""
+            if not api_key:
+                return ""
+
+            import anthropic
+            client = anthropic.AsyncAnthropic(api_key=api_key)
+            name    = data.get("name", stock_code)
+            sector  = data.get("sector", "")
+            rev_yoy = data.get("rev_yoy", 0)
+            prompt  = (
+                f"對 {stock_code} {name}（{sector}）做簡短評估，50字以內：\n"
+                f"營收YoY {rev_yoy*100:+.1f}%。\n"
+                f"請評估：競爭優勢、護城河、產業趨勢。"
+            )
+            msg = await asyncio.wait_for(
+                client.messages.create(
+                    model="claude-haiku-4-5-20251001",
+                    max_tokens=80,
+                    messages=[{"role": "user", "content": prompt}],
+                ),
+                timeout=8.0,
+            )
+            return msg.content[0].text.strip()[:120] if msg.content else ""
+        except Exception:
+            return ""
+
 
 def get_research_checklist() -> ResearchChecklist:
-    global _global_checker
-    if _global_checker is None:
-        _global_checker = ResearchChecklist()
-    return _global_checker
+    return ResearchChecklist()
 
 
 if __name__ == "__main__":
     import asyncio
-
-    async def _test():
-        checker = ResearchChecklist()
-        result  = await checker.check("2330")
-        print(result.format_line())
-
-    asyncio.run(_test())
+    checker = ResearchChecklist()
+    result  = checker.check_sync("2330", {
+        "name": "台積電", "rev_yoy": 0.20, "eps_growth": 0.15,
+        "pe_ratio": 22, "foreign_buy_days": 5, "trust_net": 400,
+        "volume": 5_000_000, "close": 870,
+        "ma5": 875, "ma20": 850, "ma60": 820,
+        "volatility": 0.018, "sector": "半導體",
+    })
+    print(result.format_line())

@@ -1,12 +1,19 @@
 """
-movers_engine.py — 每日動能啟動掃描器
+movers_engine.py — Layer 1: 每日動能啟動掃描
 
-核心邏輯：找「剛開始動」的股票，不是追高
-  - 5D 動能 > 3%（啟動信號）
-  - 成交量 > 20 日均量 1.3 倍（放量確認）
-  - 近 5 日外資或投信有買超（法人跟進）
+找「剛開始動、非追高」的股票。
 
-輸出：MoverResult 列表（依分數排序）
+納入條件（全部通過）：
+  - 5D return > 3%（脫離盤整）
+  - volume_ratio > 1.3x 20日均量（不是無量上漲）
+  - foreign_buy_5d > 0（法人開始進場）
+
+排除條件（任一觸發即排除）：
+  - 5D return > 25%（過熱追高）
+  - distance_from_MA20 > 15%（乖離過大）
+  - avg_volume < 500 張（流動性差）
+
+輸出：DataFrame 含 stock_id/name/5d_return/volume_ratio/foreign_buy_5d/score
 """
 from __future__ import annotations
 
@@ -15,79 +22,67 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Optional
 
+import numpy as np
+import pandas as pd
+
 logger = logging.getLogger(__name__)
 
-# ── 動能篩選門檻 ──────────────────────────────────────────────────────────────
-MOM_5D_MIN      = 0.03   # 5日動能 > 3%
-VOL_RATIO_MIN   = 1.30   # 成交量 > 20日均 1.3 倍
-INST_BUY_DAYS   = 5      # 近 N 日法人有買超
+# ── 納入門檻 ──────────────────────────────────────────────────────────────────
+INC_5D_RETURN_MIN   = 0.03   # 5日報酬 > 3%
+INC_VOL_RATIO_MIN   = 1.30   # 量比 > 1.3x
+INC_FOREIGN_BUY_MIN = 0      # 外資5日淨買 > 0（正值即可）
 
-# 排除條件
-MOM_5D_MAX      = 0.25   # > 25% 視為追高，排除
-CLOSE_VS_MA20_MAX = 0.15  # 收盤比 MA20 高 15% 以上 → 已超漲
-
-
-@dataclass
-class MomentumProfile:
-    mom_5d:   float = 0.0
-    mom_1m:   float = 0.0
-    mom_3m:   float = 0.0
-    mom_6m:   float = 0.0
-    mom_1y:   float = 0.0
+# ── 排除門檻 ──────────────────────────────────────────────────────────────────
+EXC_5D_RETURN_MAX   = 0.25   # 5日報酬 > 25% → 過熱
+EXC_MA20_DISTANCE   = 0.15   # 偏離MA20 > 15% → 乖離過大
+EXC_AVG_VOL_MIN_K   = 500    # 日均量 < 500 張 → 流動性差
 
 
 @dataclass
 class MoverResult:
-    stock_code: str
-    stock_name: str
-    sector:     str
-    close:      float
-    mom_5d:     float       # 5 日漲幅
-    mom_1m:     float       # 1 個月漲幅
-    mom_3m:     float
-    vol_ratio:  float       # 量比（近期/20日均量）
-    foreign_buy_days: int   # 近 5 日外資買超天數
-    trust_buy_days:   int   # 近 5 日投信買超天數
-    has_institutional: bool
-    close_vs_ma20:    float  # (close - MA20) / MA20，正值=在 MA20 上方
-    stage:      str          # "early_breakout" / "trend_continuation" / "watch"
-    score:      float        # 綜合動能分 0~100
-    tags:       list[str] = field(default_factory=list)
+    stock_id:       str
+    name:           str
+    sector:         str
+    close:          float
+    ret_5d:         float      # 5日報酬率
+    ret_1m:         float
+    ret_3m:         float
+    volume_ratio:   float      # 近5日量 / 20日均量
+    avg_volume_k:   float      # 日均量（張）
+    foreign_buy_5d: float      # 外資近5日淨買（張）
+    trust_buy_5d:   float
+    ma20:           float
+    ma60:           float
+    distance_from_ma20: float  # (close - MA20) / MA20
+    score:          float      # 0~100 動能啟動分
+    stage:          str        # early_breakout / trend_continuation / watch
+    include_reasons: list[str] = field(default_factory=list)
 
-    def is_early_stage(self) -> bool:
-        """是否處於動能剛啟動階段（非追高）"""
-        return (
-            MOM_5D_MIN <= self.mom_5d <= MOM_5D_MAX
-            and self.close_vs_ma20 < CLOSE_VS_MA20_MAX
-        )
-
-    def to_dict(self) -> dict:
-        return {
-            "code":              self.stock_code,
-            "name":              self.stock_name,
-            "sector":            self.sector,
-            "close":             round(self.close, 2),
-            "mom_5d_pct":        round(self.mom_5d * 100, 2),
-            "mom_1m_pct":        round(self.mom_1m * 100, 2),
-            "mom_3m_pct":        round(self.mom_3m * 100, 2),
-            "vol_ratio":         round(self.vol_ratio, 2),
-            "foreign_buy_days":  self.foreign_buy_days,
-            "trust_buy_days":    self.trust_buy_days,
-            "has_institutional": self.has_institutional,
-            "close_vs_ma20_pct": round(self.close_vs_ma20 * 100, 2),
-            "stage":             self.stage,
-            "score":             round(self.score, 1),
-            "tags":              self.tags,
-        }
+    def to_series(self) -> pd.Series:
+        return pd.Series({
+            "stock_id":         self.stock_id,
+            "name":             self.name,
+            "sector":           self.sector,
+            "close":            round(self.close, 2),
+            "5d_return":        round(self.ret_5d * 100, 2),
+            "1m_return":        round(self.ret_1m * 100, 2),
+            "3m_return":        round(self.ret_3m * 100, 2),
+            "volume_ratio":     round(self.volume_ratio, 2),
+            "avg_volume_k":     round(self.avg_volume_k, 0),
+            "foreign_buy_5d":   round(self.foreign_buy_5d, 0),
+            "trust_buy_5d":     round(self.trust_buy_5d, 0),
+            "distance_from_ma20": round(self.distance_from_ma20 * 100, 2),
+            "score":            round(self.score, 1),
+            "stage":            self.stage,
+        })
 
     def format_line(self) -> str:
         icons = {"early_breakout": "🚀", "trend_continuation": "📈", "watch": "👀"}
         icon  = icons.get(self.stage, "📊")
-        tag_str = " ".join(f"[{t}]" for t in self.tags[:3])
         return (
-            f"{icon} {self.stock_code} {self.stock_name}\n"
-            f"   5D:{self.mom_5d*100:+.1f}%  量比:{self.vol_ratio:.1f}x"
-            f"  法人:{self.has_institutional}  {tag_str}"
+            f"{icon} {self.stock_id} {self.name}\n"
+            f"   5D:{self.ret_5d*100:+.1f}%  量比:{self.volume_ratio:.1f}x"
+            f"  外資:{self.foreign_buy_5d:+.0f}張  分:{self.score:.0f}"
         )
 
 
@@ -95,203 +90,190 @@ class MoversEngine:
     """
     每日盤後動能啟動掃描器。
 
-    使用方式：
-        engine = MoversEngine()
-        results = await engine.scan()     # 從現有系統拉取資料
-        results = engine.scan_mock()      # mock 資料測試
-
-        for r in results[:10]:
-            print(r.format_line())
+    async scan()   → 從 report_screener 取資料
+    scan_mock()    → Mock 資料，可獨立測試
+    to_dataframe() → 輸出 DataFrame（pipeline 用）
     """
 
-    def __init__(
-        self,
-        mom_5d_min:    float = MOM_5D_MIN,
-        vol_ratio_min: float = VOL_RATIO_MIN,
-        top_n:         int   = 30,
-    ):
-        self.mom_5d_min    = mom_5d_min
-        self.vol_ratio_min = vol_ratio_min
-        self.top_n         = top_n
+    def __init__(self, top_n: int = 30):
+        self.top_n = top_n
+
+    # ── 主入口 ───────────────────────────────────────────────────────────────
 
     async def scan(self) -> list[MoverResult]:
-        """從現有 report_screener 拉資料並計算動能"""
+        """從 report_screener 取資料並評估"""
         try:
             from backend.services.report_screener import all_screener
-            rows = all_screener(limit=200)
-            return self._process_rows(rows)
+            rows = all_screener(limit=300)
+            results = [r for r in (self._eval(row) for row in rows) if r]
+            results.sort(key=lambda r: r.score, reverse=True)
+            return results[:self.top_n]
         except Exception as e:
-            logger.warning("[Movers] report_screener failed (%s), using mock", e)
+            logger.warning("[Movers] screener failed (%s) → mock", e)
             return self.scan_mock()
 
-    def scan_from_rows(self, rows: list) -> list[MoverResult]:
-        """接受 StockRow 列表直接處理（同步）"""
-        return self._process_rows(rows)
-
-    def _process_rows(self, rows: list) -> list[MoverResult]:
-        results: list[MoverResult] = []
-        for row in rows:
-            result = self._evaluate_row(row)
-            if result:
-                results.append(result)
-        results.sort(key=lambda r: r.score, reverse=True)
-        return results[:self.top_n]
-
-    def _evaluate_row(self, row) -> Optional[MoverResult]:
-        """評估單一 StockRow，不符合動能條件回傳 None"""
-        try:
-            # 取出關鍵欄位（相容 StockRow dataclass 與 dict）
-            def _get(attr: str, default=0.0):
-                if hasattr(row, attr):
-                    return getattr(row, attr)
-                if isinstance(row, dict):
-                    return row.get(attr, default)
-                return default
-
-            code       = str(_get("stock_id", _get("stock_code", "")))
-            name       = str(_get("name", code))
-            sector     = str(_get("sector", "其他"))
-            close      = float(_get("close", 0))
-            change_pct = float(_get("change_pct", 0))     # 當日漲跌%
-            vol_ratio  = float(_get("vol_ratio", _get("volume_ratio", 1.0)))
-
-            # 動能估算（若有 momentum 欄位直接用；否則用 change_pct 估算）
-            momentum_20d = float(_get("momentum_20d", 1.0))
-            mom_5d  = float(_get("ret_5d", change_pct / 100 if abs(change_pct) < 20 else 0.05))
-            mom_1m  = float(momentum_20d - 1.0) if momentum_20d > 0.5 else float(_get("ret_20d", 0))
-            mom_3m  = float(_get("mom_3m", mom_1m * 2.5))
-            mom_6m  = float(_get("mom_6m", mom_1m * 4.0))
-
-            # 法人買超
-            foreign_days = int(_get("foreign_buy_days", 0))
-            trust_days   = abs(int(_get("trust_net", 0)))
-            trust_buy    = 1 if trust_days > 0 and float(_get("trust_net", 0)) > 0 else 0
-            has_inst     = foreign_days >= 1 or trust_buy >= 1
-
-            # MA20 偏離
-            ma20 = float(_get("ma20", close * 0.97))
-            close_vs_ma20 = (close - ma20) / ma20 if ma20 > 0 else 0.0
-
-            # ── 篩選條件 ─────────────────────────────────────────────
-            if vol_ratio < self.vol_ratio_min:
-                return None
-            if abs(mom_5d) < self.mom_5d_min:
-                return None
-            if mom_5d > MOM_5D_MAX:   # 排除追高（已漲 25% 以上）
-                return None
-            if not has_inst:           # 必須有法人跡象
-                return None
-
-            # ── 階段判斷 ──────────────────────────────────────────────
-            if (self.mom_5d_min <= mom_5d <= 0.10
-                    and close_vs_ma20 < 0.05):
-                stage = "early_breakout"
-            elif mom_1m > 0.05 and close_vs_ma20 < CLOSE_VS_MA20_MAX:
-                stage = "trend_continuation"
-            else:
-                stage = "watch"
-
-            # ── 動能分 ────────────────────────────────────────────────
-            score = min(100.0, (
-                min(mom_5d  / 0.15, 1.0) * 35 +
-                min(vol_ratio / 2.0, 1.0) * 25 +
-                min(foreign_days / 5.0, 1.0) * 20 +
-                (10 if stage == "early_breakout" else 5) +
-                min(max(0, mom_1m / 0.10), 1.0) * 10
-            ))
-
-            # ── 標籤 ─────────────────────────────────────────────────
-            tags: list[str] = []
-            if foreign_days >= 3:   tags.append("外資連買")
-            if trust_buy:           tags.append("投信買超")
-            if vol_ratio >= 2.0:    tags.append("爆量")
-            if stage == "early_breakout": tags.append("啟動初期")
-            if mom_3m > 0.10:       tags.append("中期強勢")
-
-            return MoverResult(
-                stock_code=code,
-                stock_name=name,
-                sector=sector,
-                close=close,
-                mom_5d=round(mom_5d, 4),
-                mom_1m=round(mom_1m, 4),
-                mom_3m=round(mom_3m, 4),
-                vol_ratio=round(vol_ratio, 2),
-                foreign_buy_days=foreign_days,
-                trust_buy_days=trust_buy,
-                has_institutional=has_inst,
-                close_vs_ma20=round(close_vs_ma20, 4),
-                stage=stage,
-                score=round(score, 1),
-                tags=tags,
-            )
-        except Exception as e:
-            logger.debug("[Movers] row error: %s", e)
-            return None
-
     def scan_mock(self, n: int = 20) -> list[MoverResult]:
-        """Mock 資料（測試/無 API 時使用）"""
-        import random; rng = random.Random(42)
-        universe = [
-            ("3105", "穩懋",   "半導體",    320.0),
-            ("6669", "緯穎",   "AI Server", 1250.0),
-            ("2379", "瑞昱",   "半導體",    620.0),
-            ("2454", "聯發科", "半導體",    1020.0),
-            ("2330", "台積電", "半導體",    870.0),
-            ("6415", "矽力",   "半導體",    2800.0),
-            ("3231", "緯創",   "AI Server", 102.0),
-            ("2603", "長榮",   "航運",      168.0),
-            ("2882", "國泰金", "金融",      55.0),
-            ("4938", "和碩",   "電子零組件",78.0),
-        ]
+        """Mock 資料（測試 / API 失敗時）"""
+        universe = _MOCK_UNIVERSE[:n]
         results = []
-        for code, name, sector, close in universe[:n]:
-            mom_5d  = rng.uniform(0.03, 0.12)
-            vol_ratio= rng.uniform(1.3, 2.8)
-            f_days  = rng.randint(1, 5)
-            ma20    = close * rng.uniform(0.93, 0.99)
-            stage   = "early_breakout" if mom_5d < 0.07 else "trend_continuation"
-            score   = 50 + mom_5d * 150 + (vol_ratio - 1) * 10
-            tags    = ["外資連買" if f_days >= 3 else "外資買超"]
-            if vol_ratio >= 2.0: tags.append("爆量")
+        rng = np.random.default_rng(42)
+        for s in universe:
+            close  = s["close"]
+            ma20   = close * rng.uniform(0.91, 0.99)
+            ma60   = ma20 * rng.uniform(0.92, 0.99)
+            ret5   = rng.uniform(0.03, 0.14)
+            vol_r  = rng.uniform(1.3, 2.8)
+            f_buy  = rng.uniform(200, 8000)
+            dist   = (close - ma20) / ma20
+            score  = self._calc_score(ret5, vol_r, f_buy, dist)
+            stage  = ("early_breakout" if ret5 < 0.07 and dist < 0.05
+                      else "trend_continuation")
             results.append(MoverResult(
-                stock_code=code, stock_name=name, sector=sector, close=close,
-                mom_5d=round(mom_5d, 4), mom_1m=round(mom_5d * 3.5, 4),
-                mom_3m=round(mom_5d * 7, 4), vol_ratio=round(vol_ratio, 2),
-                foreign_buy_days=f_days, trust_buy_days=rng.randint(0, 2),
-                has_institutional=True, close_vs_ma20=round((close-ma20)/ma20, 4),
-                stage=stage, score=round(min(score, 95), 1), tags=tags,
+                stock_id=s["stock_id"], name=s["name"], sector=s["sector"],
+                close=close, ret_5d=ret5, ret_1m=ret5*3.2, ret_3m=ret5*7,
+                volume_ratio=round(vol_r, 2), avg_volume_k=rng.uniform(500, 8000),
+                foreign_buy_5d=round(f_buy, 0), trust_buy_5d=round(rng.uniform(0, 500), 0),
+                ma20=round(ma20, 2), ma60=round(ma60, 2),
+                distance_from_ma20=round(dist, 4), score=round(score, 1),
+                stage=stage, include_reasons=["5D>3%", "量比>1.3x", "外資買超"],
             ))
         results.sort(key=lambda r: r.score, reverse=True)
         return results
 
-    def format_line_report(self, results: list[MoverResult]) -> str:
-        """格式化 LINE 訊息"""
+    def to_dataframe(self, results: list[MoverResult]) -> pd.DataFrame:
+        """輸出 pipeline 用 DataFrame"""
         if not results:
-            return "📊 今日無明顯動能啟動股票"
+            return pd.DataFrame()
+        return pd.DataFrame([r.to_series() for r in results]).reset_index(drop=True)
+
+    # ── 單股評估 ─────────────────────────────────────────────────────────────
+
+    def _eval(self, row) -> Optional[MoverResult]:
+        try:
+            def g(attr, d=0.0):
+                return float(getattr(row, attr, None) or
+                             (row.get(attr, d) if isinstance(row, dict) else d))
+            def gs(attr, d=""):
+                return str(getattr(row, attr, None) or
+                           (row.get(attr, d) if isinstance(row, dict) else d))
+
+            stock_id = gs("stock_id", gs("code", ""))
+            name     = gs("name", stock_id)
+            sector   = gs("sector", "其他")
+            close    = g("close", 100)
+            ma20     = g("ma20", close * 0.97)
+            ma60     = g("ma60", close * 0.94)
+            vol_r    = g("volume_ratio", g("vol_ratio", 1.0))
+            f_days   = int(g("foreign_buy_days", 0))
+            foreign5 = g("foreign_net", f_days * 500)
+            trust5   = g("trust_net", 0)
+            vol_k    = g("volume", 0) / 1000   # volume in shares
+
+            # 動能估算
+            mom20    = g("momentum_20d", 1.0)
+            ret_5d   = g("ret_5d", (mom20 - 1.0) * 0.25 if mom20 > 0.9 else 0.03)
+            ret_1m   = mom20 - 1.0 if mom20 > 0.5 else ret_5d * 4
+            ret_3m   = ret_1m * 2.5
+
+            dist     = (close - ma20) / ma20 if ma20 > 0 else 0.0
+
+            # ── 排除條件 ──────────────────────────────────────────────
+            if vol_k > 0 and vol_k < EXC_AVG_VOL_MIN_K:
+                return None
+            if abs(ret_5d) > EXC_5D_RETURN_MAX:
+                return None
+            if dist > EXC_MA20_DISTANCE:
+                return None
+
+            # ── 納入條件 ──────────────────────────────────────────────
+            if ret_5d < INC_5D_RETURN_MIN:
+                return None
+            if vol_r < INC_VOL_RATIO_MIN:
+                return None
+            if foreign5 <= INC_FOREIGN_BUY_MIN and f_days <= 0:
+                return None
+
+            score = self._calc_score(ret_5d, vol_r, max(foreign5, f_days * 200), dist)
+            stage = ("early_breakout" if ret_5d < 0.08 and dist < 0.06
+                     else "trend_continuation")
+
+            reasons = []
+            if ret_5d >= 0.03: reasons.append(f"5D+{ret_5d*100:.1f}%")
+            if vol_r >= 1.3:   reasons.append(f"量比{vol_r:.1f}x")
+            if foreign5 > 0:   reasons.append(f"外資+{foreign5:.0f}張")
+
+            return MoverResult(
+                stock_id=stock_id, name=name, sector=sector, close=close,
+                ret_5d=round(ret_5d, 4), ret_1m=round(ret_1m, 4), ret_3m=round(ret_3m, 4),
+                volume_ratio=round(vol_r, 2), avg_volume_k=round(vol_k, 0),
+                foreign_buy_5d=round(foreign5, 0), trust_buy_5d=round(trust5, 0),
+                ma20=round(ma20, 2), ma60=round(ma60, 2),
+                distance_from_ma20=round(dist, 4), score=round(score, 1),
+                stage=stage, include_reasons=reasons,
+            )
+        except Exception as e:
+            logger.debug("[Movers] eval error: %s", e)
+            return None
+
+    @staticmethod
+    def _calc_score(ret_5d, vol_r, foreign_buy, dist_ma20) -> float:
+        s  = min(ret_5d  / 0.12, 1.0) * 35
+        s += min(vol_r   / 2.5,  1.0) * 25
+        s += min(max(foreign_buy, 0) / 5000, 1.0) * 20
+        s += max(0, 1.0 - dist_ma20 / 0.10) * 10  # 靠近MA20加分
+        s += 10  # base
+        return min(s, 100.0)
+
+    def format_report(self, results: list[MoverResult]) -> str:
+        if not results:
+            return "🔍 今日無明顯動能啟動股票"
+        early = [r for r in results if r.stage == "early_breakout"]
+        trend = [r for r in results if r.stage == "trend_continuation"]
         lines = [
-            f"🔍 今日動能啟動（共 {len(results)} 檔）",
-            f"掃描時間：{datetime.now().strftime('%m/%d %H:%M')}",
+            f"🔍 動能啟動股票（{len(results)} 檔）  {datetime.now().strftime('%m/%d %H:%M')}",
+            f"早期啟動 {len(early)} / 趨勢延續 {len(trend)}",
             "─" * 22,
         ]
         for r in results[:8]:
             lines.append(r.format_line())
         if len(results) > 8:
-            lines.append(f"（另有 {len(results)-8} 檔…）")
+            lines.append(f"…另有 {len(results)-8} 檔")
         return "\n".join(lines)
 
 
-_global_movers: Optional[MoversEngine] = None
+# ── 共用 Mock 股票池 ──────────────────────────────────────────────────────────
+_MOCK_UNIVERSE = [
+    {"stock_id": "3105", "name": "穩懋",   "sector": "半導體",    "close": 320.0},
+    {"stock_id": "6669", "name": "緯穎",   "sector": "AI Server", "close": 1250.0},
+    {"stock_id": "2379", "name": "瑞昱",   "sector": "半導體",    "close": 620.0},
+    {"stock_id": "2330", "name": "台積電", "sector": "半導體",    "close": 870.0},
+    {"stock_id": "2454", "name": "聯發科", "sector": "IC設計",    "close": 1020.0},
+    {"stock_id": "6415", "name": "矽力-KY","sector": "半導體",    "close": 2800.0},
+    {"stock_id": "3231", "name": "緯創",   "sector": "AI Server", "close": 102.0},
+    {"stock_id": "2317", "name": "鴻海",   "sector": "電子製造",  "close": 178.0},
+    {"stock_id": "5347", "name": "世界先進","sector":"半導體",     "close": 95.0},
+    {"stock_id": "4938", "name": "和碩",   "sector": "電子製造",  "close": 78.0},
+    {"stock_id": "2382", "name": "廣達",   "sector": "AI Server", "close": 280.0},
+    {"stock_id": "3034", "name": "聯詠",   "sector": "IC設計",    "close": 415.0},
+    {"stock_id": "2308", "name": "台達電", "sector": "電源零組件","close": 330.0},
+    {"stock_id": "6271", "name": "同欣電", "sector": "半導體",    "close": 310.0},
+    {"stock_id": "2303", "name": "聯電",   "sector": "半導體",    "close": 52.0},
+    {"stock_id": "2357", "name": "華碩",   "sector": "電腦週邊",  "close": 540.0},
+    {"stock_id": "2412", "name": "中華電", "sector": "電信",      "close": 125.0},
+    {"stock_id": "2882", "name": "國泰金", "sector": "金融",      "close": 55.0},
+    {"stock_id": "2603", "name": "長榮",   "sector": "航運",      "close": 168.0},
+    {"stock_id": "2609", "name": "陽明",   "sector": "航運",      "close": 82.0},
+]
+
 
 def get_movers_engine() -> MoversEngine:
-    global _global_movers
-    if _global_movers is None:
-        _global_movers = MoversEngine()
-    return _global_movers
+    return MoversEngine()
 
 
 if __name__ == "__main__":
-    engine = MoversEngine()
+    engine  = MoversEngine()
     results = engine.scan_mock()
-    print(engine.format_line_report(results))
-    print(f"\n早期啟動: {sum(1 for r in results if r.stage=='early_breakout')} 檔")
+    df      = engine.to_dataframe(results)
+    print(df[["stock_id", "name", "5d_return", "volume_ratio",
+              "foreign_buy_5d", "score", "stage"]].to_string())
+    print(f"\n{engine.format_report(results)}")

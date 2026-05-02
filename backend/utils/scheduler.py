@@ -85,6 +85,34 @@ def start_scheduler() -> AsyncIOScheduler:
         id="watchlist_trigger", replace_existing=True,
     )
 
+    # Alpha Pipeline — 18:00 Layer 1: 動能啟動掃描
+    scheduler.add_job(
+        _run_pipeline_movers,
+        CronTrigger(day_of_week="mon-fri", hour=18, minute=0, timezone="Asia/Taipei"),
+        id="pipeline_movers", replace_existing=True,
+    )
+
+    # Alpha Pipeline — 18:15 Layer 2+3: 三層分類 + 六大過濾
+    scheduler.add_job(
+        _run_pipeline_scanner_filter,
+        CronTrigger(day_of_week="mon-fri", hour=18, minute=15, timezone="Asia/Taipei"),
+        id="pipeline_scanner_filter", replace_existing=True,
+    )
+
+    # Alpha Pipeline — 18:30 Layer 4: Research 自動核查
+    scheduler.add_job(
+        _run_pipeline_research,
+        CronTrigger(day_of_week="mon-fri", hour=18, minute=30, timezone="Asia/Taipei"),
+        id="pipeline_research", replace_existing=True,
+    )
+
+    # Alpha Pipeline — 18:45 Layer 5: Portfolio Overlay 準備
+    scheduler.add_job(
+        _run_pipeline_overlay_prep,
+        CronTrigger(day_of_week="mon-fri", hour=18, minute=45, timezone="Asia/Taipei"),
+        id="pipeline_overlay_prep", replace_existing=True,
+    )
+
     # Agent A — 數據員：每日 18:00 抓取並更新 FinMind 數據
     scheduler.add_job(
         _run_agent_a,
@@ -495,3 +523,94 @@ async def _push_daily_decision():
         logger.info(f"[DecisionEngine] pushed to {n} subscribers")
     except Exception as e:
         logger.error(f"Daily decision job failed: {e}")
+
+
+# ── Alpha Pipeline 四段排程 ───────────────────────────────────────────────────
+
+async def _run_pipeline_movers():
+    """18:00 — Layer 1: 動能啟動掃描"""
+    try:
+        from quant.movers_engine import MoversEngine
+        engine  = MoversEngine()
+        results = await engine.scan()
+        if not results:
+            results = engine.scan_mock(20)
+        logger.info(f"[Pipeline 18:00] movers scan: {len(results)} 檔動能股")
+    except Exception as e:
+        logger.error(f"[Pipeline 18:00] movers failed: {e}")
+
+
+async def _run_pipeline_scanner_filter():
+    """18:15 — Layer 2+3: 三層分類 + 六大過濾"""
+    try:
+        from quant.movers_engine import MoversEngine
+        from quant.scanner_engine import ScannerEngine
+        from quant.filter_engine import FilterEngine
+
+        movers      = await MoversEngine().scan()
+        if not movers:
+            movers = MoversEngine().scan_mock(20)
+
+        scan_result = ScannerEngine().classify(movers)
+        all_recs    = scan_result.core + scan_result.medium + scan_result.satellite
+        filter_res  = FilterEngine().filter(all_recs)
+        passed      = filter_res["passed"]
+
+        logger.info(
+            "[Pipeline 18:15] scanner: core=%d medium=%d sat=%d | filter pass=%d",
+            len(scan_result.core), len(scan_result.medium),
+            len(scan_result.satellite), len(passed),
+        )
+    except Exception as e:
+        logger.error(f"[Pipeline 18:15] scanner/filter failed: {e}")
+
+
+async def _run_pipeline_research():
+    """18:30 — Layer 4: Research 自動核查（前 5 檔）"""
+    try:
+        from quant.movers_engine import MoversEngine
+        from quant.scanner_engine import ScannerEngine
+        from quant.filter_engine import FilterEngine
+        from quant.research_checklist import ResearchChecklist
+
+        movers     = await MoversEngine().scan() or MoversEngine().scan_mock(20)
+        scan_res   = ScannerEngine().classify(movers)
+        all_recs   = scan_res.core + scan_res.medium + scan_res.satellite
+        filter_res = FilterEngine().filter(all_recs)
+        passed     = filter_res["passed"][:5]
+
+        checker = ResearchChecklist()
+        results = []
+        for rec in passed:
+            code = rec.stock_id if hasattr(rec, "stock_id") else rec.get("stock_id", "")
+            r    = await checker.check(code)
+            results.append(f"{code}:{r.overall}({r.auto_pass}/6)")
+
+        logger.info("[Pipeline 18:30] research: %s", " ".join(results))
+    except Exception as e:
+        logger.error(f"[Pipeline 18:30] research failed: {e}")
+
+
+async def _run_pipeline_overlay_prep():
+    """18:45 — Layer 5: Portfolio Overlay 數據預熱（不推送，等 19:00）"""
+    try:
+        from quant.portfolio_overlay import PortfolioOverlay
+        from ..models.database import AsyncSessionLocal
+        from ..models.models import Subscriber
+        from sqlalchemy import select
+
+        async with AsyncSessionLocal() as db:
+            r    = await db.execute(select(Subscriber))
+            subs = r.scalars().all()
+
+        overlay = PortfolioOverlay()
+        total_signals = 0
+        for sub in subs[:10]:
+            uid = sub.line_user_id
+            if uid:
+                signals = await overlay.scan(uid)
+                total_signals += len(signals)
+
+        logger.info("[Pipeline 18:45] overlay prep: %d 檔持倉已掃描", total_signals)
+    except Exception as e:
+        logger.error(f"[Pipeline 18:45] overlay prep failed: {e}")

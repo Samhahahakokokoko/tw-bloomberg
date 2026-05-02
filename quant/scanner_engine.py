@@ -1,9 +1,11 @@
 """
-scanner_engine.py — 三層分類掃描器
+scanner_engine.py — Layer 2: 三層風險分類掃描器
 
-Core（長期核心）：穩定營收 + ROE + 外資持續買 + AI/半導體產業
-Medium（中期成長）：有題材 + EPS 季增加速 + 投信連買
-Satellite（高風險爆發）：新題材/Turnaround，最大倉位 5%
+Core  (倉位上限 20%)：AI/半導體/伺服器 + 營收YoY>15% + 外資連買>=3日 + MA20>MA60 + ROE>15%
+Medium(倉位上限 10%)：EPS季增加速 + 投信連買>=3日 + RS強 + MA5>MA20 趨勢確認
+Satellite(倉位上限 5%)：Turnaround/新題材 + 高成長高波動 + 小型股
+
+輸出：{stock_id: {"layer": "core/medium/satellite", "score": float, ...}}
 """
 from __future__ import annotations
 
@@ -11,221 +13,225 @@ import logging
 from dataclasses import dataclass, field
 from typing import Optional
 
+import numpy as np
+
 logger = logging.getLogger(__name__)
 
-# ── 分層標準 ─────────────────────────────────────────────────────────────────
 CORE_SECTORS    = {"半導體", "AI Server", "AI", "伺服器", "雲端", "晶圓代工", "IC設計"}
-CORE_REV_YOY    = 0.15   # 營收年增 > 15%
-CORE_ROE        = 0.15   # ROE > 15%（以 eps_stability > 0.7 代理）
-CORE_FOREIGN_DAYS = 3    # 外資連買 >= 3 天
+CORE_REV_YOY    = 0.15
+CORE_FOREIGN_D  = 3      # 外資連買 >= 3 日
+CORE_MA_COND    = True   # 需要 MA20 > MA60
 
-MED_EPS_GROWTH  = 0.10   # EPS 季增率 > 10%
-MED_TRUST_DAYS  = 2      # 投信連買 >= 2 天
-MED_MOM_1M      = 0.05   # 1 個月漲幅 > 5%
+MED_TRUST_D     = 3      # 投信連買 >= 3 日
+MED_RS_THRESH   = 0.05   # Relative Strength：近20日跑贏大盤 > 5%
 
-SAT_MAX_POSITION = 0.05  # 最大倉位 5%
-SAT_VOL_RATIO   = 1.5    # 高波動（量比 > 1.5）
+SAT_MAX_CAP     = 200e8  # 市值 < 200 億視為小型股
 
 
 @dataclass
-class StockCandidate:
-    stock_code: str
-    stock_name: str
-    sector:     str
-    tier:       str          # "core" / "medium" / "satellite"
-    close:      float
-    score:      float        # 綜合評分
-    max_position: float      # 建議最大倉位比例
-    reasons:    list[str] = field(default_factory=list)
-    risk_note:  str = ""
+class ScanRecord:
+    stock_id:     str
+    name:         str
+    sector:       str
+    layer:        str        # core / medium / satellite
+    score:        float      # 0~1
+    max_position: float      # 最大倉位比例
+    reasons:      list[str] = field(default_factory=list)
+    risk_note:    str = ""
 
     def to_dict(self) -> dict:
         return {
-            "code":         self.stock_code,
-            "name":         self.stock_name,
-            "sector":       self.sector,
-            "tier":         self.tier,
-            "close":        round(self.close, 2),
-            "score":        round(self.score, 1),
+            "layer":        self.layer,
+            "score":        round(self.score, 4),
             "max_position": self.max_position,
             "reasons":      self.reasons,
             "risk_note":    self.risk_note,
+            "name":         self.name,
+            "sector":       self.sector,
         }
 
 
 @dataclass
 class ScanResult:
-    core:      list[StockCandidate] = field(default_factory=list)
-    medium:    list[StockCandidate] = field(default_factory=list)
-    satellite: list[StockCandidate] = field(default_factory=list)
+    records:   dict[str, ScanRecord] = field(default_factory=dict)
 
     @property
-    def all_candidates(self) -> list[StockCandidate]:
-        return self.core + self.medium + self.satellite
+    def core(self) -> list[ScanRecord]:
+        return sorted([r for r in self.records.values() if r.layer == "core"],
+                      key=lambda r: -r.score)
+    @property
+    def medium(self) -> list[ScanRecord]:
+        return sorted([r for r in self.records.values() if r.layer == "medium"],
+                      key=lambda r: -r.score)
+    @property
+    def satellite(self) -> list[ScanRecord]:
+        return sorted([r for r in self.records.values() if r.layer == "satellite"],
+                      key=lambda r: -r.score)
 
     def to_dict(self) -> dict:
-        return {
-            "core":      [c.to_dict() for c in self.core],
-            "medium":    [c.to_dict() for c in self.medium],
-            "satellite": [c.to_dict() for c in self.satellite],
-            "total":     len(self.core) + len(self.medium) + len(self.satellite),
-        }
+        return {sid: rec.to_dict() for sid, rec in self.records.items()}
 
     def format_line(self) -> str:
         lines = [
-            f"📊 選股分類結果",
-            f"核心({len(self.core)}) / 成長({len(self.medium)}) / 衛星({len(self.satellite)})",
+            f"📊 三層分類結果",
+            f"Core({len(self.core)}) / Medium({len(self.medium)}) / Satellite({len(self.satellite)})",
             "─" * 22,
         ]
-        if self.core:
-            lines.append("🔵 Core（長期核心）")
-            for c in self.core[:3]:
-                r = "、".join(c.reasons[:2])
-                lines.append(f"  {c.stock_code} {c.stock_name}  {r}")
-        if self.medium:
-            lines.append("🟡 Medium（中期成長）")
-            for c in self.medium[:3]:
-                r = "、".join(c.reasons[:2])
-                lines.append(f"  {c.stock_code} {c.stock_name}  {r}")
-        if self.satellite:
-            lines.append("🔴 Satellite（高風險，倉位≤5%）")
-            for c in self.satellite[:2]:
-                lines.append(f"  {c.stock_code} {c.stock_name}  {c.risk_note}")
+        for c in self.core[:3]:
+            lines.append(f"🔵 {c.stock_id} {c.name}  {'/'.join(c.reasons[:2])}")
+        for c in self.medium[:3]:
+            lines.append(f"🟡 {c.stock_id} {c.name}  {'/'.join(c.reasons[:2])}")
+        for c in self.satellite[:2]:
+            lines.append(f"🔴 {c.stock_id} {c.name}  {c.risk_note}")
         return "\n".join(lines)
 
 
 class ScannerEngine:
     """
-    三層分類掃描器。接受 MoverResult 列表，分類為 Core/Medium/Satellite。
+    三層風險分類掃描器。
+
+    接受 MoverResult 列表（Layer 1 輸出），分類成 Core / Medium / Satellite。
 
     使用方式：
         scanner = ScannerEngine()
         result  = scanner.classify(movers)
         print(result.format_line())
+
+        # 直接取 dict 輸出
+        d = result.to_dict()   # {stock_id: {"layer": ..., "score": ...}}
     """
 
-    def classify(self, candidates) -> ScanResult:
-        """
-        接受 MoverResult 或 StockRow 列表，分類成三層。
-        """
+    def classify(self, candidates: list) -> ScanResult:
         result = ScanResult()
         for item in candidates:
-            c = self._classify_one(item)
-            if c is None:
-                continue
-            if c.tier == "core":
-                result.core.append(c)
-            elif c.tier == "medium":
-                result.medium.append(c)
-            else:
-                result.satellite.append(c)
-
-        result.core.sort(key=lambda c: c.score, reverse=True)
-        result.medium.sort(key=lambda c: c.score, reverse=True)
-        result.satellite.sort(key=lambda c: c.score, reverse=True)
+            rec = self._classify_one(item)
+            if rec:
+                result.records[rec.stock_id] = rec
         return result
 
-    def _classify_one(self, item) -> Optional[StockCandidate]:
-        def _g(attr, default=0.0):
+    def _classify_one(self, item) -> Optional[ScanRecord]:
+        def g(attr, d=0.0):
             if hasattr(item, attr):
-                return getattr(item, attr)
+                v = getattr(item, attr)
+                return float(v) if v is not None else d
             if isinstance(item, dict):
-                return item.get(attr, default)
-            return default
+                return float(item.get(attr, d) or d)
+            return d
+        def gi(attr, d=0):
+            return int(g(attr, d))
+        def gs(attr, d=""):
+            if hasattr(item, attr): return str(getattr(item, attr) or d)
+            if isinstance(item, dict): return str(item.get(attr, d) or d)
+            return d
 
-        code    = str(_g("stock_code", _g("stock_id", "")))
-        name    = str(_g("stock_name", _g("name", code)))
-        sector  = str(_g("sector", "其他"))
-        close   = float(_g("close", 0))
-        f_days  = int(_g("foreign_buy_days", 0))
-        trust   = float(_g("trust_net", _g("trust_buy_days", 0)))
-        rev_yoy = float(_g("rev_yoy", 0))   # 0~1 scale or -1~+1
-        eps_g   = float(_g("eps_growth", 0))
-        eps_stab= float(_g("eps_stability", 0.5))
-        vol_r   = float(_g("vol_ratio", _g("volume_ratio", 1.0)))
-        mom_1m  = float(_g("mom_1m", _g("momentum_20d", 1.0)) - 1.0
-                        if _g("momentum_20d", 1.0) > 0.5
-                        else _g("mom_1m", 0.0))
-        score   = float(_g("score", 50))
-        model_s = float(_g("model_score", score))
+        stock_id   = gs("stock_id", gs("code", ""))
+        name       = gs("name", stock_id)
+        sector     = gs("sector", "其他")
+        close      = g("close", 100)
+        ma20       = g("ma20", close * 0.97)
+        ma60       = g("ma60", close * 0.94)
+        ma5        = g("ma5",  close * 0.99)
+        rev_yoy    = g("rev_yoy", 0)
+        eps_growth = g("eps_growth", 0)
+        eps_stab   = g("eps_stability", 0.5)
+        f_days     = gi("foreign_buy_days", 0)
+        trust_net  = g("trust_net", 0)
+        vol_r      = g("volume_ratio", g("vol_ratio", 1.0))
+        vol_k      = g("avg_volume_k", g("volume", 0) / 1000)
+        ret_5d     = g("ret_5d", g("5d_return", 0) / 100)
+        ret_1m     = g("ret_1m", g("1m_return", 0) / 100)
+        pe_ratio   = g("pe_ratio", 20)
+        score      = g("score", 50)
 
-        reasons: list[str] = []
+        # Relative Strength 估算（近20日 vs 市場，用 ret_1m > 5% 代理）
+        # 更精確版本需要大盤指數報酬率對比
+        market_ret_1m = 0.03   # 假設市場月報酬 3%（可從 fetch_market_overview 取）
+        rs = ret_1m - market_ret_1m
 
-        # ── Core 判斷 ─────────────────────────────────────────────────────
-        is_core_sector  = any(s in sector for s in CORE_SECTORS)
-        is_core_rev     = rev_yoy > CORE_REV_YOY or rev_yoy > 0.05
-        is_core_roe     = eps_stab >= CORE_ROE or eps_stab >= 0.65
-        is_core_foreign = f_days >= CORE_FOREIGN_DAYS
+        # ROE 代理：eps_stability > 0.7 ≈ ROE > 15%
+        roe_proxy = eps_stab >= 0.70
 
-        core_score = sum([is_core_sector, is_core_rev, is_core_roe, is_core_foreign])
-        if core_score >= 3:
-            if is_core_sector:   reasons.append(f"{sector}產業")
-            if is_core_rev:      reasons.append(f"營收YoY+{rev_yoy*100:.0f}%")
-            if is_core_foreign:  reasons.append(f"外資連買{f_days}日")
-            return StockCandidate(
-                stock_code=code, stock_name=name, sector=sector, tier="core",
-                close=close,
-                score=round(60 + core_score * 8 + model_s * 0.2, 1),
-                max_position=0.20,
-                reasons=reasons,
+        # MA 排列
+        ma20_above_ma60 = ma20 > ma60
+        ma5_above_ma20  = ma5  > ma20
+
+        # Trust 連買（trust_net > 0 代理投信買超）
+        trust_buy_days = 3 if trust_net > 200 else (1 if trust_net > 0 else 0)
+
+        # ── Core 條件 ────────────────────────────────────────────────────
+        is_core_sector   = any(s in sector for s in CORE_SECTORS)
+        is_core_rev      = rev_yoy > CORE_REV_YOY
+        is_core_foreign  = f_days >= CORE_FOREIGN_D
+        is_core_ma       = ma20_above_ma60
+        is_core_roe      = roe_proxy
+
+        core_count = sum([is_core_sector, is_core_rev, is_core_foreign,
+                          is_core_ma, is_core_roe])
+        if core_count >= 4:
+            reasons = []
+            if is_core_sector:  reasons.append(f"{sector}核心產業")
+            if is_core_rev:     reasons.append(f"營收YoY+{rev_yoy*100:.0f}%")
+            if is_core_foreign: reasons.append(f"外資連買{f_days}日")
+            if is_core_ma:      reasons.append("MA20>MA60")
+            if is_core_roe:     reasons.append("ROE>15%")
+            core_score = 0.6 + (core_count - 3) * 0.1 + min(score, 100) * 0.003
+            return ScanRecord(
+                stock_id=stock_id, name=name, sector=sector,
+                layer="core", score=round(min(core_score, 1.0), 4),
+                max_position=0.20, reasons=reasons,
             )
 
-        # ── Medium 判斷 ───────────────────────────────────────────────────
-        is_med_eps  = eps_g > MED_EPS_GROWTH or eps_g > 0.05
-        is_med_trust= trust > 0 and trust >= MED_TRUST_DAYS
-        is_med_mom  = mom_1m > MED_MOM_1M or (hasattr(item, "stage") and
-                                               item.stage in ("early_breakout", "trend_continuation"))
+        # ── Medium 條件 ──────────────────────────────────────────────────
+        is_med_eps   = eps_growth > 0.10 or (eps_growth > 0.05 and ret_1m > 0.05)
+        is_med_trust = trust_buy_days >= MED_TRUST_D or trust_net > 500
+        is_med_rs    = rs > MED_RS_THRESH
+        is_med_ma    = ma5_above_ma20
 
-        med_score = sum([is_med_eps, is_med_trust, is_med_mom])
-        if med_score >= 2:
-            if is_med_eps:   reasons.append(f"EPS季增{eps_g*100:.0f}%")
+        med_count = sum([is_med_eps, is_med_trust, is_med_rs, is_med_ma])
+        if med_count >= 2:
+            reasons = []
+            if is_med_eps:   reasons.append(f"EPS加速+{eps_growth*100:.0f}%")
             if is_med_trust: reasons.append("投信連買")
-            if is_med_mom:   reasons.append("趨勢加速")
-            return StockCandidate(
-                stock_code=code, stock_name=name, sector=sector, tier="medium",
-                close=close,
-                score=round(45 + med_score * 10 + model_s * 0.15, 1),
-                max_position=0.10,
-                reasons=reasons,
+            if is_med_rs:    reasons.append(f"RS+{rs*100:.1f}%跑贏大盤")
+            if is_med_ma:    reasons.append("MA5>MA20趨勢確認")
+            med_score = 0.40 + med_count * 0.08 + min(score, 100) * 0.002
+            return ScanRecord(
+                stock_id=stock_id, name=name, sector=sector,
+                layer="medium", score=round(min(med_score, 0.85), 4),
+                max_position=0.10, reasons=reasons,
             )
 
-        # ── Satellite 判斷 ────────────────────────────────────────────────
-        is_sat_vol  = vol_r >= SAT_VOL_RATIO
-        is_sat_chip = f_days >= 1 or trust > 0
-        is_sat_mom  = abs(mom_1m) > 0.05
+        # ── Satellite 條件 ────────────────────────────────────────────────
+        is_sat_small  = vol_k > 0 and vol_k < 2000   # 小型股代理
+        is_sat_growth = eps_growth > 0.20 or rev_yoy > 0.30
+        is_sat_chip   = f_days > 0 or trust_net > 0
+        is_sat_vol    = vol_r >= 1.5
 
-        if is_sat_vol and is_sat_chip and is_sat_mom:
-            risk_note = "高波動，倉位 ≤ 5%"
-            if mom_1m < 0 and f_days > 0:
-                risk_note = "Turnaround 題材，籌碼進駐"
-            return StockCandidate(
-                stock_code=code, stock_name=name, sector=sector, tier="satellite",
-                close=close,
-                score=round(35 + model_s * 0.1, 1),
-                max_position=SAT_MAX_POSITION,
-                reasons=["高波動爆量", "籌碼跡象"],
-                risk_note=risk_note,
+        if (is_sat_chip and is_sat_vol and (is_sat_small or is_sat_growth)):
+            risk = "小型高成長，高波動" if is_sat_small else "高成長Turnaround"
+            return ScanRecord(
+                stock_id=stock_id, name=name, sector=sector,
+                layer="satellite", score=0.30,
+                max_position=0.05,
+                reasons=["高波動", "籌碼跡象"],
+                risk_note=risk,
             )
 
         return None
 
     def classify_mock(self) -> ScanResult:
         from quant.movers_engine import MoversEngine
-        movers = MoversEngine().scan_mock()
-        return self.classify(movers)
+        return self.classify(MoversEngine().scan_mock())
 
-
-_global_scanner: Optional[ScannerEngine] = None
 
 def get_scanner_engine() -> ScannerEngine:
-    global _global_scanner
-    if _global_scanner is None:
-        _global_scanner = ScannerEngine()
-    return _global_scanner
+    return ScannerEngine()
 
 
 if __name__ == "__main__":
     engine = ScannerEngine()
     result = engine.classify_mock()
     print(result.format_line())
-    print(f"\ncore={len(result.core)} medium={len(result.medium)} satellite={len(result.satellite)}")
+    print(f"\n輸出 dict:")
+    for sid, d in list(result.to_dict().items())[:3]:
+        print(f"  {sid}: {d}")

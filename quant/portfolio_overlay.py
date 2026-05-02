@@ -1,12 +1,12 @@
 """
-portfolio_overlay.py — 持倉每日健康檢查
+portfolio_overlay.py — Layer 5: 持倉每日健康檢查
 
-每日掃描庫存，輸出每檔的訊號狀態：
-  🟢 支持（趨勢強、法人支持）→ 可加碼
-  🟡 警示（動能轉弱、籌碼開始變化）→ 注意觀察
-  🔴 紅燈（外資賣、Alpha 衰退 20%+）→ 考慮減碼
+每日 19:00 掃描持倉，三燈訊號：
+  🟢 Green（趨勢持續）：5D動能>0 + 法人持續流入 + Relative Strength 維持
+  🟡 Yellow（動能轉弱）：RS下滑>10% OR 成交量連續3日萎縮 OR 模型分數下滑>20%
+  🔴 Red（籌碼轉弱）：外資翻空(連續2日賣超) AND 投信撤退 AND 5D動能轉負
 
-19:00 推送持倉健康報告
+輸出：每檔 HoldingSignal，推送持倉健康報告
 """
 from __future__ import annotations
 
@@ -19,37 +19,50 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
-# ── 訊號門檻 ──────────────────────────────────────────────────────────────────
-MOM_WARN_THRESHOLD  = -0.02  # 5D 動能 < -2% → 警示
-FOREIGN_SELL_WARN   = -2     # 外資連賣 2 天 → 警示
-ALPHA_DECAY_WARN    = 0.20   # Alpha 分數下滑 20% → 警示
-CHIP_WEAK_DAYS      = -3     # 外資連賣 3 天 → 紅燈
+# ── 燈號門檻 ──────────────────────────────────────────────────────────────────
+GREEN_5D_MIN        = 0.0     # 5D動能 > 0
+GREEN_INST_MIN      = 1       # 外資連買天數 ≥ 1
+GREEN_RS_MIN        = -0.05   # RS ≥ -5%（維持強勢）
+
+YELLOW_RS_DROP      = 0.10    # RS 下滑 > 10%
+YELLOW_VOL_SHRINK   = 3       # 成交量連縮天數 ≥ 3（以 vol_ratio < 0.8 代理）
+YELLOW_SCORE_DROP   = 0.20    # 模型分數下滑 > 20%
+
+RED_FOREIGN_SELL    = -2      # 外資連賣 ≥ 2 日（翻空）
+RED_TRUST_WITHDRAW  = True    # 投信撤退（trust_net < 0）
+RED_5D_NEGATIVE     = 0.0     # 5D動能 < 0
 
 
 @dataclass
 class HoldingSignal:
-    stock_code:  str
-    stock_name:  str
-    cost_price:  float
-    shares:      int
+    stock_code:    str
+    stock_name:    str
+    cost_price:    float
+    shares:        int
     current_price: float
-    pnl_pct:     float        # 損益百分比
+    pnl_pct:       float
 
-    # 訊號
-    status:      str          # "green" / "yellow" / "red"
-    signals:     list[str] = field(default_factory=list)    # 具體訊號描述
-    action:      str = "hold"                               # hold/add/reduce/sell
-    action_note: str = ""
+    status:        str           # "green" / "yellow" / "red"
+    reasons:       list[str] = field(default_factory=list)
+    action:        str = "hold"  # hold / add / reduce / sell
+    action_note:   str = ""
+
+    # 技術數據（供 decision_engine 使用）
+    ret_5d:        float = 0.0
+    foreign_days:  int   = 0
+    trust_net:     float = 0.0
+    rs_score:      float = 0.0
+    model_score:   float = 50.0
 
     @property
     def status_icon(self) -> str:
-        return {"green": "✅", "yellow": "⚠️", "red": "🔴"}.get(self.status, "📊")
+        return {"green": "🟢", "yellow": "🟡", "red": "🔴"}.get(self.status, "📊")
 
     def format_line(self) -> str:
         pnl_sign = "+" if self.pnl_pct >= 0 else ""
-        first_signal = self.signals[0] if self.signals else ""
+        first = self.reasons[0] if self.reasons else "持續觀察"
         return (
-            f"{self.status_icon} {self.stock_name}：{first_signal}\n"
+            f"{self.status_icon} {self.stock_name}：{first}\n"
             f"   {self.current_price:.1f}（{pnl_sign}{self.pnl_pct:.1f}%）  {self.action_note}"
         )
 
@@ -58,17 +71,20 @@ class HoldingSignal:
             "code":          self.stock_code,
             "name":          self.stock_name,
             "status":        self.status,
-            "signals":       self.signals,
+            "reasons":       self.reasons,
             "action":        self.action,
             "action_note":   self.action_note,
             "pnl_pct":       round(self.pnl_pct, 2),
             "current_price": round(self.current_price, 2),
+            "ret_5d":        round(self.ret_5d, 4),
+            "foreign_days":  self.foreign_days,
+            "model_score":   round(self.model_score, 1),
         }
 
 
 class PortfolioOverlay:
     """
-    每日持倉健康掃描器。
+    Layer 5：持倉每日健康掃描器。
 
     使用方式：
         overlay = PortfolioOverlay()
@@ -78,7 +94,6 @@ class PortfolioOverlay:
     """
 
     async def scan(self, uid: str) -> list[HoldingSignal]:
-        """掃描用戶所有持股，回傳健康訊號"""
         try:
             from backend.models.database import AsyncSessionLocal
             from backend.services import portfolio_service
@@ -92,26 +107,21 @@ class PortfolioOverlay:
 
             signals: list[HoldingSignal] = []
             for h in holdings:
-                code  = h.get("stock_code", "")
-                name  = h.get("stock_name", code)
-                cost  = float(h.get("cost_price", 0))
+                code   = h.get("stock_code", "")
+                name   = h.get("stock_name", code)
+                cost   = float(h.get("cost_price", 0))
                 shares = int(h.get("shares", 0))
 
-                # 取即時報價
-                current_price = cost
+                current = cost
                 try:
                     q = await fetch_realtime_quote(code)
-                    current_price = float(q.get("price", cost)) if q else cost
+                    current = float(q.get("price", cost)) if q else cost
                 except Exception:
                     pass
 
-                pnl_pct = (current_price - cost) / cost * 100 if cost > 0 else 0.0
-
-                # 評估訊號（基於持有損益 + 假設市場數據）
-                sig = self._evaluate_holding(
-                    code=code, name=name, cost=cost,
-                    current=current_price, shares=shares, pnl_pct=pnl_pct,
-                )
+                pnl_pct = (current - cost) / cost * 100 if cost > 0 else 0.0
+                market_data = self._get_market_data(code)
+                sig = self._evaluate(code, name, cost, current, shares, pnl_pct, market_data)
                 signals.append(sig)
 
             signals.sort(key=lambda s: {"red": 0, "yellow": 1, "green": 2}[s.status])
@@ -121,155 +131,162 @@ class PortfolioOverlay:
             logger.error("[PortfolioOverlay] scan failed: %s", e)
             return []
 
-    def _evaluate_holding(
-        self,
-        code:      str,
-        name:      str,
-        cost:      float,
-        current:   float,
-        shares:    int,
-        pnl_pct:   float,
-    ) -> HoldingSignal:
-        """
-        基於持倉損益 + 從現有 screener 取得的技術指標評估。
-        此處使用簡化邏輯，實際部署時可接入 report_screener / alpha_registry。
-        """
-        signals: list[str] = []
-        status   = "green"
-        action   = "hold"
-        action_note = ""
-
-        # 嘗試從 report_screener 取評分
-        row_data = self._get_screener_data(code)
-        if row_data:
-            mom_5d     = float(row_data.get("mom_5d", row_data.get("ret_5d", pnl_pct / 100)))
-            foreign_d  = int(row_data.get("foreign_buy_days", 0))
-            model_sc   = float(row_data.get("model_score", 50))
-            mom_1m     = float(row_data.get("momentum_20d", 1.0)) - 1.0
-        else:
-            # fallback：純用損益估算趨勢
-            mom_5d    = pnl_pct / 100 * 0.3   # 粗估
-            foreign_d = 0
-            model_sc  = 50.0
-            mom_1m    = pnl_pct / 100
-
-        # ── 支持訊號（Green）─────────────────────────────────────────
-        green_count = 0
-        if mom_5d > 0.01:
-            signals.append("趨勢持續走強")
-            green_count += 1
-        if foreign_d >= 2:
-            signals.append(f"外資連買 {foreign_d} 日")
-            green_count += 1
-        if model_sc >= 70:
-            signals.append("Alpha 分數強")
-            green_count += 1
-        if mom_1m > 0.05:
-            signals.append("中期動能佳")
-            green_count += 1
-
-        # ── 警示訊號（Yellow）────────────────────────────────────────
-        yellow_count = 0
-        if mom_5d < MOM_WARN_THRESHOLD:
-            signals.append(f"5日動能轉弱（{mom_5d*100:+.1f}%）")
-            yellow_count += 1
-        if FOREIGN_SELL_WARN <= foreign_d < 0:
-            signals.append("外資開始減碼")
-            yellow_count += 1
-        if pnl_pct < -5 and mom_5d < 0:
-            signals.append(f"已虧損 {pnl_pct:.1f}%，趨勢向下")
-            yellow_count += 1
-
-        # ── 紅燈（Red）───────────────────────────────────────────────
-        red_count = 0
-        if foreign_d <= CHIP_WEAK_DAYS:
-            signals.append(f"外資連賣 {abs(foreign_d)} 日")
-            red_count += 1
-        if model_sc < 35:
-            signals.append("Alpha 衰退超過 20%")
-            red_count += 1
-        if pnl_pct < -12:
-            signals.append(f"觸碰停損警戒（-{abs(pnl_pct):.0f}%）")
-            red_count += 1
-
-        # ── 判斷最終狀態 ─────────────────────────────────────────────
-        if red_count >= 1:
-            status = "red"
-            action = "reduce" if pnl_pct > -8 else "sell"
-            action_note = "考慮減碼" if action == "reduce" else "考慮停損"
-        elif yellow_count >= 2:
-            status = "yellow"
-            action = "watch"
-            action_note = "注意觀察"
-        elif green_count >= 2 and yellow_count == 0 and red_count == 0:
-            status = "green"
-            action = "add" if pnl_pct > 0 else "hold"
-            action_note = "可考慮加碼" if action == "add" else "繼續持有"
-        else:
-            status = "yellow" if yellow_count >= 1 else "green"
-            action = "hold"
-            action_note = "持續觀察" if status == "yellow" else "繼續持有"
-
-        if not signals:
-            signals = ["無明顯訊號，持續觀察"]
-
-        return HoldingSignal(
-            stock_code=code,
-            stock_name=name,
-            cost_price=cost,
-            shares=shares,
-            current_price=current,
-            pnl_pct=round(pnl_pct, 2),
-            status=status,
-            signals=signals,
-            action=action,
-            action_note=action_note,
-        )
-
-    def _get_screener_data(self, code: str) -> Optional[dict]:
-        """嘗試從 report_screener 取最新資料"""
+    def _get_market_data(self, code: str) -> dict:
+        """從 report_screener 取最新市場數據"""
         try:
             from backend.services.report_screener import all_screener
-            rows = all_screener(limit=200)
-            for row in rows:
-                row_code = row.stock_id if hasattr(row, "stock_id") else row.get("stock_id", "")
-                if row_code == code:
+            for row in all_screener(limit=300):
+                rid = getattr(row, "stock_id", "") or (row.get("stock_id", "") if isinstance(row, dict) else "")
+                if rid == code:
+                    vol_r = float(getattr(row, "volume_ratio", 1.0) or 1.0)
                     return {
-                        "mom_5d":          getattr(row, "change_pct", 0) / 100,
-                        "foreign_buy_days": getattr(row, "foreign_buy_days", 0),
-                        "model_score":     getattr(row, "model_score", 50),
-                        "momentum_20d":    getattr(row, "momentum_score", 50) / 50,
+                        "ret_5d":       float(getattr(row, "change_pct",       0) or 0) / 100,
+                        "foreign_days": int(getattr(row,   "foreign_buy_days", 0) or 0),
+                        "trust_net":    float(getattr(row, "chip_5d",           0) or 0),
+                        "model_score":  float(getattr(row, "model_score",      50) or 50),
+                        "vol_ratio":    vol_r,
+                        "ret_1m":       float(getattr(row, "momentum_score",   50) or 50) / 50 - 1,
                     }
         except Exception:
             pass
-        return None
+        return {}
+
+    def _evaluate(
+        self,
+        code:        str,
+        name:        str,
+        cost:        float,
+        current:     float,
+        shares:      int,
+        pnl_pct:     float,
+        md:          dict,
+    ) -> HoldingSignal:
+        ret_5d      = float(md.get("ret_5d",      pnl_pct / 100 * 0.3))
+        f_days      = int(md.get("foreign_days",  0))
+        trust_net   = float(md.get("trust_net",   0))
+        model_sc    = float(md.get("model_score", 50))
+        vol_ratio   = float(md.get("vol_ratio",   1.0))
+        ret_1m      = float(md.get("ret_1m",      pnl_pct / 100))
+
+        market_ret_1m = 0.03
+        rs = ret_1m - market_ret_1m    # Relative Strength vs market
+
+        # ── Red 條件：外資翻空(連賣≥2日) AND 投信撤退 AND 5D動能轉負 ─────────────
+        red_foreign  = f_days <= RED_FOREIGN_SELL
+        red_trust    = trust_net < 0
+        red_momentum = ret_5d < RED_5D_NEGATIVE
+
+        # Red = 主要條件（外資翻空）+ 至少一個輔助條件
+        is_red = red_foreign and (red_trust or red_momentum)
+
+        # ── Yellow 條件：RS下滑>10% OR 成交量連縮 OR 模型分數下滑>20% ──────────
+        yellow_rs    = rs < -YELLOW_RS_DROP
+        yellow_vol   = vol_ratio < 0.80    # 量比 < 0.8 代理「成交量萎縮」
+        yellow_score = model_sc < 40       # 低於 40 代理「分數下滑 > 20%」
+
+        is_yellow = not is_red and (yellow_rs or yellow_vol or yellow_score)
+
+        # ── Green 條件：5D>0 AND 法人流入 AND RS維持 ────────────────────────────
+        green_mom  = ret_5d > GREEN_5D_MIN
+        green_inst = f_days >= GREEN_INST_MIN or trust_net > 0
+        green_rs   = rs >= GREEN_RS_MIN
+
+        is_green = not is_red and not is_yellow and green_mom and green_inst and green_rs
+
+        # ── 組裝 reasons ─────────────────────────────────────────────────────────
+        reasons: list[str] = []
+        if is_red:
+            if red_foreign:   reasons.append(f"外資連賣 {abs(f_days)} 日（翻空）")
+            if red_trust:     reasons.append("投信撤退")
+            if red_momentum:  reasons.append(f"5D動能轉負（{ret_5d*100:+.1f}%）")
+        elif is_yellow:
+            if yellow_rs:     reasons.append(f"RS下滑 {abs(rs)*100:.1f}% 跑輸大盤")
+            if yellow_vol:    reasons.append(f"量比 {vol_ratio:.2f}x 成交萎縮")
+            if yellow_score:  reasons.append(f"模型分數偏低（{model_sc:.0f}）")
+        else:
+            if green_mom:     reasons.append(f"5D動能持續（{ret_5d*100:+.1f}%）")
+            if green_inst:
+                if f_days > 0:  reasons.append(f"外資連買 {f_days} 日")
+                if trust_net > 0: reasons.append(f"投信淨買 {trust_net:.0f} 張")
+            if green_rs:      reasons.append(f"RS跑贏大盤 {rs*100:+.1f}%")
+
+        if not reasons:
+            reasons = ["無明顯訊號，持續觀察"]
+
+        # ── 決定狀態與建議動作 ────────────────────────────────────────────────────
+        if is_red:
+            status      = "red"
+            action      = "sell" if (pnl_pct < -10 or red_momentum) else "reduce"
+            action_note = "建議停損" if action == "sell" else "考慮減碼"
+        elif is_yellow:
+            status      = "yellow"
+            action      = "reduce" if pnl_pct < -5 else "watch"
+            action_note = "注意觀察，可減倉" if action == "reduce" else "注意觀察"
+        elif is_green:
+            status      = "green"
+            action      = "add" if pnl_pct > 3 and f_days >= 3 else "hold"
+            action_note = "可考慮加碼" if action == "add" else "繼續持有"
+        else:
+            status      = "yellow"
+            action      = "hold"
+            action_note = "持續觀察"
+
+        return HoldingSignal(
+            stock_code=code, stock_name=name,
+            cost_price=cost, shares=shares,
+            current_price=current, pnl_pct=round(pnl_pct, 2),
+            status=status, reasons=reasons,
+            action=action, action_note=action_note,
+            ret_5d=round(ret_5d, 4), foreign_days=f_days,
+            trust_net=trust_net, rs_score=round(rs, 4),
+            model_score=round(model_sc, 1),
+        )
+
+    def evaluate_mock(self, code: str, name: str) -> HoldingSignal:
+        """Mock 評估，用於測試"""
+        import random
+        rng = random.Random(hash(code) % 999)
+        ret_5d   = rng.uniform(-0.05, 0.10)
+        f_days   = rng.randint(-3, 6)
+        trust_n  = rng.uniform(-200, 800)
+        model_sc = rng.uniform(30, 90)
+        vol_r    = rng.uniform(0.6, 2.0)
+        return self._evaluate(
+            code, name, cost=100.0, current=100.0 * (1 + ret_5d),
+            shares=1000, pnl_pct=ret_5d * 100,
+            md={
+                "ret_5d":      ret_5d,
+                "foreign_days": f_days,
+                "trust_net":   trust_n,
+                "model_score": model_sc,
+                "vol_ratio":   vol_r,
+                "ret_1m":      ret_5d * 4,
+            },
+        )
 
     def format_report(self, signals: list[HoldingSignal]) -> str:
-        """格式化 LINE 持倉健康報告"""
         if not signals:
             return "🛡️ 持倉健康報告\n\n庫存為空"
 
-        now   = datetime.now().strftime("%m/%d %H:%M")
-        green = [s for s in signals if s.status == "green"]
-        yellow= [s for s in signals if s.status == "yellow"]
-        red   = [s for s in signals if s.status == "red"]
+        now    = datetime.now().strftime("%m/%d %H:%M")
+        green  = [s for s in signals if s.status == "green"]
+        yellow = [s for s in signals if s.status == "yellow"]
+        red    = [s for s in signals if s.status == "red"]
 
         lines = [
             f"🛡️ 持倉健康報告  {now}",
-            f"✅{len(green)} 正常  ⚠️{len(yellow)} 注意  🔴{len(red)} 警示",
+            f"🟢{len(green)} 正常  🟡{len(yellow)} 注意  🔴{len(red)} 警示",
             "─" * 22,
         ]
         for s in signals:
             lines.append(s.format_line())
 
+        if red:
+            lines += ["", "⚠️ 請優先處理紅燈持股"]
+
         return "\n".join(lines)
 
-    async def push(
-        self,
-        signals: list[HoldingSignal],
-        uid:     str,
-        token:   str,
-    ) -> None:
+    async def push(self, signals: list[HoldingSignal], uid: str, token: str) -> None:
         if not signals or not token:
             return
         report  = self.format_report(signals)
@@ -285,7 +302,6 @@ class PortfolioOverlay:
             logger.error("[PortfolioOverlay] push failed: %s", e)
 
     async def push_all_subscribers(self, token: str) -> int:
-        """推送給所有訂閱者"""
         try:
             from backend.models.database import AsyncSessionLocal
             from backend.models.models import Subscriber
@@ -313,3 +329,11 @@ def get_portfolio_overlay() -> PortfolioOverlay:
     if _global_overlay is None:
         _global_overlay = PortfolioOverlay()
     return _global_overlay
+
+
+if __name__ == "__main__":
+    overlay = PortfolioOverlay()
+    for code, name in [("2330", "台積電"), ("6669", "緯穎"), ("2603", "長榮")]:
+        sig = overlay.evaluate_mock(code, name)
+        print(sig.format_line())
+        print(f"   ret_5d={sig.ret_5d*100:+.1f}%  f_days={sig.foreign_days}  rs={sig.rs_score*100:+.1f}%\n")
