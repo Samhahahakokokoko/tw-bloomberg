@@ -45,10 +45,13 @@ from .factor_ic_engine import FactorICEngine, DEFAULT_FACTORS
 from .dynamic_weight_engine import DynamicWeightEngine, WeightMode, get_dynamic_weight_engine
 from .regime_engine import RegimeEngine, get_regime_engine, EnhancedRegimeEngine, get_enhanced_regime_engine
 from .alpha_portfolio_engine import AlphaPortfolioEngine, get_alpha_portfolio_engine
-from .risk_engine import RiskManagerV2, get_risk_manager_v2, RiskEngineV3, get_risk_engine_v3
+from .risk_engine import RiskManagerV2, get_risk_manager_v2, RiskEngineV3, get_risk_engine_v3, RiskIsolation, get_risk_isolation
 from .adaptive_weight_engine import AdaptiveWeightEngine, get_adaptive_weight_engine
 from .walkforward_engine import WalkForwardAnalyzer, get_walkforward_analyzer
 from .slippage_engine import SlippageEngine, get_slippage_engine
+from .alpha_registry import AlphaRegistry, AlphaStatus, get_alpha_registry
+from .montecarlo_engine import MonteCarloEngine, get_montecarlo_engine
+from .sentiment_engine import SentimentEngine, get_sentiment_engine
 
 logger = logging.getLogger(__name__)
 
@@ -1125,6 +1128,118 @@ async def walkforward_analysis(req: WalkForwardRequest):
     d["stock_code"]    = req.stock_code
     d["summary_text"]  = result.summary()
     return d
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  Alpha Research Platform 端點
+# ═══════════════════════════════════════════════════════════════════
+
+class AlphaUpdateRequest(BaseModel):
+    updates: list[dict] = Field(
+        ..., example=[{"alpha": "momentum", "ic": 0.032},
+                      {"alpha": "value",    "ic": -0.015}]
+    )
+
+class MonteCarloRequest(BaseModel):
+    trades:          list[float]
+    is_return:       bool  = True
+    n_sims:          int   = Field(1000, ge=100, le=5000)
+    initial_capital: float = 1_000_000
+    generate_chart:  bool  = True
+
+
+@router.get("/alpha_registry", summary="Alpha 因子狀態登記表")
+async def get_alpha_registry_status():
+    """取得所有 Alpha 的狀態、IC、權重。DEAD Alpha 自動標記。"""
+    reg = get_alpha_registry()
+    await reg.load()
+    return {
+        "summary": reg.summary(),
+        "alphas":  [r.to_dict() for r in reg.get_all()],
+        "weights": reg.get_weights(),
+    }
+
+
+@router.post("/alpha_registry/update", summary="批次更新 Alpha IC")
+async def update_alpha_ic(req: AlphaUpdateRequest):
+    """批次更新多個 Alpha 的當日 IC，觸發狀態機與權重計算。"""
+    reg = get_alpha_registry()
+    await reg.load()
+    changed: list[dict] = []
+    for item in req.updates:
+        name = item.get("alpha", "")
+        ic   = float(item.get("ic", 0))
+        if name:
+            rec = reg.update_ic(name, ic)
+            changed.append(rec.to_dict())
+    weights = reg.get_weights()
+    await reg.save()
+    return {
+        "updated": len(changed),
+        "changed": changed,
+        "weights": weights,
+        "summary": reg.summary(),
+    }
+
+
+@router.post("/montecarlo", summary="蒙地卡羅回測模擬")
+async def run_montecarlo(req: MonteCarloRequest):
+    """
+    輸入交易損益列表，執行蒙地卡羅模擬 N 次。
+    is_return=True  → 傳入報酬率（如 0.05 = +5%）
+    is_return=False → 傳入損益金額（如 50000 = +5萬）
+    """
+    if not req.trades:
+        raise HTTPException(422, "trades list is empty")
+    engine = MonteCarloEngine(n_sims=req.n_sims, initial_capital=req.initial_capital)
+    result = engine.run(req.trades, is_return=req.is_return)
+
+    img_url = None
+    if req.generate_chart:
+        path = engine.generate_chart(result)
+        if path:
+            base_url = os.getenv("BASE_URL", "")
+            if base_url:
+                img_url = f"{base_url.rstrip('/')}/static/reports/{path.name}"
+
+    return {**result.to_dict(), "chart_url": img_url}
+
+
+@router.get("/sentiment", summary="族群情緒 Buzz Score")
+async def get_sector_sentiment(
+    days: int  = 3,
+    sector: Optional[str] = None,
+):
+    """
+    分析近 N 日新聞 + PTT Stock 板的族群情緒。
+    輸出：sentiment / buzz（LOW/MEDIUM/HIGH/VIRAL）/ signal（BULLISH/BEARISH/NEUTRAL）
+    """
+    engine = get_sentiment_engine()
+    if sector:
+        r = await engine.analyze_sector(sector, days=days)
+        if r is None:
+            raise HTTPException(404, f"Unknown sector: {sector}")
+        return r.to_dict()
+
+    results = await engine.analyze_all(days=days)
+    return {
+        "days":     days,
+        "count":    len(results),
+        "sectors":  [r.to_dict() for r in results],
+        "top_bullish": [r.to_dict() for r in engine.get_top_bullish(results)],
+        "top_bearish": [r.to_dict() for r in engine.get_top_bearish(results)],
+    }
+
+
+@router.get("/risk_isolation", summary="策略獨立資金池狀態")
+async def get_risk_isolation_status():
+    """取得各策略資金池回撤狀態與倉位縮減情況。"""
+    iso = get_risk_isolation()
+    return {
+        "pools":       iso.get_all_states(),
+        "warn_dd_pct": iso._warn_dd * 100,
+        "clear_dd_pct":iso._clear_dd * 100,
+    }
 
 
 # ── 將 router 掛到 app（獨立啟動時）─────────────────────────────────────────

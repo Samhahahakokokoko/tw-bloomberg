@@ -528,3 +528,32 @@ class PipelineLog(Base):
     detail     = Column(Text)
     articles   = Column(Integer, default=0)
     created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class AlphaRegistry(Base):
+    """Alpha 因子狀態登記 — ACTIVE/PAUSED/DEAD + IC 追蹤"""
+    __tablename__ = "alpha_registry"
+
+    id          = Column(Integer, primary_key=True, index=True)
+    alpha_name  = Column(String(50), unique=True, nullable=False, index=True)
+    status      = Column(String(10), default="ACTIVE")  # ACTIVE/PAUSED/DEAD
+    ic_current  = Column(Float, default=0.0)
+    ic_30d_mean = Column(Float, default=0.0)
+    ic_history  = Column(Text, default="[]")   # JSON: last 30 days IC values
+    weight      = Column(Float, default=1.0)
+    dead_days   = Column(Integer, default=0)   # consecutive days IC < 0
+    notes       = Column(String(200))
+    created_at  = Column(DateTime, default=datetime.utcnow)
+    updated_at  = Column(DateTime, default=datetime.utcnow)
+
+
+class CallbackLog(Base):
+    """LINE Bot Callback 錯誤日誌"""
+    __tablename__ = "callback_log"
+
+    id         = Column(Integer, primary_key=True, index=True)
+    user_id    = Column(String(100), index=True)
+    action     = Column(String(100))
+    params     = Column(Text)
+    error      = Column(Text)
+    created_at = Column(DateTime, default=datetime.utcnow)

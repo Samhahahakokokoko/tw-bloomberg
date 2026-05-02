@@ -403,3 +403,82 @@ def build_strategy_perf_flex(perf: dict) -> dict:
             ],
         },
     }
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  MDD 自動保護 — 超過歷史 MDD 閾值 → 自動降權或停用
+# ═══════════════════════════════════════════════════════════════════
+
+MDD_WARN_THRESHOLD  = 0.15   # 超過 15% MDD → 降權
+MDD_STOP_THRESHOLD  = 0.25   # 超過 25% MDD → 停用
+
+
+async def check_and_apply_mdd_protection(
+    db: AsyncSession,
+    user_id: str,
+    strategy: str,
+    current_mdd: float,   # 正值，如 0.18 = 18%
+) -> dict:
+    """
+    檢查策略當前 MDD 是否超閾值，自動降權或停用。
+    回傳：{"action": "none"|"reduce"|"disable", "message": str}
+    """
+    result = await db.execute(
+        select(StrategySetting).where(
+            StrategySetting.user_id == user_id,
+            StrategySetting.strategy == strategy,
+        )
+    )
+    row = result.scalar_one_or_none()
+    if not row:
+        return {"action": "none", "message": "策略不存在"}
+
+    label = STRATEGY_LABELS.get(strategy, strategy)
+
+    if current_mdd >= MDD_STOP_THRESHOLD:
+        if row.enabled:
+            row.enabled    = False
+            row.weight     = 0.0
+            row.updated_at = datetime.utcnow()
+            await db.commit()
+        return {
+            "action":  "disable",
+            "message": f"⛔ {label} 回撤 {current_mdd*100:.1f}% ≥ {MDD_STOP_THRESHOLD*100:.0f}%，已自動停用",
+        }
+
+    if current_mdd >= MDD_WARN_THRESHOLD:
+        new_weight = max(0.3, row.weight * 0.5)
+        if abs(row.weight - new_weight) > 0.01:
+            row.weight     = round(new_weight, 3)
+            row.updated_at = datetime.utcnow()
+            await db.commit()
+        return {
+            "action":  "reduce",
+            "message": f"⚠️ {label} 回撤 {current_mdd*100:.1f}% ≥ {MDD_WARN_THRESHOLD*100:.0f}%，權重降至 {new_weight:.2f}",
+        }
+
+    return {"action": "none", "message": "正常"}
+
+
+async def get_mdd_status_all(
+    db: AsyncSession,
+    user_id: str,
+    recent_days: int = 30,
+) -> list[dict]:
+    """
+    取得所有策略的 MDD 狀態概覽（從 recommendation_results 統計）。
+    """
+    results = []
+    for strategy in ALL_STRATEGIES:
+        perf = await get_strategy_performance(db, strategy, days=recent_days)
+        # 從 min_return 估算 MDD（保守估計）
+        est_mdd = abs(perf.get("min_return", 0)) / 100
+        check   = await check_and_apply_mdd_protection(db, user_id, strategy, est_mdd)
+        results.append({
+            "strategy": strategy,
+            "label":    STRATEGY_LABELS.get(strategy, strategy),
+            "mdd_est":  round(est_mdd * 100, 1),
+            "action":   check["action"],
+            "message":  check["message"],
+        })
+    return results

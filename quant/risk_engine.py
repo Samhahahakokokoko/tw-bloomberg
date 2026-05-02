@@ -906,6 +906,156 @@ def get_risk_engine_v3(initial_capital: float = 1_000_000) -> RiskEngineV3:
     return _global_re_v3
 
 
+# ═══════════════════════════════════════════════════════════════════
+#  Risk Isolation v1 — 每個策略獨立資金池
+#  DD > 15% → 倉位 × 0.5；DD > 25% → 停用策略
+# ═══════════════════════════════════════════════════════════════════
+
+@_dc
+class StrategyPoolState:
+    strategy:       str
+    allocation:     float   # 分配資金（元）
+    current_equity: float
+    peak_equity:    float
+    drawdown_pct:   float
+    position_scale: float   # 1.0 / 0.5 / 0.0
+    is_active:      bool
+    reason:         str
+
+@_dc
+class IsolationCheckResult:
+    strategy:       str
+    trade_ok:       bool
+    position_scale: float
+    drawdown_pct:   float
+    reason:         str
+
+class RiskIsolation:
+    """
+    策略獨立資金池管理。
+
+    使用方式：
+        isolation = RiskIsolation(total_capital=1_000_000)
+        isolation.add_strategy("momentum",  allocation_pct=0.30)
+        isolation.add_strategy("value",     allocation_pct=0.30)
+        isolation.add_strategy("chip",      allocation_pct=0.20)
+
+        # 每日更新
+        isolation.update_equity("momentum", 320_000)
+        check = isolation.check("momentum")
+        if check.trade_ok:
+            pos_pct = confidence_sizer.calc(...).final_position_pct * check.position_scale
+    """
+
+    def __init__(
+        self,
+        total_capital: float = 1_000_000,
+        warn_dd:       float = 0.15,
+        clear_dd:      float = 0.25,
+    ):
+        self._total       = total_capital
+        self._warn_dd     = warn_dd
+        self._clear_dd    = clear_dd
+        self._pools: dict[str, StrategyPoolState] = {}
+
+    def add_strategy(
+        self,
+        strategy:       str,
+        allocation_pct: float = 0.20,
+    ) -> None:
+        alloc = self._total * allocation_pct
+        self._pools[strategy] = StrategyPoolState(
+            strategy=strategy,
+            allocation=alloc,
+            current_equity=alloc,
+            peak_equity=alloc,
+            drawdown_pct=0.0,
+            position_scale=1.0,
+            is_active=True,
+            reason="normal",
+        )
+
+    def update_equity(self, strategy: str, current_equity: float) -> IsolationCheckResult:
+        pool = self._pools.get(strategy)
+        if not pool:
+            self.add_strategy(strategy)
+            pool = self._pools[strategy]
+
+        pool.current_equity = current_equity
+        pool.peak_equity    = max(pool.peak_equity, current_equity)
+
+        dd = (pool.peak_equity - current_equity) / pool.peak_equity if pool.peak_equity > 0 else 0.0
+        pool.drawdown_pct = round(dd, 4)
+
+        if dd >= self._clear_dd:
+            pool.position_scale = 0.0
+            pool.is_active      = False
+            pool.reason         = f"DD {dd*100:.1f}% ≥ {self._clear_dd*100:.0f}% → 停用"
+        elif dd >= self._warn_dd:
+            pool.position_scale = 0.5
+            pool.is_active      = True
+            pool.reason         = f"DD {dd*100:.1f}% ≥ {self._warn_dd*100:.0f}% → 倉位×0.5"
+        else:
+            pool.position_scale = 1.0
+            pool.is_active      = True
+            pool.reason         = "normal"
+
+        return IsolationCheckResult(
+            strategy=strategy,
+            trade_ok=pool.is_active,
+            position_scale=pool.position_scale,
+            drawdown_pct=pool.drawdown_pct,
+            reason=pool.reason,
+        )
+
+    def check(self, strategy: str) -> IsolationCheckResult:
+        pool = self._pools.get(strategy)
+        if not pool:
+            return IsolationCheckResult(
+                strategy=strategy, trade_ok=True,
+                position_scale=1.0, drawdown_pct=0.0, reason="no pool")
+        return IsolationCheckResult(
+            strategy=strategy,
+            trade_ok=pool.is_active,
+            position_scale=pool.position_scale,
+            drawdown_pct=pool.drawdown_pct,
+            reason=pool.reason,
+        )
+
+    def revive(self, strategy: str) -> bool:
+        """手動恢復被停用的策略"""
+        pool = self._pools.get(strategy)
+        if not pool:
+            return False
+        pool.is_active      = True
+        pool.position_scale = 0.5    # 保守恢復
+        pool.reason         = "manually revived"
+        return True
+
+    def get_all_states(self) -> list[dict]:
+        return [
+            {
+                "strategy":       p.strategy,
+                "allocation":     p.allocation,
+                "current_equity": p.current_equity,
+                "drawdown_pct":   round(p.drawdown_pct * 100, 2),
+                "position_scale": p.position_scale,
+                "is_active":      p.is_active,
+                "reason":         p.reason,
+            }
+            for p in self._pools.values()
+        ]
+
+
+_global_isolation: _Opt[RiskIsolation] = None
+
+def get_risk_isolation(total_capital: float = 1_000_000) -> RiskIsolation:
+    global _global_isolation
+    if _global_isolation is None:
+        _global_isolation = RiskIsolation(total_capital=total_capital)
+    return _global_isolation
+
+
 # ── Mock + 獨立測試 ──────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
