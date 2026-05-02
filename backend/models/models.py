@@ -557,3 +557,89 @@ class CallbackLog(Base):
     params     = Column(Text)
     error      = Column(Text)
     created_at = Column(DateTime, default=datetime.utcnow)
+
+
+# ── Quant Alpha Pipeline 擴充資料表 ───────────────────────────────────────────
+
+class ConvictionLog(Base):
+    """信心強度計算紀錄"""
+    __tablename__ = "conviction_log"
+
+    id                 = Column(Integer, primary_key=True, index=True)
+    ticker             = Column(String(10), index=True, nullable=False)
+    name               = Column(String(50))
+    conviction         = Column(Float, nullable=False)
+    position_size      = Column(Float)
+    layer              = Column(String(20))   # core / medium / no_trade
+    signal_strength    = Column(Float)
+    factor_consensus   = Column(Float)
+    regime_alignment   = Column(Float)
+    research_quality   = Column(Float)
+    note               = Column(String(200))
+    created_at         = Column(DateTime, default=datetime.utcnow)
+
+
+class AlphaDecayLog(Base):
+    """Alpha 因子 IC 日誌（每日記錄）"""
+    __tablename__ = "alpha_decay_log"
+
+    id          = Column(Integer, primary_key=True, index=True)
+    alpha_name  = Column(String(50), index=True, nullable=False)
+    status      = Column(String(15))   # ACTIVE / DEGRADING / RECOVERING / DEAD
+    ic_value    = Column(Float)
+    ic_30d_mean = Column(Float)
+    ic_trend    = Column(Float)
+    win_rate    = Column(Float)
+    sharpe      = Column(Float)
+    half_life   = Column(Float)
+    weight      = Column(Float)
+    created_at  = Column(DateTime, default=datetime.utcnow)
+
+
+class SectorRotationLog(Base):
+    """族群輪動強度快照（每日）"""
+    __tablename__ = "sector_rotation_log"
+
+    id                  = Column(Integer, primary_key=True, index=True)
+    sector_name         = Column(String(20), index=True, nullable=False)
+    composite_score     = Column(Float)
+    avg_return_5d       = Column(Float)
+    foreign_flow        = Column(Float)
+    volume_change       = Column(Float)
+    chip_concentration  = Column(Float)
+    rank                = Column(Integer)
+    trend               = Column(String(5))   # ↑ / ↓ / →
+    created_at          = Column(DateTime, default=datetime.utcnow)
+
+
+class CapitalFlowLog(Base):
+    """資金流向日誌（每日快照）"""
+    __tablename__ = "capital_flow_log"
+
+    id                   = Column(Integer, primary_key=True, index=True)
+    top_inflow_sector    = Column(String(20))
+    top_outflow_sector   = Column(String(20))
+    foreign_futures_net  = Column(Float)
+    futures_bull_bear    = Column(String(10))   # bull / bear / neutral
+    chip_concentration   = Column(Float)
+    margin_change        = Column(Float)
+    short_change         = Column(Float)
+    sector_flows_json    = Column(Text)          # JSON 族群流向分數
+    main_flow_days       = Column(Integer)       # 正=持續流入，負=持續流出
+    rotation_warning     = Column(Boolean, default=False)
+    created_at           = Column(DateTime, default=datetime.utcnow)
+
+
+class RegimeMemoryModel(Base):
+    """Regime 記憶：各市場狀態下策略績效"""
+    __tablename__ = "regime_memory"
+
+    id          = Column(Integer, primary_key=True, index=True)
+    regime      = Column(String(20), index=True, nullable=False)   # BULL/BEAR/...
+    strategy    = Column(String(30), nullable=False)
+    win_rate    = Column(Float, default=0.5)
+    n_trades    = Column(Integer, default=0)
+    avg_return  = Column(Float, default=0.0)
+    sharpe      = Column(Float, default=0.0)
+    weight      = Column(Float, default=1.0)
+    updated_at  = Column(DateTime, default=datetime.utcnow)

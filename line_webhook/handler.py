@@ -371,6 +371,15 @@ async def _handle_text(text: str, uid: str) -> list:
     if cmd == "/pipeline":
         code = parts[1] if len(parts) > 1 else "2330"
         return await _cmd_pipeline(code, uid)
+    if cmd == "/sector":              return await _cmd_sector(uid)
+    if cmd == "/flow":                return await _cmd_flow(uid)
+    if cmd == "/alpha":               return await _cmd_alpha_health(uid)
+    if cmd == "/conviction":
+        code = parts[1].upper() if len(parts) > 1 else ""
+        return await _cmd_conviction(code, uid) if code else [_text(
+            "請輸入股票代碼，例：/conviction 2330",
+            qr_items(("台積電", "/conviction 2330"), ("聯發科", "/conviction 2454"))
+        )]
 
     # ── 選股系統 ──────────────────────────────────────────────────────────
     if cmd == "/screen":
@@ -1638,6 +1647,107 @@ async def _cmd_research(code: str, uid: str) -> list:
     except Exception as e:
         logger.error("[research] %s", e)
         return [_text(f"❌ 研究清單失敗：{e}")]
+
+
+async def _cmd_sector(uid: str) -> list:
+    """/sector — 族群輪動雷達"""
+    try:
+        from quant.sector_rotation_engine import SectorRotationEngine
+        engine    = SectorRotationEngine()
+        strengths = await engine.scan()
+        signal    = engine.detect_rotation(strengths)
+        report    = engine.format_report(strengths, signal)
+        return [_text(report, qr_items(
+            ("💰 資金流向", "/flow"),
+            ("📊 Alpha健康", "/alpha"),
+            ("📋 決策報告",  "/daily"),
+        ))]
+    except Exception as e:
+        logger.error("[sector] %s", e)
+        from quant.sector_rotation_engine import SectorRotationEngine
+        engine    = SectorRotationEngine()
+        strengths = engine.scan_mock()
+        signal    = engine.detect_rotation(strengths)
+        return [_text(engine.format_report(strengths, signal))]
+
+
+async def _cmd_flow(uid: str) -> list:
+    """/flow — 今日資金流向"""
+    try:
+        from quant.capital_flow_engine import CapitalFlowEngine
+        engine   = CapitalFlowEngine()
+        snapshot = await engine.scan()
+        return [_text(snapshot.format_line(), qr_items(
+            ("🔥 族群輪動", "/sector"),
+            ("📊 Alpha健康", "/alpha"),
+            ("📋 決策報告",  "/daily"),
+        ))]
+    except Exception as e:
+        logger.error("[flow] %s", e)
+        from quant.capital_flow_engine import CapitalFlowEngine
+        snap = CapitalFlowEngine().mock_snapshot()
+        return [_text(snap.format_line())]
+
+
+async def _cmd_alpha_health(uid: str) -> list:
+    """/alpha — Alpha 因子健康狀態"""
+    try:
+        from quant.alpha_decay_engine import AlphaDecayEngine
+        engine  = AlphaDecayEngine()
+        healths = await engine.get_all_health()
+        report  = engine.format_weekly_report(healths)
+        return [_text(report, qr_items(
+            ("🔥 族群輪動", "/sector"),
+            ("💰 資金流向", "/flow"),
+            ("📋 決策報告", "/daily"),
+        ))]
+    except Exception as e:
+        logger.error("[alpha] %s", e)
+        return [_text(f"❌ Alpha 健康查詢失敗：{e}")]
+
+
+async def _cmd_conviction(code: str, uid: str) -> list:
+    """/conviction [code] — 個股信心指數"""
+    try:
+        from quant.conviction_engine import ConvictionEngine
+        from quant.movers_engine import MoversEngine
+        from quant.scanner_engine import ScannerEngine
+        from quant.research_checklist import ResearchChecklist
+
+        movers   = await MoversEngine().scan() or MoversEngine().scan_mock(10)
+        scan_res = ScannerEngine().classify(movers)
+        all_recs = scan_res.core + scan_res.medium + scan_res.satellite
+
+        mover    = next((m for m in movers if m.stock_id == code), None)
+        scan_rec = next((r for r in all_recs if r.stock_id == code), None)
+
+        engine   = ConvictionEngine()
+        if mover and scan_rec:
+            research = None
+            try:
+                checker  = ResearchChecklist()
+                research = checker.check_sync(code, {"name": code, "close": mover.close})
+            except Exception:
+                pass
+            result = engine.compute_from_pipeline(
+                mover=mover, scan_rec=scan_rec,
+                research_result=research, regime={"regime": "UNKNOWN", "confidence": 0.5},
+            )
+        else:
+            result = engine.compute(
+                ticker=code, name=code,
+                movers_score=50, scanner_score=0.5,
+                regime_label="UNKNOWN", regime_conf=0.5,
+            )
+
+        return [_text(result.format_line(), qr_items(
+            ("📋 研究清單", f"/research {code}"),
+            ("📋 決策報告", "/daily"),
+            (f"AI分析",     f"/ai {code}"),
+        ))]
+    except Exception as e:
+        logger.error("[conviction] %s", e)
+        return [_text(f"❌ 信心指數計算失敗：{e}")]
 
 
 # ── 回測功能 ─────────────────────────────────────────────────────────────────

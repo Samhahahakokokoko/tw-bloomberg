@@ -85,32 +85,39 @@ def start_scheduler() -> AsyncIOScheduler:
         id="watchlist_trigger", replace_existing=True,
     )
 
-    # Alpha Pipeline — 18:00 Layer 1: 動能啟動掃描
+    # Alpha Pipeline — 18:00 Layer 1: 動能啟動掃描 + 資金流向
     scheduler.add_job(
         _run_pipeline_movers,
         CronTrigger(day_of_week="mon-fri", hour=18, minute=0, timezone="Asia/Taipei"),
         id="pipeline_movers", replace_existing=True,
     )
 
-    # Alpha Pipeline — 18:15 Layer 2+3: 三層分類 + 六大過濾
+    # Alpha Pipeline — 18:15 Layer 2+3: 三層分類 + 六大過濾 + 族群輪動
     scheduler.add_job(
         _run_pipeline_scanner_filter,
         CronTrigger(day_of_week="mon-fri", hour=18, minute=15, timezone="Asia/Taipei"),
         id="pipeline_scanner_filter", replace_existing=True,
     )
 
-    # Alpha Pipeline — 18:30 Layer 4: Research 自動核查
+    # Alpha Pipeline — 18:30 Layer 4: Research + Alpha 衰退檢查
     scheduler.add_job(
         _run_pipeline_research,
         CronTrigger(day_of_week="mon-fri", hour=18, minute=30, timezone="Asia/Taipei"),
         id="pipeline_research", replace_existing=True,
     )
 
-    # Alpha Pipeline — 18:45 Layer 5: Portfolio Overlay 準備
+    # Alpha Pipeline — 18:45 Layer 5: Portfolio Overlay + Conviction 計算
     scheduler.add_job(
         _run_pipeline_overlay_prep,
         CronTrigger(day_of_week="mon-fri", hour=18, minute=45, timezone="Asia/Taipei"),
         id="pipeline_overlay_prep", replace_existing=True,
+    )
+
+    # Meta Alpha 週報 — 每週五 18:30
+    scheduler.add_job(
+        _run_meta_alpha_weekly,
+        CronTrigger(day_of_week="fri", hour=18, minute=30, timezone="Asia/Taipei"),
+        id="meta_alpha_weekly", replace_existing=True,
     )
 
     # Agent A — 數據員：每日 18:00 抓取並更新 FinMind 數據
@@ -528,7 +535,7 @@ async def _push_daily_decision():
 # ── Alpha Pipeline 四段排程 ───────────────────────────────────────────────────
 
 async def _run_pipeline_movers():
-    """18:00 — Layer 1: 動能啟動掃描"""
+    """18:00 — Layer 1: 動能啟動掃描 + 資金流向"""
     try:
         from quant.movers_engine import MoversEngine
         engine  = MoversEngine()
@@ -538,10 +545,20 @@ async def _run_pipeline_movers():
         logger.info(f"[Pipeline 18:00] movers scan: {len(results)} 檔動能股")
     except Exception as e:
         logger.error(f"[Pipeline 18:00] movers failed: {e}")
+    try:
+        from quant.capital_flow_engine import CapitalFlowEngine
+        from ..models.database import settings
+        engine   = CapitalFlowEngine()
+        snapshot = await engine.scan()
+        logger.info(f"[Pipeline 18:00] capital flow: {snapshot.top_inflow_sector} 流入")
+        if snapshot.rotation_warning:
+            await engine.push_rotation_warning(snapshot, settings.line_channel_access_token)
+    except Exception as e:
+        logger.error(f"[Pipeline 18:00] capital_flow failed: {e}")
 
 
 async def _run_pipeline_scanner_filter():
-    """18:15 — Layer 2+3: 三層分類 + 六大過濾"""
+    """18:15 — Layer 2+3: 三層分類 + 六大過濾 + 族群輪動"""
     try:
         from quant.movers_engine import MoversEngine
         from quant.scanner_engine import ScannerEngine
@@ -563,10 +580,20 @@ async def _run_pipeline_scanner_filter():
         )
     except Exception as e:
         logger.error(f"[Pipeline 18:15] scanner/filter failed: {e}")
+    try:
+        from quant.sector_rotation_engine import SectorRotationEngine
+        engine    = SectorRotationEngine()
+        strengths = await engine.scan()
+        signal    = engine.detect_rotation(strengths)
+        await engine.save_snapshot(strengths)
+        logger.info("[Pipeline 18:15] sector: main=%s rotation=%s",
+                    ",".join(signal.mainstream[:2]), signal.rotation_alert)
+    except Exception as e:
+        logger.error(f"[Pipeline 18:15] sector_rotation failed: {e}")
 
 
 async def _run_pipeline_research():
-    """18:30 — Layer 4: Research 自動核查（前 5 檔）"""
+    """18:30 — Layer 4: Research 自動核查 + Alpha 衰退檢查"""
     try:
         from quant.movers_engine import MoversEngine
         from quant.scanner_engine import ScannerEngine
@@ -589,10 +616,26 @@ async def _run_pipeline_research():
         logger.info("[Pipeline 18:30] research: %s", " ".join(results))
     except Exception as e:
         logger.error(f"[Pipeline 18:30] research failed: {e}")
+    try:
+        from quant.alpha_decay_engine import AlphaDecayEngine
+        from quant.meta_alpha_engine import KNOWN_ALPHAS
+        engine  = AlphaDecayEngine()
+        dead    = []
+        for alpha in KNOWN_ALPHAS:
+            state   = await engine._load_state(alpha)
+            history = state.get("ic_history", [])
+            if history:
+                health = await engine.update_ic(alpha, history[-1])
+                if health.status == "DEAD":
+                    dead.append(alpha)
+        logger.info("[Pipeline 18:30] alpha_decay: %d dead factors=%s",
+                    len(dead), dead)
+    except Exception as e:
+        logger.error(f"[Pipeline 18:30] alpha_decay failed: {e}")
 
 
 async def _run_pipeline_overlay_prep():
-    """18:45 — Layer 5: Portfolio Overlay 數據預熱（不推送，等 19:00）"""
+    """18:45 — Layer 5: Portfolio Overlay 預熱 + Conviction 批量計算"""
     try:
         from quant.portfolio_overlay import PortfolioOverlay
         from ..models.database import AsyncSessionLocal
@@ -614,3 +657,30 @@ async def _run_pipeline_overlay_prep():
         logger.info("[Pipeline 18:45] overlay prep: %d 檔持倉已掃描", total_signals)
     except Exception as e:
         logger.error(f"[Pipeline 18:45] overlay prep failed: {e}")
+    try:
+        from quant.conviction_engine import ConvictionEngine
+        from quant.movers_engine import MoversEngine
+        from quant.scanner_engine import ScannerEngine
+        engine   = ConvictionEngine()
+        movers   = await MoversEngine().scan() or MoversEngine().scan_mock(15)
+        scan_res = ScannerEngine().classify(movers)
+        all_recs = scan_res.core + scan_res.medium
+        results  = engine.batch_compute([
+            {"mover": m, "scan_rec": r, "research": None, "regime": {"regime": "UNKNOWN", "confidence": 0.5}}
+            for m, r in zip(movers[:10], all_recs[:10])
+        ])
+        logger.info("[Pipeline 18:45] conviction: %d 檔達交易門檻", len(results))
+    except Exception as e:
+        logger.error(f"[Pipeline 18:45] conviction failed: {e}")
+
+
+async def _run_meta_alpha_weekly():
+    """週五 18:30 — Meta Alpha 週排名 + 推送報告"""
+    try:
+        from quant.meta_alpha_engine import MetaAlphaEngine
+        from ..models.database import settings
+        engine = MetaAlphaEngine()
+        await engine.push_weekly_report(settings.line_channel_access_token)
+        logger.info("[MetaAlpha] weekly report pushed")
+    except Exception as e:
+        logger.error(f"[MetaAlpha] weekly report failed: {e}")
