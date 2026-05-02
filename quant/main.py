@@ -43,9 +43,12 @@ from .odd_lot_engine import OddLotEngine
 from .signal_db import SignalDB, get_signal_db
 from .factor_ic_engine import FactorICEngine, DEFAULT_FACTORS
 from .dynamic_weight_engine import DynamicWeightEngine, WeightMode, get_dynamic_weight_engine
-from .regime_engine import RegimeEngine, get_regime_engine
+from .regime_engine import RegimeEngine, get_regime_engine, EnhancedRegimeEngine, get_enhanced_regime_engine
 from .alpha_portfolio_engine import AlphaPortfolioEngine, get_alpha_portfolio_engine
-from .risk_engine import RiskManagerV2, get_risk_manager_v2
+from .risk_engine import RiskManagerV2, get_risk_manager_v2, RiskEngineV3, get_risk_engine_v3
+from .adaptive_weight_engine import AdaptiveWeightEngine, get_adaptive_weight_engine
+from .walkforward_engine import WalkForwardAnalyzer, get_walkforward_analyzer
+from .slippage_engine import SlippageEngine, get_slippage_engine
 
 logger = logging.getLogger(__name__)
 
@@ -983,6 +986,145 @@ async def walk_forward_backtest(req: PipelineRequest):
         return d
     except Exception as e:
         raise HTTPException(422, str(e))
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  新端點 v3：/regime  /adaptive_weights  /walkforward
+# ═══════════════════════════════════════════════════════════════════
+
+class RegimeEnhancedRequest(BaseModel):
+    stock_code:           str   = "2330"
+    daily_change_pct:     float = 0.0     # 今日大盤漲跌幅，例 -0.035
+    foreign_futures_net:  float = 0.0     # 外資期貨淨多口（正=多）
+    limit_up_count:       int   = 0       # 漲停家數
+    limit_down_count:     int   = 0       # 跌停家數
+    tsmc_trend:           str   = "neutral"  # "up"/"down"/"neutral"
+    volume_today:         float = 0.0     # 大盤成交量（億）
+
+
+class WalkForwardRequest(BaseModel):
+    stock_code:           str   = "2330"
+    train_days:           int   = Field(120, ge=60, le=500)
+    test_days:            int   = Field(20,  ge=10, le=60)
+    step_days:            int   = Field(20,  ge=5,  le=60)
+    initial_capital:      float = 1_000_000
+    commission_discount:  float = Field(0.6, ge=0.1, le=1.0)
+    stop_loss_pct:        float = Field(0.08, ge=0.01, le=0.30)
+
+
+@router.post("/regime", summary="五態市場盤態偵測（含 panic / euphoria）")
+async def get_regime_enhanced(req: RegimeEnhancedRequest):
+    """
+    使用 EnhancedRegimeEngine 偵測五種市場盤態：
+      bull / bear / sideways / panic / euphoria
+
+    panic 條件：單日跌 > 3% 或跌停家數 > 30
+    euphoria 條件：連漲 5 天 + 爆量，或漲停 > 50 家，或 20 日漲 > 15% + 爆量
+    其餘：bull / bear / sideways / volatile（依 MA + 動量判斷）
+
+    外資期貨淨多口與台積電趨勢可強化信心分數。
+    """
+    df      = await _fetch_kline(req.stock_code)
+    feat_df = _build_features(df)
+
+    engine = get_enhanced_regime_engine()
+    result = engine.detect_enhanced(
+        df=feat_df,
+        daily_change_pct=req.daily_change_pct,
+        foreign_futures_net=req.foreign_futures_net,
+        limit_up_count=req.limit_up_count,
+        limit_down_count=req.limit_down_count,
+        tsmc_trend=req.tsmc_trend,
+        volume_today=req.volume_today,
+    )
+
+    re_v3  = get_risk_engine_v3()
+    dd_info = re_v3.update_equity(re_v3._equity)   # 不更新（只讀）
+
+    return {
+        "stock_code":  req.stock_code,
+        "data_points": len(feat_df),
+        **result.to_dict(),
+        "strategy_hint": {
+            "panic":    "超跌反彈（小倉 15%）",
+            "euphoria": "降低倉位至 30%，避免追高",
+            "bull":     "動能 + 突破策略，滿倉 100%",
+            "bear":     "防禦 + 現金，倉位 45%",
+            "sideways": "均值回歸 + 籌碼，倉位 75%",
+        }.get(result.regime.value, "依盤態調整"),
+    }
+
+
+@router.get("/adaptive_weights", summary="30日 IC 動態因子權重")
+async def get_adaptive_weights(
+    stock_code:   str = "2330",
+    forward_days: int = Field(5, ge=1, le=20),
+    ic_window:    int = Field(30, ge=10, le=90),
+):
+    """
+    計算最近 ic_window 日每個因子的 IC（Spearman 相關），
+    IC < 0 的因子 weight = 0，其餘歸一化為 weight = IC / sum(IC)。
+
+    每次呼叫自動更新；更新結果同步存入 JSON 快取（DB 可用時存 DB）。
+    """
+    df      = await _fetch_kline(stock_code)
+    feat_df = _build_features(df)
+
+    engine = AdaptiveWeightEngine(ic_window=ic_window, forward_days=forward_days)
+    result = engine.compute(feat_df)
+
+    # 非同步存檔（不阻塞回應）
+    import asyncio
+    asyncio.create_task(engine.save(result))
+
+    return {
+        "stock_code":  stock_code,
+        "data_points": len(feat_df),
+        "ic_window":   ic_window,
+        "forward_days":forward_days,
+        **result.to_dict(),
+    }
+
+
+@router.post("/walkforward", summary="Walk-Forward 防過擬合回測")
+async def walkforward_analysis(req: WalkForwardRequest):
+    """
+    執行 Walk-Forward 回測分析（嚴格無 lookahead bias）。
+
+    train_days = 訓練期天數（預設 120）
+    test_days  = 測試期天數（預設 20）
+    step_days  = 滾動步進（預設 20，等於 test_days）
+
+    輸出每段：test_sharpe / test_win_rate / test_max_dd / generalization
+    輸出總體：stability_score（穩定性）、avg_sharpe、combined_return
+
+    穩定性分數 = 1 - std(test_sharpes) / range(test_sharpes)
+    → 0~1，越接近 1 越穩定，> 0.7 為「穩定」
+    """
+    df      = await _fetch_kline(req.stock_code)
+    feat_df = _build_features(df)
+
+    if len(feat_df) < req.train_days + req.test_days:
+        raise HTTPException(422,
+            f"資料不足（{len(feat_df)} 筆），需 {req.train_days + req.test_days}")
+
+    analyzer = WalkForwardAnalyzer(
+        train_days=req.train_days,
+        test_days=req.test_days,
+        step_days=req.step_days,
+        initial_capital=req.initial_capital,
+        commission_discount=req.commission_discount,
+    )
+
+    try:
+        result = analyzer.run(feat_df, stop_loss_pct=req.stop_loss_pct)
+    except Exception as e:
+        raise HTTPException(422, str(e))
+
+    d = result.to_dict()
+    d["stock_code"]    = req.stock_code
+    d["summary_text"]  = result.summary()
+    return d
 
 
 # ── 將 router 掛到 app（獨立啟動時）─────────────────────────────────────────

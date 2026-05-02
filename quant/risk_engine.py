@@ -670,3 +670,267 @@ def get_risk_manager_v2() -> RiskManagerV2:
     if _global_rm_v2 is None:
         _global_rm_v2 = RiskManagerV2()
     return _global_rm_v2
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  Risk Engine v3 — 信心指數動態倉位 + 嚴格回撤保護
+# ═══════════════════════════════════════════════════════════════════
+
+@_dc
+class PositionSizeV3:
+    """v3 倉位計算結果"""
+    stock_code:       str
+    confidence:       float
+    raw_position_pct: float    # 依信心原始倉位
+    max_loss_pct:     float    # 單股最大虧損 / 總資金
+    final_position_pct: float  # 套用回撤縮減後的最終倉位
+    dd_scale:         float    # 回撤縮減乘數（1.0 = 正常，0.5 = 減半，0.0 = 清倉）
+    trade_ok:         bool
+    reason:           str
+
+
+class ConfidencePositionSizer:
+    """
+    v3 信心指數動態倉位管理：
+      信心 > 80 → 倉位 20%
+      信心 60-80 → 倉位 10%
+      信心 < 60 → 倉位 5%
+      單股最大虧損：總資金 1%（stop_price 傳入時自動反推最大股數）
+    """
+
+    def __init__(
+        self,
+        hi_conf_pct:   float = 0.20,   # 信心 > 80 → 20%
+        mid_conf_pct:  float = 0.10,   # 信心 60-80 → 10%
+        lo_conf_pct:   float = 0.05,   # 信心 < 60 → 5%
+        hi_threshold:  float = 80.0,
+        mid_threshold: float = 60.0,
+        max_loss_pct:  float = 0.01,   # 單股最大虧損 = 總資金 1%
+    ):
+        self.hi_conf_pct   = hi_conf_pct
+        self.mid_conf_pct  = mid_conf_pct
+        self.lo_conf_pct   = lo_conf_pct
+        self.hi_threshold  = hi_threshold
+        self.mid_threshold = mid_threshold
+        self.max_loss_pct  = max_loss_pct
+
+    def calc(
+        self,
+        stock_code:   str,
+        confidence:   float,
+        total_capital: float,
+        entry_price:  float,
+        stop_price:   _Opt[float] = None,
+    ) -> PositionSizeV3:
+        """
+        計算倉位。
+
+        若提供 stop_price：自動反推最大股數，確保虧損不超過 max_loss_pct × total_capital。
+        """
+        if confidence >= self.hi_threshold:
+            raw_pct = self.hi_conf_pct
+            reason  = f"信心 {confidence:.0f} ≥ {self.hi_threshold:.0f}，倉位 {raw_pct*100:.0f}%"
+        elif confidence >= self.mid_threshold:
+            raw_pct = self.mid_conf_pct
+            reason  = f"信心 {confidence:.0f} [{self.mid_threshold:.0f}~{self.hi_threshold:.0f})，倉位 {raw_pct*100:.0f}%"
+        else:
+            raw_pct = self.lo_conf_pct
+            reason  = f"信心 {confidence:.0f} < {self.mid_threshold:.0f}，倉位 {raw_pct*100:.0f}%"
+
+        # 單股最大虧損限制（反推最大倉位）
+        max_loss_limit_pct = 1.0
+        if stop_price is not None and entry_price > 0 and entry_price > stop_price:
+            loss_per_share = entry_price - stop_price
+            loss_ratio     = loss_per_share / entry_price
+            if loss_ratio > 0:
+                max_loss_budget = total_capital * self.max_loss_pct
+                max_invest      = max_loss_budget / loss_ratio
+                max_loss_limit_pct = max_invest / total_capital
+
+        final_pct = min(raw_pct, max_loss_limit_pct)
+
+        return PositionSizeV3(
+            stock_code=stock_code,
+            confidence=confidence,
+            raw_position_pct=round(raw_pct, 4),
+            max_loss_pct=self.max_loss_pct,
+            final_position_pct=round(final_pct, 4),
+            dd_scale=1.0,    # DrawdownControllerV3 會在 full_check 中調整
+            trade_ok=True,
+            reason=reason,
+        )
+
+
+class DrawdownControllerV3:
+    """
+    v3 回撤保護：
+      DD > 15% → 全部倉位 × 0.5（減半）
+      DD > 25% → 清倉（position_scale = 0）
+    """
+
+    def __init__(self, warn_dd: float = 0.15, clear_dd: float = 0.25):
+        self.warn_dd  = warn_dd
+        self.clear_dd = clear_dd
+        self._peak    = 0.0
+
+    def update(self, equity: float) -> dict:
+        self._peak = max(self._peak, equity)
+        dd = (self._peak - equity) / self._peak if self._peak > 0 else 0.0
+        if dd >= self.clear_dd:
+            scale, state = 0.0, "clear"
+        elif dd >= self.warn_dd:
+            scale, state = 0.5, "half"
+        else:
+            scale, state = 1.0, "normal"
+        return {
+            "drawdown_pct":   round(dd, 4),
+            "position_scale": scale,
+            "state":          state,
+            "peak_equity":    self._peak,
+        }
+
+    def reset(self, equity: _Opt[float] = None) -> None:
+        self._peak = equity or 0.0
+
+
+class RiskEngineV3:
+    """
+    整合風控 v3：ConfidencePositionSizer + DrawdownControllerV3。
+
+    使用方式：
+        re = RiskEngineV3(initial_capital=1_000_000)
+
+        # 每日更新資金曲線
+        dd_info = re.update_equity(current_equity)
+
+        # 計算開倉大小
+        pos = re.calc_position("2330", confidence=85, entry_price=850,
+                               stop_price=820)
+        if pos.trade_ok and pos.final_position_pct > 0:
+            invest_amt = current_equity * pos.final_position_pct
+    """
+
+    def __init__(
+        self,
+        initial_capital: float = 1_000_000,
+        hi_conf_pct:  float = 0.20,
+        mid_conf_pct: float = 0.10,
+        lo_conf_pct:  float = 0.05,
+        max_loss_pct: float = 0.01,
+        warn_dd:      float = 0.15,
+        clear_dd:     float = 0.25,
+    ):
+        self._capital  = initial_capital
+        self._equity   = initial_capital
+        self._sizer    = ConfidencePositionSizer(
+            hi_conf_pct=hi_conf_pct, mid_conf_pct=mid_conf_pct,
+            lo_conf_pct=lo_conf_pct, max_loss_pct=max_loss_pct,
+        )
+        self._dd_ctrl  = DrawdownControllerV3(warn_dd=warn_dd, clear_dd=clear_dd)
+
+    def update_equity(self, equity: float) -> dict:
+        """每日更新資金，回傳回撤資訊"""
+        self._equity = equity
+        return self._dd_ctrl.update(equity)
+
+    def calc_position(
+        self,
+        stock_code:  str,
+        confidence:  float,
+        entry_price: float,
+        stop_price:  _Opt[float] = None,
+    ) -> PositionSizeV3:
+        """
+        計算最終倉位（信心倉位 × 回撤縮減乘數）。
+        DD > 25% → trade_ok=False（不可開新倉）。
+        """
+        dd_info = self._dd_ctrl.update(self._equity)
+        dd_scale = dd_info["position_scale"]
+
+        pos = self._sizer.calc(
+            stock_code=stock_code,
+            confidence=confidence,
+            total_capital=self._equity,
+            entry_price=entry_price,
+            stop_price=stop_price,
+        )
+
+        final = round(pos.final_position_pct * dd_scale, 4)
+        trade_ok = dd_scale > 0.0
+
+        reason = pos.reason
+        if dd_scale == 0.5:
+            reason += f"  [DD>{self._dd_ctrl.warn_dd*100:.0f}%，倉位×0.5]"
+        elif dd_scale == 0.0:
+            reason += f"  [DD>{self._dd_ctrl.clear_dd*100:.0f}%，清倉]"
+
+        return PositionSizeV3(
+            stock_code=pos.stock_code,
+            confidence=pos.confidence,
+            raw_position_pct=pos.raw_position_pct,
+            max_loss_pct=pos.max_loss_pct,
+            final_position_pct=final,
+            dd_scale=dd_scale,
+            trade_ok=trade_ok,
+            reason=reason,
+        )
+
+    def full_check(
+        self,
+        stock_code:  str,
+        confidence:  float,
+        entry_price: float,
+        stop_price:  _Opt[float] = None,
+    ) -> dict:
+        """門面方法：直接回傳 dict（供 API 使用）"""
+        pos = self.calc_position(stock_code, confidence, entry_price, stop_price)
+        return {
+            "stock_code":        pos.stock_code,
+            "confidence":        pos.confidence,
+            "raw_position_pct":  pos.raw_position_pct,
+            "final_position_pct":pos.final_position_pct,
+            "dd_scale":          pos.dd_scale,
+            "trade_ok":          pos.trade_ok,
+            "reason":            pos.reason,
+            "invest_amount":     round(self._equity * pos.final_position_pct, 0),
+        }
+
+
+_global_re_v3: _Opt[RiskEngineV3] = None
+
+
+def get_risk_engine_v3(initial_capital: float = 1_000_000) -> RiskEngineV3:
+    global _global_re_v3
+    if _global_re_v3 is None:
+        _global_re_v3 = RiskEngineV3(initial_capital=initial_capital)
+    return _global_re_v3
+
+
+# ── Mock + 獨立測試 ──────────────────────────────────────────────────────────
+
+if __name__ == "__main__":
+    import sys
+    sys.path.insert(0, ".")
+
+    print("=== Risk Engine v3 ===")
+    re = RiskEngineV3(initial_capital=1_000_000)
+
+    cases = [
+        ("2330", 85, 850, 820),
+        ("2454", 70, 200,   None),
+        ("3711", 45, 100,  92),
+    ]
+    for code, conf, entry, stop in cases:
+        pos = re.calc_position(code, float(conf), float(entry),
+                               float(stop) if stop else None)
+        print(f"[{code}] conf={conf:3.0f}  entry={entry}  stop={stop}  "
+              f"pct={pos.final_position_pct*100:.1f}%  ok={pos.trade_ok}")
+        print(f"  → {pos.reason}")
+
+    print("\n=== 回撤測試 ===")
+    equities = [1_000_000, 1_050_000, 900_000, 800_000, 740_000]
+    for eq in equities:
+        dd = re.update_equity(eq)
+        pos = re.calc_position("2330", 85, 850)
+        print(f"equity={eq:>10,.0f}  dd={dd['drawdown_pct']*100:.1f}%"
+              f"  scale={dd['position_scale']}  pct={pos.final_position_pct*100:.1f}%")
