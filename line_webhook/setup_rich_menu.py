@@ -1,7 +1,7 @@
 """
-Rich Menu 建立腳本 — 5格非對稱佈局 v4
-上排 2 格（各 1250px）：📊市場  ⭐自選股
-下排 3 格（833/834/833）：🤖AI策略  📈選股  ⚙️工具
+Rich Menu 建立腳本 — 6格 3×2 佈局 v5
+上排 3 格（各 833px）：📊大盤行情  💼我的庫存  🔍今日選股
+下排 3 格（各 833px）：📰市場新聞  🤖AI分析   ⚙️更多功能
 
 用法：python -m line_webhook.setup_rich_menu
 """
@@ -15,49 +15,65 @@ from line_webhook.rich_menu_image import create_rich_menu_image
 
 IMAGE_PATH = os.path.join(os.path.dirname(__file__), "..", "data", "rich_menu.png")
 
+CW = 833   # 每格寬（2500 / 3）
+CH = 843   # 每格高（1686 / 2）
+
 RICH_MENU_DEF = {
     "size": {"width": 2500, "height": 1686},
     "selected": True,
-    "name": "TW Bloomberg 主選單 v4",
+    "name": "TW Bloomberg 主選單 v5",
     "chatBarText": "📊 開啟操作選單",
     "areas": [
-        # ── 上排（各 1250px 寬）──────────────────────────────────────
-        # 📊 市場
+        # ── 上排（各 833px 寬）────────────────────────────────────────
+        # 📊 大盤行情
         {
-            "bounds": {"x": 0, "y": 0, "width": 1250, "height": 843},
+            "bounds": {"x": 0, "y": 0, "width": CW, "height": CH},
             "action": {
                 "type": "postback",
-                "data": "act=menu_market",
-                "displayText": "📊 市場資訊",
+                "data": "act=market_card",
+                "displayText": "📊 大盤行情",
             },
         },
-        # ⭐ 自選股
+        # 💼 我的庫存
         {
-            "bounds": {"x": 1250, "y": 0, "width": 1250, "height": 843},
-            "action": {"type": "message", "text": "/p"},
-        },
-        # ── 下排（833 / 834 / 833）────────────────────────────────────
-        # 🤖 AI策略
-        {
-            "bounds": {"x": 0, "y": 843, "width": 833, "height": 843},
+            "bounds": {"x": CW, "y": 0, "width": CW, "height": CH},
             "action": {
                 "type": "postback",
-                "data": "act=menu_ai_strategy",
-                "displayText": "🤖 AI策略選單",
+                "data": "act=portfolio_view",
+                "displayText": "💼 我的庫存",
             },
         },
-        # 📈 選股
+        # 🔍 今日選股
         {
-            "bounds": {"x": 833, "y": 843, "width": 834, "height": 843},
-            "action": {"type": "message", "text": "/r"},
-        },
-        # ⚙️ 工具
-        {
-            "bounds": {"x": 1667, "y": 843, "width": 833, "height": 843},
+            "bounds": {"x": CW * 2, "y": 0, "width": CW, "height": CH},
             "action": {
                 "type": "postback",
-                "data": "act=more_menu",
-                "displayText": "⚙️ 工具選單",
+                "data": "act=screener_qr",
+                "displayText": "🔍 今日選股",
+            },
+        },
+        # ── 下排（各 833px 寬）────────────────────────────────────────
+        # 📰 市場新聞
+        {
+            "bounds": {"x": 0, "y": CH, "width": CW, "height": CH},
+            "action": {"type": "message", "text": "/n"},
+        },
+        # 🤖 AI分析
+        {
+            "bounds": {"x": CW, "y": CH, "width": CW, "height": CH},
+            "action": {
+                "type": "postback",
+                "data": "act=ai_menu",
+                "displayText": "🤖 AI 分析選單",
+            },
+        },
+        # ⚙️ 更多功能
+        {
+            "bounds": {"x": CW * 2, "y": CH, "width": CW, "height": CH},
+            "action": {
+                "type": "postback",
+                "data": "act=more_menu_v2",
+                "displayText": "⚙️ 更多功能",
             },
         },
     ],
@@ -82,7 +98,7 @@ async def setup():
             logger.info(f"Deleted old rich menu: {mid}")
 
     # 2. 生成圖片
-    logger.info("Generating rich menu image (5-button layout)...")
+    logger.info("Generating rich menu image (6-button 3×2 layout)...")
     img_path = create_rich_menu_image(IMAGE_PATH)
 
     # 3. 建立 rich menu
@@ -115,11 +131,11 @@ async def setup():
             headers=headers,
         )
         r.raise_for_status()
-        logger.success(f"✅ Rich menu set as default: {rich_menu_id}")
+        logger.success(f"Rich menu set as default: {rich_menu_id}")
 
-    print(f"\n✅ Rich Menu 5格佈局建立完成！ID: {rich_menu_id}")
-    print("上排：📊市場 / ⭐自選股")
-    print("下排：🤖AI策略 / 📈選股 / ⚙️工具")
+    print(f"\nRich Menu 6格佈局建立完成 ID: {rich_menu_id}")
+    print("上排: 大盤行情 / 我的庫存 / 今日選股")
+    print("下排: 市場新聞 / AI分析   / 更多功能")
 
 
 if __name__ == "__main__":

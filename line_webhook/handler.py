@@ -239,11 +239,64 @@ async def _handle_postback(data: str, uid: str) -> list:
             )
         )]
 
-    # ── 未定義動作 → 功能維護中 ──────────────────────────────────────────────
+    # ── 新版 postback 動作（重新設計介面）────────────────────────────────────
+    if act == "portfolio_view":
+        return await _cmd_portfolio(uid)
+
+    if act == "market_card":
+        return await _cmd_market_card(uid)
+
+    if act == "ai_menu":
+        from line_webhook.flex_messages import qr_ai_menu
+        return [_text("🤖 AI 分析選單\n\n請選擇分析項目：", qr_ai_menu())]
+
+    if act == "screener_qr":
+        return [_text(
+            "🔍 今日選股\n\n請選擇選股策略：",
+            qr_items(
+                ("🚀 動能策略", "/report momentum"),
+                ("💎 存股策略", "/report value"),
+                ("🎯 籌碼追蹤", "/report chip"),
+                ("💥 技術突破", "/report breakout"),
+                ("🤖 AI綜合",   "/report ai"),
+                ("⚡ 今日決策", "/daily"),
+            )
+        )]
+
+    if act == "more_menu_v2":
+        from line_webhook.flex_messages import flex_more_menu_v2
+        return [_flex("更多功能", flex_more_menu_v2())]
+
+    if act == "add_holding":
+        return [_text(
+            f"➕ 新增 {code} 到庫存\n\n請輸入：/buy {code} 股數 成本價\n"
+            f"例：/buy {code} 1000 850",
+            qr_items((f"示範1張", f"/buy {code} 1000 100"))
+        )]
+
+    # ── 未定義動作 → 嘗試 callback_router，否則友善提示 ──────────────────────
+    try:
+        from line_webhook.callback_router import get_callback_router
+        router = get_callback_router()
+        result = await router.dispatch(data, uid)
+        if result:
+            return result
+    except Exception as cb_err:
+        logger.debug("[postback] callback_router error: %s", cb_err)
+
     logger.info("[postback] 未定義 act=%s uid=%s", act, uid[:8])
+    try:
+        from backend.models.database import AsyncSessionLocal
+        from backend.models.models import CallbackLog
+        async with AsyncSessionLocal() as db:
+            db.add(CallbackLog(user_id=uid, action=act,
+                               params=str(params)[:500], error="undefined"))
+            await db.commit()
+    except Exception:
+        pass
     return [_text(
-        "🔧 功能維護中\n\n此功能正在優化，敬請期待！",
-        qr_items(("💼 庫存", "/p"), ("📊 選股", "/r"), ("📰 新聞", "/n")),
+        "收到你的請求，處理中...\n\n如持續無回應請試試：",
+        qr_items(("💼 庫存", "/p"), ("📊 選股", "/r"), ("📰 新聞", "/n"), ("❓ 說明", "/help")),
     )]
 
 
@@ -511,14 +564,47 @@ async def _cmd_quote(code: str) -> list:
 
 
 async def _cmd_market() -> list:
+    return await _cmd_market_card(None)
+
+
+async def _cmd_market_card(uid) -> list:
+    """大盤行情完整 Flex 卡片：指數 + 法人 + 族群熱度"""
+    from line_webhook.flex_messages import flex_market_card
     ov = await fetch_market_overview()
     if not ov:
         return [_text("❌ 無法取得大盤資訊", _home_qr())]
-    arr = "▲" if ov["change"] >= 0 else "▼"
-    return [_text(
-        f"📊 加權指數\n{ov['value']:,.2f}\n{arr}{abs(ov['change']):.2f} ({ov['change_pct']:+.2f}%)",
-        qr_items(("💼 庫存", "/portfolio"), ("🤖 AI", "/ai 今日大盤氣氛"), ("📰 新聞", "/news_guide"))
-    )]
+
+    # 法人資料（可選，失敗不影響主卡片）
+    inst = {}
+    try:
+        d = await fetch_institutional("2330")
+        if d:
+            inst = {
+                "foreign_net": d.get("foreign_net", 0),
+                "trust_net":   d.get("investment_trust_net", 0),
+                "dealer_net":  d.get("dealer_net", 0),
+            }
+    except Exception:
+        pass
+
+    # 族群熱度 Top3（可選）
+    sectors = []
+    try:
+        from quant.sector_rotation_engine import SectorRotationEngine
+        engine    = SectorRotationEngine()
+        strengths = engine.scan_mock()   # 用 mock 避免等待
+        sectors   = [(s.name, s.composite_score) for s in strengths[:3]]
+    except Exception:
+        pass
+
+    card = flex_market_card(ov, inst=inst, sectors=sectors)
+    qr   = qr_items(
+        ("熱門排行", "/report momentum"),
+        ("外資動向", "/inst 2330"),
+        ("族群熱度", "/sector"),
+        ("AI分析",   "/ai 今日大盤"),
+    )
+    return [_flex("台股大盤行情", card, qr)]
 
 
 async def _cmd_portfolio(uid: str) -> list:

@@ -83,30 +83,30 @@ REGIME_CLR = {
 # ── 欄位定義 ─────────────────────────────────────────────────────────────────
 # (key, header, width_ratio)
 COLUMNS = [
-    ("label",      "股票",       2.10),
-    ("close",      "價格(元)",   0.85),
-    ("change_pct", "漲跌(%)",    0.85),
-    ("volume_k",   "成交量(張)", 0.90),
-    ("chip_5d",    "5日籌碼",    0.95),
-    ("chip_20d",   "20日籌碼",   0.95),
-    ("rev_yoy",    "YoY%",       0.78),
-    ("eps_growth", "EPS%",       0.78),
-    ("confidence", "信心條",     1.05),
-    ("stars",      "評級",       0.90),
+    ("label",      "股票代碼/名稱",  2.10),
+    ("close",      "收盤價(元)",     0.85),
+    ("change_pct", "漲跌幅",         0.85),
+    ("volume_k",   "成交量(張)",     0.90),
+    ("chip_5d",    "法人5日買賣",    1.05),
+    ("chip_20d",   "法人20日買賣",   1.05),
+    ("rev_yoy",    "年營收成長",     0.85),
+    ("eps_growth", "EPS成長",        0.78),
+    ("confidence", "AI綜合評分",     1.10),
+    ("stars",      "信心★",          0.82),
 ]
 
 COL_GROUPS = [
-    ("股票",   1),
-    ("盤面",   3),
-    ("籌碼",   2),
-    ("基本面", 2),
-    ("模型",   2),
+    ("股票",        1),
+    ("盤面行情",    3),
+    ("法人籌碼",    2),
+    ("基本面",      2),
+    ("AI評分",      2),
 ]
 
 # 底部圖例說明
 LEGEND_TEXT = (
-    "★週核=週線多頭  ☆高連=連續收紅  •新資金=量創新高  "
-    "▲同族=族群連動  ◎達標=突破目標  ■高頻=日內高波動"
+    "📖 欄位說明：法人籌碼=外資+投信買賣超（紅=買超/綠=賣超）"
+    " | 基本面=年營收/EPS年增率 | AI綜合=系統綜合評分0~100 | 信心★=建議力道"
 )
 
 
@@ -128,14 +128,21 @@ def _stars(score: float) -> str:
     n = round(max(0, min(5, score / 20)))
     return "★" * n + "☆" * (5 - n)
 
-def _fmt_chip(val: float) -> str:
-    abs_v = abs(val / 1000)
+def _fmt_chip(val: float, days: int = 0) -> str:
+    """格式化法人買賣超，顯示 +5,300張(3天) 格式"""
+    abs_v = abs(val)
     sign  = "+" if val >= 0 else "-"
-    return f"{sign}{abs_v:.1f}k 張"
+    if abs_v >= 1000:
+        s = f"{sign}{abs_v/1000:.1f}K張"
+    else:
+        s = f"{sign}{abs_v:.0f}張"
+    if days:
+        s += f"({days}天)"
+    return s
 
 def _fmt_pct(val: float) -> str:
     arrow = _arrow(val)
-    return f"{arrow}{abs(val):.2f}%"
+    return f"{arrow}{abs(val):.1f}%"
 
 
 # ── 主圖產生 ─────────────────────────────────────────────────────────────────
@@ -280,40 +287,43 @@ def generate_report_image(
                         f"{row.volume / 1000:,.0f}",
                         ha="center", va="center", fontsize=9, color=TXT_WHITE)
 
-            # ── 籌碼 ────────────────────────────────────────────────────
+            # ── 籌碼（法人買賣超，含連買天數）────────────────────────────
             elif key in ("chip_5d", "chip_20d"):
-                val = row.chip_5d if key == "chip_5d" else row.chip_20d
+                val  = row.chip_5d if key == "chip_5d" else row.chip_20d
+                days = getattr(row, "foreign_buy_days", 0) or 0
+                # 負天數代表連賣
                 ax.text(cx + cw / 2, cy,
-                        _fmt_chip(val),
-                        ha="center", va="center", fontsize=8.5, fontweight="bold",
+                        _fmt_chip(val, abs(int(days)) if days else 0),
+                        ha="center", va="center", fontsize=8.0, fontweight="bold",
                         color=_chip_clr(val))
 
-            # ── 基本面 ──────────────────────────────────────────────────
+            # ── 基本面（年營收 / EPS 成長率）────────────────────────────
             elif key in ("rev_yoy", "eps_growth"):
-                val = row.rev_yoy if key == "rev_yoy" else row.eps_growth
-                ax.text(cx + cw / 2, cy,
-                        f"{_arrow(val)}{abs(val):.1f}%",
-                        ha="center", va="center", fontsize=9, color=_pct_clr(val))
+                val   = row.rev_yoy if key == "rev_yoy" else row.eps_growth
+                label = "年增" if key == "rev_yoy" else "EPS"
+                ax.text(cx + cw / 2, cy + 0.08,
+                        f"{label}{_arrow(val)}{abs(val):.0f}%",
+                        ha="center", va="center", fontsize=8.5, color=_pct_clr(val))
 
-            # ── 信心條 ──────────────────────────────────────────────────
+            # ── AI綜合評分（分數 + 進度條）────────────────────────────
             elif key == "confidence":
+                conf    = max(0, min(100, row.confidence))
+                bar_clr = (CLR_UP if conf >= 75 else
+                           "#FFAA00" if conf >= 55 else TXT_MUTED)
                 bx  = cx + 0.10
                 bw_ = cw - 0.20
-                bh_ = 0.14
-                # 背景
+                bh_ = 0.12
                 ax.add_patch(FancyBboxPatch(
                     (bx, cy - bh_ / 2), bw_, bh_,
                     boxstyle="round,pad=0.01", lw=0, facecolor="#1C2E48"))
-                # 填色條
-                conf = max(0, min(100, row.confidence))
-                bar_clr = (CLR_UP if conf >= 75 else
-                           "#FFAA00" if conf >= 55 else TXT_MUTED)
                 ax.add_patch(FancyBboxPatch(
                     (bx, cy - bh_ / 2), bw_ * conf / 100, bh_,
                     boxstyle="round,pad=0.01", lw=0, facecolor=bar_clr))
-                ax.text(cx + cw / 2, cy + 0.15,
-                        f"{conf:.0f}",
-                        ha="center", va="center", fontsize=8, color=TXT_WHITE)
+                # 評分數字（上方）
+                ax.text(cx + cw / 2, cy + 0.17,
+                        f"AI {conf:.0f}分",
+                        ha="center", va="center", fontsize=8.5,
+                        color=bar_clr, fontweight="bold")
 
             # ── 星級 ────────────────────────────────────────────────────
             elif key == "stars":
