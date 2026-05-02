@@ -106,6 +106,13 @@ def start_scheduler() -> AsyncIOScheduler:
         id="agent_c_decision", replace_existing=True,
     )
 
+    # 持倉健康報告 — 每日 19:00 推播（portfolio_overlay）
+    scheduler.add_job(
+        _push_portfolio_overlay,
+        CronTrigger(day_of_week="mon-fri", hour=19, minute=0, timezone="Asia/Taipei"),
+        id="portfolio_overlay", replace_existing=True,
+    )
+
     # 產業情緒分析 — 每日 20:00（新聞累積後分析）
     scheduler.add_job(
         _run_industry_sentiment,
@@ -118,6 +125,13 @@ def start_scheduler() -> AsyncIOScheduler:
         _push_daily_advice,
         CronTrigger(day_of_week="mon-fri", hour=19, minute=30, timezone="Asia/Taipei"),
         id="daily_advice", replace_existing=True,
+    )
+
+    # 每日決策報告 — 19:30 推播（decision_engine）
+    scheduler.add_job(
+        _push_daily_decision,
+        CronTrigger(day_of_week="mon-fri", hour=19, minute=30, timezone="Asia/Taipei"),
+        id="daily_decision", replace_existing=True,
     )
 
     # Feedback 自動調整 feature 權重 — 每週日 22:00
@@ -457,3 +471,27 @@ async def _push_group_report():
 
     except Exception as e:
         logger.error(f"Group report push failed: {e}")
+
+
+async def _push_portfolio_overlay():
+    """每日 19:00 — 持倉健康報告推送給所有訂閱者"""
+    try:
+        from quant.portfolio_overlay import PortfolioOverlay
+        from ..models.database import settings
+        overlay = PortfolioOverlay()
+        n = await overlay.push_all_subscribers(settings.line_channel_access_token)
+        logger.info(f"[PortfolioOverlay] pushed to {n} subscribers")
+    except Exception as e:
+        logger.error(f"Portfolio overlay job failed: {e}")
+
+
+async def _push_daily_decision():
+    """每日 19:30 — 決策報告推送給所有訂閱者"""
+    try:
+        from quant.decision_engine import DecisionEngine
+        from ..models.database import settings
+        engine = DecisionEngine()
+        n = await engine.push_all_subscribers(settings.line_channel_access_token)
+        logger.info(f"[DecisionEngine] pushed to {n} subscribers")
+    except Exception as e:
+        logger.error(f"Daily decision job failed: {e}")

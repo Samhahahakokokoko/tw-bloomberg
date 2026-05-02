@@ -330,6 +330,15 @@ async def _handle_text(text: str, uid: str) -> list:
     if cmd == "/r":                             return [_flex_screen_menu()]
     if cmd == "/strategy":                      return await _cmd_strategy_manage(uid)
     if cmd == "/risk":                          return await _cmd_risk_report(uid)
+    if cmd == "/daily":                         return await _cmd_daily(uid)
+    if cmd == "/movers":                        return await _cmd_movers(uid)
+    if cmd == "/overlay":                       return await _cmd_overlay(uid)
+    if cmd == "/research":
+        code = parts[1].upper() if len(parts) > 1 else ""
+        return await _cmd_research(code, uid) if code else [_text(
+            "請輸入股票代碼，例：/research 2330",
+            qr_items(("台積電", "/research 2330"), ("聯發科", "/research 2454"))
+        )]
     if cmd == "/risk_optimize":
         import asyncio
         asyncio.create_task(_risk_optimize_bg(uid))
@@ -1541,6 +1550,94 @@ def _flex_more_menu() -> FlexMessage:
         },
     }
     return FlexMessage(alt_text="更多功能選單", contents=bubble)
+
+
+# ── 投資決策框架指令 ─────────────────────────────────────────────────────────
+
+async def _cmd_daily(uid: str) -> list:
+    """/daily — 今日完整決策報告（0~5 個操作建議）"""
+    import asyncio
+    asyncio.create_task(_daily_bg(uid))
+    return [_text(
+        "📋 今日決策報告產生中...\n\n"
+        "整合動能掃描 → 三層分類 → 垃圾清洗 → 研究清單 → 持倉健康\n"
+        "約需 5-15 秒，完成後自動推送",
+        qr_items(("🔍 動能股", "/movers"), ("🛡 持倉健康", "/overlay"), ("💼 庫存", "/p")),
+    )]
+
+
+async def _daily_bg(uid: str) -> None:
+    """背景執行決策引擎並推送"""
+    try:
+        from quant.decision_engine import DecisionEngine
+        engine = DecisionEngine()
+        daily  = await engine.run(uid)
+        report = daily.format_line()
+        headers = {"Authorization": f"Bearer {settings.line_channel_access_token}"}
+        async with __import__("httpx").AsyncClient(timeout=20) as c:
+            await c.post(
+                "https://api.line.me/v2/bot/message/push",
+                json={"to": uid, "messages": [{"type": "text", "text": report[:4800]}]},
+                headers=headers,
+            )
+    except Exception as e:
+        logger.error("[daily_bg] %s", e)
+
+
+async def _cmd_movers(uid: str) -> list:
+    """/movers — 今日動能啟動股票"""
+    try:
+        from quant.movers_engine import MoversEngine
+        engine  = MoversEngine()
+        results = await engine.scan()
+        if not results:
+            results = engine.scan_mock()
+        report = engine.format_line_report(results)
+        return [_text(report, qr_items(
+            ("📋 決策報告", "/daily"),
+            ("🛡 持倉健康", "/overlay"),
+            ("📊 選股",     "/r"),
+        ))]
+    except Exception as e:
+        logger.error("[movers] %s", e)
+        return [_text(f"❌ 動能掃描失敗：{e}")]
+
+
+async def _cmd_overlay(uid: str) -> list:
+    """/overlay — 持倉健康檢查"""
+    try:
+        from quant.portfolio_overlay import PortfolioOverlay
+        overlay  = PortfolioOverlay()
+        signals  = await overlay.scan(uid)
+        report   = overlay.format_report(signals)
+        return [_text(report, qr_items(
+            ("📋 決策報告", "/daily"),
+            ("💼 庫存",     "/p"),
+            ("🔍 動能股",   "/movers"),
+        ))]
+    except Exception as e:
+        logger.error("[overlay] %s", e)
+        return [_text(f"❌ 持倉健康檢查失敗：{e}",
+                      qr_items(("💼 庫存", "/p")))]
+
+
+async def _cmd_research(code: str, uid: str) -> list:
+    """/research [code] — 個股研究清單"""
+    if not code:
+        return [_text("請輸入股票代碼，例：/research 2330")]
+    try:
+        from quant.research_checklist import ResearchChecklist
+        checker = ResearchChecklist()
+        result  = await checker.check(code)
+        report  = result.format_line()
+        return [_text(report, qr_items(
+            ("📋 決策報告", "/daily"),
+            ("🔍 動能股",   "/movers"),
+            (f"AI分析 {code}", f"/ai {code}"),
+        ))]
+    except Exception as e:
+        logger.error("[research] %s", e)
+        return [_text(f"❌ 研究清單失敗：{e}")]
 
 
 # ── 回測功能 ─────────────────────────────────────────────────────────────────
