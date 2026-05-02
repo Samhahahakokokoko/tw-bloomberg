@@ -158,7 +158,24 @@ async def _handle_postback(data: str, uid: str) -> list:
         strategy = params.get("strategy", "macd")
         return await _cmd_apply_rec(code, strategy, uid)
 
-    return [_text("未知操作", qr_items(("💼 庫存", "/portfolio")))]
+    if act == "screener_menu":
+        return [_flex_screen_menu()]
+    if act == "more_menu":
+        return [_flex_more_menu()]
+    if act == "screener":
+        stype = params.get("type", "all")
+        return await _cmd_report(stype, uid)
+    if act == "more":
+        sub = params.get("sub", "")
+        if sub == "backtest": return await _cmd_rec_dispatch(uid)
+        if sub == "risk":     return await _cmd_var(uid)
+        if sub == "odd":
+            return [_text("零股計算\n\n格式：/odd 預算 代碼\n例：/odd 5000 2330",
+                          qr_items(("示範5000", "/odd 5000 2330")))]
+        if sub == "ranking":  return await _cmd_accuracy()
+        return [_text("❌ 未知子功能")]
+
+    return [_text("未知操作", qr_items(("💼 庫存", "/p")))]
 
 
 # ── 自然語言關鍵字對照表 ──────────────────────────────────────────────────────
@@ -239,6 +256,9 @@ async def _handle_text(text: str, uid: str) -> list:
             return await _cmd_ai_stock(arg)
         return [await _cmd_ai_ask(" ".join(parts[1:]), uid)]
     if cmd in ("/news", "/news_guide"):         return [_news_guide()]
+    if cmd == "/n":                             return await _cmd_news_feed(uid)
+    if cmd == "/p":                             return await _cmd_portfolio(uid)
+    if cmd == "/r":                             return [_flex_screen_menu()]
     if cmd == "/ai_guide":                      return [_ai_guide()]
     if cmd == "/help":                          return [_text(_help_text(), _home_qr())]
     if cmd == "/screener":                      return await _cmd_screener(parts[1] if len(parts) > 1 else "top")
@@ -1120,9 +1140,22 @@ def _news_guide() -> TextMessage:
         "📰 市場新聞\n\n"
         "爬蟲每 30 分鐘自動抓取財經新聞\n"
         "Claude AI 自動判斷情緒\n\n"
-        "完整版請前往 Web 界面",
-        qr_items(("🤖 AI簡評", "/ai 今日台股氣氛"), ("📊 大盤", "/market"))
+        "輸入 /n 查看最新新聞",
+        qr_items(("📰 最新新聞", "/n"), ("🤖 AI簡評", "/ai 今日台股氣氛"), ("📊 大盤", "/market"))
     )
+
+
+async def _cmd_news_feed(uid: str) -> list:
+    """/n — 取得最新財經新聞"""
+    try:
+        from scraper.news_scraper import get_recent_news, format_news_for_line
+        news = await get_recent_news(limit=6)
+        msg  = format_news_for_line(news)
+    except Exception:
+        msg = "📰 今日暫無新聞"
+    return [_text(msg, qr_items(
+        ("🔄 更新", "/n"), ("🤖 AI簡評", "/ai 今日台股氣氛"), ("📊 大盤", "/market"),
+    ))]
 
 
 def _ai_guide() -> TextMessage:
@@ -1143,8 +1176,8 @@ def _ai_guide() -> TextMessage:
 
 def _home_qr() -> dict:
     return qr_items(
-        ("📊 大盤", "/market"), ("💼 庫存", "/portfolio"),
-        ("🤖 AI",  "/ai_guide"), ("📋 推薦", "/rec"),
+        ("📰 新聞", "/n"), ("💼 庫存", "/p"),
+        ("📊 選股", "/r"), ("🤖 AI",  "/ai_guide"),
     )
 
 
@@ -1152,6 +1185,11 @@ def _help_text() -> str:
     return (
         "📋 指令說明\n"
         "─────────────\n"
+        "快速指令（4個）：\n"
+        "/n          今日財經新聞\n"
+        "/p          我的庫存\n"
+        "/r          今日選股選單\n"
+        "/ai [問題]  AI分析\n\n"
         "輸入 4 碼        即時報價\n"
         "「庫存」/「大盤」 口語查詢\n"
         "/portfolio       我的庫存\n"
@@ -1380,6 +1418,48 @@ def _flex_screen_menu() -> FlexMessage:
         },
     }
     return FlexMessage(alt_text="選股系統選單", contents=bubble)
+
+
+def _flex_more_menu() -> FlexMessage:
+    """更多功能子選單（⚙️ 更多功能 Rich Menu 按鈕觸發）"""
+    def _pbtn(label: str, data: str, color: str = "#1A3A8F") -> dict:
+        return {
+            "type": "button", "style": "primary", "color": color,
+            "height": "sm", "margin": "xs",
+            "action": {"type": "postback", "label": label, "data": data},
+        }
+    bubble = {
+        "type": "bubble", "size": "kilo",
+        "header": {
+            "type": "box", "layout": "vertical", "paddingAll": "12px",
+            "backgroundColor": "#0D1B2A",
+            "contents": [
+                {"type": "text", "text": "⚙️ 更多功能", "color": "#FFFFFF",
+                 "weight": "bold", "size": "lg"},
+                {"type": "text", "text": "選擇功能", "color": "#AAAAAA", "size": "sm"},
+            ],
+        },
+        "body": {
+            "type": "box", "layout": "vertical", "spacing": "xs", "paddingAll": "10px",
+            "contents": [
+                {
+                    "type": "box", "layout": "horizontal", "spacing": "xs",
+                    "contents": [
+                        _pbtn("📈 回測",     "act=more&sub=backtest", "#C00020"),
+                        _pbtn("🛡 風控",     "act=more&sub=risk",     "#0057B8"),
+                    ],
+                },
+                {
+                    "type": "box", "layout": "horizontal", "spacing": "xs",
+                    "contents": [
+                        _pbtn("🔢 零股計算", "act=more&sub=odd",     "#007A45"),
+                        _pbtn("🏆 績效排行", "act=more&sub=ranking", "#6A0DAD"),
+                    ],
+                },
+            ],
+        },
+    }
+    return FlexMessage(alt_text="更多功能選單", contents=bubble)
 
 
 async def _cmd_report(screen_type: str, uid: str, sector: str = "") -> list:

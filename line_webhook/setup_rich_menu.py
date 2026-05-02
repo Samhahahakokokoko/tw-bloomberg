@@ -15,38 +15,39 @@ IMAGE_PATH = os.path.join(os.path.dirname(__file__), "..", "data", "rich_menu.pn
 RICH_MENU_DEF = {
     "size": {"width": 2500, "height": 1686},
     "selected": True,
-    "name": "TW Bloomberg 主選單",
+    "name": "TW Bloomberg 主選單 v3",
     "chatBarText": "📊 開啟操作選單",
     "areas": [
-        # Row 0 ─ 大盤行情 (左上)
+        # Row 0, Col 0 ─ 今日選股
         {
-            "bounds": {"x": 0, "y": 0, "width": 1250, "height": 562},
-            "action": {"type": "message", "text": "/market"},
+            "bounds": {"x": 0, "y": 0, "width": 833, "height": 843},
+            "action": {"type": "message", "text": "/r"},
         },
-        # Row 0 ─ 我的庫存 (右上)
+        # Row 0, Col 1 ─ 我的庫存
         {
-            "bounds": {"x": 1250, "y": 0, "width": 1250, "height": 562},
-            "action": {"type": "message", "text": "/portfolio"},
+            "bounds": {"x": 833, "y": 0, "width": 833, "height": 843},
+            "action": {"type": "message", "text": "/p"},
         },
-        # Row 1 ─ 設定警報 (左中)
+        # Row 0, Col 2 ─ 警報設定
         {
-            "bounds": {"x": 0, "y": 562, "width": 1250, "height": 562},
+            "bounds": {"x": 1666, "y": 0, "width": 834, "height": 843},
             "action": {"type": "message", "text": "/alert_guide"},
         },
-        # Row 1 ─ 市場新聞 (右中)
+        # Row 1, Col 0 ─ 市場新聞
         {
-            "bounds": {"x": 1250, "y": 562, "width": 1250, "height": 562},
-            "action": {"type": "message", "text": "/news_guide"},
+            "bounds": {"x": 0, "y": 843, "width": 833, "height": 843},
+            "action": {"type": "message", "text": "/n"},
         },
-        # Row 2 ─ AI 分析 (左下)
+        # Row 1, Col 1 ─ AI 分析
         {
-            "bounds": {"x": 0, "y": 1124, "width": 1250, "height": 562},
+            "bounds": {"x": 833, "y": 843, "width": 833, "height": 843},
             "action": {"type": "message", "text": "/ai_guide"},
         },
-        # Row 2 ─ 更多指令 (右下)
+        # Row 1, Col 2 ─ 更多功能（Postback → 彈出子選單）
         {
-            "bounds": {"x": 1250, "y": 1124, "width": 1250, "height": 562},
-            "action": {"type": "message", "text": "/help"},
+            "bounds": {"x": 1666, "y": 843, "width": 834, "height": 843},
+            "action": {"type": "postback", "data": "act=more_menu",
+                       "displayText": "⚙️ 更多功能"},
         },
     ],
 }
