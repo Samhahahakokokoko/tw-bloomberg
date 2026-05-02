@@ -501,3 +501,30 @@ class FeatureWeight(Base):
     technical_weight   = Column(Float, default=0.30)
     notes              = Column(String(500))
     updated_at         = Column(DateTime, default=datetime.utcnow)
+
+
+class StrategySetting(Base):
+    """用戶策略設定：每個用戶可獨立開關策略 + 調整權重"""
+    __tablename__ = "strategy_settings"
+    __table_args__ = (UniqueConstraint("user_id", "strategy"),)
+
+    id         = Column(Integer, primary_key=True, index=True)
+    user_id    = Column(String(100), index=True, nullable=False)
+    strategy   = Column(String(30), nullable=False)   # momentum/value/chip/breakout/defensive
+    enabled    = Column(Boolean, default=True)
+    weight     = Column(Float, default=1.0)
+    preset     = Column(String(20), default="balanced")  # conservative/balanced/aggressive
+    updated_at = Column(DateTime, default=datetime.utcnow)
+
+
+class PipelineLog(Base):
+    """新聞 Pipeline 執行日誌 — 每步驟記錄成功/失敗"""
+    __tablename__ = "pipeline_log"
+
+    id         = Column(Integer, primary_key=True, index=True)
+    run_id     = Column(String(50), index=True)
+    step       = Column(String(30))    # scrape/summarize/sentiment/image/push/done
+    status     = Column(String(10))    # ok/fail/skip
+    detail     = Column(Text)
+    articles   = Column(Integer, default=0)
+    created_at = Column(DateTime, default=datetime.utcnow)

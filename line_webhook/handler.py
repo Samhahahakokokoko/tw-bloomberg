@@ -175,7 +175,63 @@ async def _handle_postback(data: str, uid: str) -> list:
         if sub == "ranking":  return await _cmd_accuracy()
         return [_text("❌ 未知子功能")]
 
-    return [_text("未知操作", qr_items(("💼 庫存", "/p")))]
+    # ── 新增 postback 動作 ───────────────────────────────────────────────────
+    if act == "portfolio_ai":
+        return [await _cmd_ai_portfolio(uid)]
+
+    if act == "alert_set":
+        return [_alert_guide()]
+
+    if act in ("strategy_momentum", "strategy_value",
+               "strategy_chip", "strategy_breakout"):
+        name = act.replace("strategy_", "")
+        return await _cmd_strategy_perf(name, uid)
+
+    if act == "strategy_toggle":
+        name = params.get("name", "")
+        return await _cmd_strategy_toggle(name, uid)
+
+    if act == "strategy_preset":
+        preset = params.get("preset", "balanced")
+        return await _cmd_strategy_preset(preset, uid)
+
+    if act == "news_refresh":
+        return await _cmd_news_feed(uid)
+
+    if act == "recommend_detail":
+        if code:
+            return await _cmd_ai_stock(code)
+        return [_text("請指定股票代碼", qr_items(("📊 選股", "/r")))]
+
+    if act == "menu_market":
+        return [_text(
+            "📊 市場資訊",
+            qr_items(
+                ("大盤指數", "/market"),
+                ("今日早報", "/morning"),
+                ("外資動向", "/inst 2330"),
+                ("市場情緒", "/ai 今日台股市場情緒如何"),
+            )
+        )]
+
+    if act == "menu_ai_strategy":
+        return [_text(
+            "🤖 AI 策略選單",
+            qr_items(
+                ("今日推薦", "/r"),
+                ("動能策略", "/report momentum"),
+                ("存股策略", "/report value"),
+                ("AI族群",   "/report ai"),
+                ("籌碼策略", "/report chip"),
+            )
+        )]
+
+    # ── 未定義動作 → 功能維護中 ──────────────────────────────────────────────
+    logger.info("[postback] 未定義 act=%s uid=%s", act, uid[:8])
+    return [_text(
+        "🔧 功能維護中\n\n此功能正在優化，敬請期待！",
+        qr_items(("💼 庫存", "/p"), ("📊 選股", "/r"), ("📰 新聞", "/n")),
+    )]
 
 
 # ── 自然語言關鍵字對照表 ──────────────────────────────────────────────────────
@@ -259,6 +315,7 @@ async def _handle_text(text: str, uid: str) -> list:
     if cmd == "/n":                             return await _cmd_news_feed(uid)
     if cmd == "/p":                             return await _cmd_portfolio(uid)
     if cmd == "/r":                             return [_flex_screen_menu()]
+    if cmd == "/strategy":                      return await _cmd_strategy_manage(uid)
     if cmd == "/ai_guide":                      return [_ai_guide()]
     if cmd == "/help":                          return [_text(_help_text(), _home_qr())]
     if cmd == "/screener":                      return await _cmd_screener(parts[1] if len(parts) > 1 else "top")
@@ -1460,6 +1517,74 @@ def _flex_more_menu() -> FlexMessage:
         },
     }
     return FlexMessage(alt_text="更多功能選單", contents=bubble)
+
+
+# ── 策略管理指令 ─────────────────────────────────────────────────────────────
+
+async def _cmd_strategy_manage(uid: str) -> list:
+    """/strategy — 顯示策略管理選單"""
+    try:
+        from backend.services.strategy_manager import get_settings, build_strategy_menu_flex
+        from backend.models.database import AsyncSessionLocal
+        async with AsyncSessionLocal() as db:
+            settings_map = await get_settings(db, uid)
+        card = build_strategy_menu_flex(settings_map)
+        return [_flex("策略管理", card,
+                      qr_items(("💼 庫存", "/p"), ("📊 選股", "/r")))]
+    except Exception as e:
+        logger.warning("[strategy] manage 失敗: %s", e)
+        return [_text("策略管理暫時無法使用",
+                      qr_items(("💼 庫存", "/p")))]
+
+
+async def _cmd_strategy_perf(name: str, uid: str) -> list:
+    """顯示單一策略績效 Bubble"""
+    try:
+        from backend.services.strategy_manager import (
+            get_strategy_performance, build_strategy_perf_flex, get_settings
+        )
+        from backend.models.database import AsyncSessionLocal
+        async with AsyncSessionLocal() as db:
+            perf     = await get_strategy_performance(db, name, days=30)
+            settings = await get_settings(db, uid)
+        card = build_strategy_perf_flex(perf)
+        return [_flex(f"{name} 績效", card,
+                      qr_items(("策略管理", "/strategy"),
+                               ("📊 選股", "/r")))]
+    except Exception as e:
+        logger.warning("[strategy] perf 失敗: %s", e)
+        return [_text("績效暫時無法取得", qr_items(("策略管理", "/strategy")))]
+
+
+async def _cmd_strategy_toggle(name: str, uid: str) -> list:
+    """postback strategy_toggle — 切換策略開關"""
+    if not name:
+        return [_text("請指定策略名稱")]
+    try:
+        from backend.services.strategy_manager import toggle_strategy
+        from backend.models.database import AsyncSessionLocal
+        async with AsyncSessionLocal() as db:
+            _, msg = await toggle_strategy(db, uid, name)
+        return [_text(msg, qr_items(("策略管理", "/strategy")))]
+    except Exception as e:
+        logger.warning("[strategy] toggle 失敗: %s", e)
+        return [_text("切換失敗，請稍後再試")]
+
+
+async def _cmd_strategy_preset(preset: str, uid: str) -> list:
+    """postback strategy_preset — 套用預設組合"""
+    try:
+        from backend.services.strategy_manager import apply_preset, PRESET_LABELS
+        from backend.models.database import AsyncSessionLocal
+        async with AsyncSessionLocal() as db:
+            label = await apply_preset(db, uid, preset)
+        return [_text(
+            f"✅ 已套用 {label} 策略組合",
+            qr_items(("查看設定", "/strategy"), ("📊 選股", "/r")),
+        )]
+    except Exception as e:
+        logger.warning("[strategy] preset 失敗: %s", e)
+        return [_text("設定失敗，請稍後再試")]
 
 
 async def _cmd_report(screen_type: str, uid: str, sector: str = "") -> list:

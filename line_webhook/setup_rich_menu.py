@@ -1,5 +1,8 @@
 """
-Rich Menu 建立腳本 — 執行一次即可
+Rich Menu 建立腳本 — 5格非對稱佈局 v4
+上排 2 格（各 1250px）：📊市場  ⭐自選股
+下排 3 格（833/834/833）：🤖AI策略  📈選股  ⚙️工具
+
 用法：python -m line_webhook.setup_rich_menu
 """
 import sys, os, asyncio
@@ -15,39 +18,47 @@ IMAGE_PATH = os.path.join(os.path.dirname(__file__), "..", "data", "rich_menu.pn
 RICH_MENU_DEF = {
     "size": {"width": 2500, "height": 1686},
     "selected": True,
-    "name": "TW Bloomberg 主選單 v3",
+    "name": "TW Bloomberg 主選單 v4",
     "chatBarText": "📊 開啟操作選單",
     "areas": [
-        # Row 0, Col 0 ─ 今日選股
+        # ── 上排（各 1250px 寬）──────────────────────────────────────
+        # 📊 市場
         {
-            "bounds": {"x": 0, "y": 0, "width": 833, "height": 843},
-            "action": {"type": "message", "text": "/r"},
+            "bounds": {"x": 0, "y": 0, "width": 1250, "height": 843},
+            "action": {
+                "type": "postback",
+                "data": "act=menu_market",
+                "displayText": "📊 市場資訊",
+            },
         },
-        # Row 0, Col 1 ─ 我的庫存
+        # ⭐ 自選股
         {
-            "bounds": {"x": 833, "y": 0, "width": 833, "height": 843},
+            "bounds": {"x": 1250, "y": 0, "width": 1250, "height": 843},
             "action": {"type": "message", "text": "/p"},
         },
-        # Row 0, Col 2 ─ 警報設定
-        {
-            "bounds": {"x": 1666, "y": 0, "width": 834, "height": 843},
-            "action": {"type": "message", "text": "/alert_guide"},
-        },
-        # Row 1, Col 0 ─ 市場新聞
+        # ── 下排（833 / 834 / 833）────────────────────────────────────
+        # 🤖 AI策略
         {
             "bounds": {"x": 0, "y": 843, "width": 833, "height": 843},
-            "action": {"type": "message", "text": "/n"},
+            "action": {
+                "type": "postback",
+                "data": "act=menu_ai_strategy",
+                "displayText": "🤖 AI策略選單",
+            },
         },
-        # Row 1, Col 1 ─ AI 分析
+        # 📈 選股
         {
-            "bounds": {"x": 833, "y": 843, "width": 833, "height": 843},
-            "action": {"type": "message", "text": "/ai_guide"},
+            "bounds": {"x": 833, "y": 843, "width": 834, "height": 843},
+            "action": {"type": "message", "text": "/r"},
         },
-        # Row 1, Col 2 ─ 更多功能（Postback → 彈出子選單）
+        # ⚙️ 工具
         {
-            "bounds": {"x": 1666, "y": 843, "width": 834, "height": 843},
-            "action": {"type": "postback", "data": "act=more_menu",
-                       "displayText": "⚙️ 更多功能"},
+            "bounds": {"x": 1667, "y": 843, "width": 833, "height": 843},
+            "action": {
+                "type": "postback",
+                "data": "act=more_menu",
+                "displayText": "⚙️ 工具選單",
+            },
         },
     ],
 }
@@ -61,17 +72,17 @@ async def setup():
 
     headers = {"Authorization": f"Bearer {token}"}
 
-    # 1. 先刪除舊的 rich menu
+    # 1. 刪除舊的 rich menu
     async with httpx.AsyncClient(timeout=30) as client:
         r = await client.get("https://api.line.me/v2/bot/richmenu/list", headers=headers)
-        existing = r.json().get("richmenus", [])
-        for menu in existing:
+        for menu in r.json().get("richmenus", []):
             mid = menu["richMenuId"]
-            await client.delete(f"https://api.line.me/v2/bot/richmenu/{mid}", headers=headers)
+            await client.delete(f"https://api.line.me/v2/bot/richmenu/{mid}",
+                                 headers=headers)
             logger.info(f"Deleted old rich menu: {mid}")
 
     # 2. 生成圖片
-    logger.info("Generating rich menu image...")
+    logger.info("Generating rich menu image (5-button layout)...")
     img_path = create_rich_menu_image(IMAGE_PATH)
 
     # 3. 建立 rich menu
@@ -97,7 +108,7 @@ async def setup():
         r.raise_for_status()
         logger.info(f"Uploaded rich menu image ({len(img_data)//1024} KB)")
 
-    # 5. 設為預設選單
+    # 5. 設為預設
     async with httpx.AsyncClient(timeout=30) as client:
         r = await client.post(
             f"https://api.line.me/v2/bot/user/all/richmenu/{rich_menu_id}",
@@ -106,8 +117,9 @@ async def setup():
         r.raise_for_status()
         logger.success(f"✅ Rich menu set as default: {rich_menu_id}")
 
-    print(f"\n✅ Rich Menu 建立完成！ID: {rich_menu_id}")
-    print("所有 LINE Bot 使用者底部將出現六格選單。")
+    print(f"\n✅ Rich Menu 5格佈局建立完成！ID: {rich_menu_id}")
+    print("上排：📊市場 / ⭐自選股")
+    print("下排：🤖AI策略 / 📈選股 / ⚙️工具")
 
 
 if __name__ == "__main__":
