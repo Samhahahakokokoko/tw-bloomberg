@@ -106,12 +106,13 @@ class CallbackRouter:
         return self._error_count
 
 
-def _make_maintenance_msg(detail: str = "") -> dict:
-    """回傳功能維護中 TextMessage dict（供 LINE API 直接使用）"""
+def _make_maintenance_msg(detail: str = ""):
+    """回傳功能維護中 TextMessage（LINE SDK 物件）"""
+    from linebot.v3.messaging import TextMessage
     text = _MAINTENANCE_MSG
     if detail:
         text += f"\n\n錯誤代碼：{detail[:80]}"
-    return {"type": "text", "text": text}
+    return TextMessage(text=text)
 
 
 # ── 全域 singleton ────────────────────────────────────────────────────────────
@@ -172,7 +173,8 @@ def _register_default_routes(router: CallbackRouter) -> None:
         if sub == "risk":     return await _cmd_risk_report(uid)
         if sub == "ranking":  return await _cmd_accuracy()
         if sub == "odd":
-            return [{"type": "text", "text": "零股計算\n\n格式：/odd 預算 代碼\n例：/odd 5000 2330"}]
+            from linebot.v3.messaging import TextMessage
+            return [TextMessage(text="零股計算\n\n格式：/odd 預算 代碼\n例：/odd 5000 2330")]
         return [_make_maintenance_msg(f"unknown sub={sub}")]
 
     async def _strategy_toggle(params, uid):

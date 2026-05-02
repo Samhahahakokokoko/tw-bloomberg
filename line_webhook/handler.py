@@ -100,6 +100,9 @@ async def _handle_postback(data: str, uid: str) -> list:
     hid  = int(params.get("id", 0))
     code = params.get("code", "")
 
+    # ── debug log：每個 postback 都記錄 ──────────────────────────────────────
+    logger.info("[postback] uid=%s act=%r data=%r", uid[:8], act, data[:100])
+
     if act == "add":
         delta = int(params.get("delta", 100))
         async with AsyncSessionLocal() as db:
@@ -1931,9 +1934,10 @@ async def _backtest_bg(strategy: str, label: str, uid: str) -> None:
         # ── 格式化文字 ────────────────────────────────────────────────
         ret_sign  = "+" if report.total_return >= 0 else ""
         dd_pct    = f"{report.max_drawdown*100:.1f}"
+        sep = "─" * 22
         text = (
             f"📈 {label}回測結果\n"
-            f"{"─"*22}\n"
+            f"{sep}\n"
             f"期間：{d0} ~ {d1}\n"
             f"總報酬：{ret_sign}{report.total_return*100:.1f}%\n"
             f"勝率：{report.win_rate*100:.0f}%\n"
