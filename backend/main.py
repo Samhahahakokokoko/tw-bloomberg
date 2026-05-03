@@ -1,6 +1,6 @@
 import sys, os, traceback, asyncio
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -102,6 +102,30 @@ async def health_detail():
 async def global_exception_handler(request: Request, exc: Exception):
     logger.error(f"Unhandled: {request.url} → {exc}\n{traceback.format_exc()}")
     return JSONResponse(status_code=500, content={"error": str(exc)})
+
+
+# ── WebSocket 即時市場資料推送 ───────────────────────────────────────────────
+_ws_clients: list[WebSocket] = []
+
+@app.websocket("/ws/market")
+async def ws_market(ws: WebSocket):
+    await ws.accept()
+    _ws_clients.append(ws)
+    try:
+        while True:
+            try:
+                from .services.twse_service import fetch_market_overview
+                ov = await fetch_market_overview()
+                if ov:
+                    await ws.send_json({"type": "market", "data": ov})
+            except Exception:
+                pass
+            await asyncio.sleep(60)
+    except WebSocketDisconnect:
+        _ws_clients.remove(ws)
+    except Exception:
+        if ws in _ws_clients:
+            _ws_clients.remove(ws)
 
 
 # ── LINE Bot webhook（失敗不影響主 app）──────────────────────────────────────

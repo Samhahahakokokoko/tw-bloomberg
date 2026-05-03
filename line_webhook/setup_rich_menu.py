@@ -21,8 +21,8 @@ CH = 843   # 每格高（1686 / 2）
 RICH_MENU_DEF = {
     "size": {"width": 2500, "height": 1686},
     "selected": True,
-    "name": "TW Bloomberg 主選單 v5",
-    "chatBarText": "📊 開啟操作選單",
+    "name": "TW Bloomberg 主選單 v6",
+    "chatBarText": "📊 AI交易平台 — 點此開啟",
     "areas": [
         # ── 上排（各 833px 寬）────────────────────────────────────────
         # 📊 大盤行情

@@ -545,6 +545,18 @@ async def _handle_text(text: str, uid: str) -> list:
             return await _cmd_strategy_subscribe(parts[2], uid)
         return await _cmd_strategy_list()
     if cmd == "/agent":                 return await _cmd_agent(uid)
+    if cmd == "/order":                 return await _cmd_order_guide(uid)
+    if cmd == "/auto":
+        sub = parts[1].lower() if len(parts) > 1 else "status"
+        return await _cmd_auto_trade(sub, parts[2] if len(parts) > 2 else "", uid)
+    if cmd == "/rebalance":             return await _cmd_rebalance(uid)
+    if cmd == "/plan":                  return await _cmd_plan_info(uid)
+    if cmd == "/invite":                return await _cmd_invite(uid)
+    if cmd == "/feedback" and len(parts) >= 2:
+        return await _cmd_feedback(" ".join(parts[1:]), uid, "feedback")
+    if cmd == "/bug" and len(parts) >= 2:
+        return await _cmd_feedback(" ".join(parts[1:]), uid, "bug")
+    if cmd == "/system":                return await _cmd_system_health(uid)
 
     # ── 機構級量化流程 ────────────────────────────────────────────────────
     if cmd == "/pipeline":
@@ -3350,6 +3362,136 @@ async def _agent_bg(uid: str) -> None:
             )
     except Exception as e:
         logger.error(f"[agent_bg] {e}")
+
+
+async def _cmd_order_guide(uid: str) -> list:
+    """/order — 下單說明"""
+    return [_text(
+        "⚡ Fugle 下單說明\n\n"
+        "下單格式：/buy 代碼 股數 價格\n"
+        "例：/buy 2330 1000 945（買1張台積電限價945）\n\n"
+        "賣出：/sell 2330 1000\n\n"
+        "⚙️ 自動交易設定：/auto on/off\n"
+        "帳戶餘額：/order balance",
+        _qr_postback(
+            ("💼 看庫存", "act=portfolio_view"),
+            ("📊 選股", "act=screener_qr"),
+        )
+    )]
+
+
+async def _cmd_auto_trade(sub: str, val: str, uid: str) -> list:
+    """/auto on/off/threshold — 自動交易設定"""
+    try:
+        from backend.models.database import AsyncSessionLocal
+        from backend.models.models import UserSubscription
+        from sqlalchemy import select
+        async with AsyncSessionLocal() as db:
+            r   = await db.execute(select(UserSubscription).where(UserSubscription.user_id == uid))
+            rec = r.scalar_one_or_none()
+            if rec is None:
+                from backend.models.models import UserSubscription as US
+                rec = US(user_id=uid)
+                db.add(rec)
+
+            if sub == "on":
+                rec.auto_trade = True
+                await db.commit()
+                return [_text("✅ 自動交易已開啟\n\n信心指數 > 95 時自動執行\n/auto off 可隨時關閉")]
+            elif sub == "off":
+                rec.auto_trade = False
+                await db.commit()
+                return [_text("✅ 自動交易已關閉\n\n所有下單均需手動確認")]
+            elif sub == "threshold":
+                try:
+                    thresh = float(val)
+                    rec.auto_threshold = thresh
+                    await db.commit()
+                    return [_text(f"✅ 自動交易門檻設為 {thresh:.2f}\n信心 > {thresh*100:.0f}% 才自動執行")]
+                except ValueError:
+                    return [_text("❌ 格式錯誤，例：/auto threshold 0.90")]
+            else:
+                status = "開啟" if rec and rec.auto_trade else "關閉"
+                thresh = rec.auto_threshold if rec else 0.95
+                return [_text(
+                    f"⚙️ 自動交易設定\n\n"
+                    f"狀態：{status}\n"
+                    f"信心門檻：{thresh:.2f}\n\n"
+                    f"/auto on → 開啟\n"
+                    f"/auto off → 關閉\n"
+                    f"/auto threshold 0.90 → 設定門檻"
+                )]
+    except Exception as e:
+        return [_text(f"❌ 設定失敗：{e}")]
+
+
+async def _cmd_rebalance(uid: str) -> list:
+    """/rebalance — 投組再平衡建議"""
+    try:
+        from backend.services.position_rebalancer import calculate_rebalance
+        report = await calculate_rebalance(uid)
+        text   = report.to_line_text()
+        return [TextMessage(text=text, quick_reply=_make_qr(report.to_line_qr()))]
+    except Exception as e:
+        return [_text(f"❌ 再平衡計算失敗：{e}")]
+
+
+async def _cmd_plan_info(uid: str) -> list:
+    """/plan — 查看訂閱方案"""
+    try:
+        from backend.services.subscription_service import get_user_plan, PLANS, format_plan_info
+        info = await get_user_plan(uid)
+        plan = info.get("plan", "free")
+        text = format_plan_info(plan) + f"\n\n目前方案：{PLANS[plan]['name']}"
+        if info.get("expires_at"):
+            text += f"\n到期：{info['expires_at'].strftime('%Y/%m/%d')}"
+        return [_text(text, qr_items(
+            ("標準版 $299", "/plan standard"),
+            ("專業版 $999", "/plan pro"),
+            ("推薦好友", "/invite"),
+        ))]
+    except Exception as e:
+        return [_text(f"❌ 方案查詢失敗：{e}")]
+
+
+async def _cmd_invite(uid: str) -> list:
+    """/invite — 取得推薦碼"""
+    try:
+        from backend.services.subscription_service import get_or_create_referral
+        code = await get_or_create_referral(uid)
+        return [_text(
+            f"🎁 你的推薦碼：{code}\n\n"
+            f"分享給朋友，雙方各獲得 1 個月免費標準版\n\n"
+            f"朋友加入後輸入：/referral {code}",
+            qr_items(("查看方案", "/plan"))
+        )]
+    except Exception as e:
+        return [_text(f"❌ 推薦碼取得失敗：{e}")]
+
+
+async def _cmd_feedback(content: str, uid: str, kind: str = "feedback") -> list:
+    """/feedback /bug — 送出回饋"""
+    try:
+        from backend.services.subscription_service import submit_feedback
+        await submit_feedback(uid, content, kind)
+        icons = {"feedback": "💬", "bug": "🐛"}
+        return [_text(
+            f"{icons.get(kind,'📩')} 感謝你的{'回饋' if kind == 'feedback' else '問題回報'}！\n\n"
+            "已轉送給管理員，我們會盡快處理。"
+        )]
+    except Exception as e:
+        return [_text(f"❌ 送出失敗：{e}")]
+
+
+async def _cmd_system_health(uid: str) -> list:
+    """/system — 系統健康狀態"""
+    try:
+        from backend.services.system_monitor import check_all_modules, format_health_dashboard
+        statuses = await check_all_modules()
+        text     = format_health_dashboard(statuses)
+        return [_text(text, qr_items(("🏠 主選單", "/help")))]
+    except Exception as e:
+        return [_text(f"❌ 系統狀態查詢失敗：{e}")]
 
 
 async def _cmd_heatmap(uid: str) -> list:

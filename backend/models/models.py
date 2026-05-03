@@ -1,5 +1,5 @@
 from datetime import datetime
-from sqlalchemy import Column, Integer, String, Float, DateTime, Text, Boolean, UniqueConstraint
+from sqlalchemy import Column, Integer, String, Float, DateTime, Text, Boolean, UniqueConstraint, Date
 from .database import Base
 
 
@@ -746,4 +746,69 @@ class AgentDecisionLog(Base):
     health_score = Column(Integer, default=75)
     market_state = Column(String(20), default="unknown")
     main_risk    = Column(Text, default="")
+    created_at   = Column(DateTime, default=datetime.utcnow)
+
+
+class UserSubscription(Base):
+    """用戶訂閱方案"""
+    __tablename__ = "user_subscriptions"
+    id           = Column(Integer, primary_key=True, index=True)
+    user_id      = Column(String(100), unique=True, nullable=False, index=True)
+    plan         = Column(String(20), default="free")   # free / standard / pro
+    expires_at   = Column(DateTime, nullable=True)
+    auto_trade   = Column(Boolean, default=False)
+    auto_threshold = Column(Float, default=0.95)
+    created_at   = Column(DateTime, default=datetime.utcnow)
+    updated_at   = Column(DateTime, default=datetime.utcnow)
+
+
+class ReferralCode(Base):
+    """用戶推薦碼"""
+    __tablename__ = "referral_codes"
+    id           = Column(Integer, primary_key=True, index=True)
+    user_id      = Column(String(100), nullable=False, index=True)
+    code         = Column(String(20), unique=True, nullable=False, index=True)
+    referrals    = Column(Integer, default=0)
+    bonus_months = Column(Integer, default=0)
+    created_at   = Column(DateTime, default=datetime.utcnow)
+
+
+class TradingOrder(Base):
+    """Fugle 下單記錄"""
+    __tablename__ = "trading_orders"
+    id           = Column(Integer, primary_key=True, index=True)
+    user_id      = Column(String(100), nullable=False, index=True)
+    stock_id     = Column(String(10), nullable=False)
+    stock_name   = Column(String(50), default="")
+    action       = Column(String(10), nullable=False)   # buy / sell
+    order_type   = Column(String(10), default="limit")  # limit / market
+    price        = Column(Float, nullable=True)
+    shares       = Column(Integer, nullable=False)
+    status       = Column(String(20), default="pending")  # pending/confirmed/executed/cancelled
+    fugle_order_id = Column(String(50), nullable=True)
+    confidence   = Column(Float, default=0.0)
+    auto_executed = Column(Boolean, default=False)
+    created_at   = Column(DateTime, default=datetime.utcnow)
+
+
+class SystemHealthLog(Base):
+    """系統健康狀態記錄"""
+    __tablename__ = "system_health_log"
+    id           = Column(Integer, primary_key=True, index=True)
+    module       = Column(String(50), nullable=False, index=True)
+    status       = Column(String(20), default="ok")    # ok / warning / error
+    message      = Column(Text, default="")
+    last_run     = Column(DateTime, nullable=True)
+    error_count  = Column(Integer, default=0)
+    created_at   = Column(DateTime, default=datetime.utcnow)
+
+
+class UsageLog(Base):
+    """用戶使用行為記錄"""
+    __tablename__ = "usage_log"
+    id           = Column(Integer, primary_key=True, index=True)
+    user_id      = Column(String(100), nullable=False, index=True)
+    action       = Column(String(50), nullable=False, index=True)
+    params       = Column(String(200), default="")
+    response_ms  = Column(Integer, default=0)
     created_at   = Column(DateTime, default=datetime.utcnow)
