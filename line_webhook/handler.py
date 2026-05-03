@@ -7,7 +7,7 @@ from fastapi import APIRouter, Request, HTTPException
 from linebot.v3.messaging import (
     AsyncApiClient, AsyncMessagingApi, Configuration,
     ReplyMessageRequest, TextMessage, FlexMessage,
-    QuickReply, QuickReplyItem, MessageAction,
+    QuickReply, QuickReplyItem, MessageAction, PostbackAction,
 )
 from linebot.v3.webhooks import MessageEvent, TextMessageContent, PostbackEvent
 from linebot.v3.exceptions import InvalidSignatureError
@@ -90,6 +90,16 @@ async def _reply(token: str, messages: list):
             )
     except Exception as e:
         logger.error(f"Reply error: {e}")
+        # Flex 失敗時嘗試純文字 fallback（token 只能用一次，但失敗時未消耗）
+        try:
+            fallback = TextMessage(text="⚠️ 顯示失敗，請重試或輸入 /help")
+            async with AsyncApiClient(configuration) as client:
+                api = AsyncMessagingApi(client)
+                await api.reply_message(
+                    ReplyMessageRequest(reply_token=token, messages=[fallback])
+                )
+        except Exception:
+            pass
 
 
 # ── Postback 處理 ─────────────────────────────────────────────────────────────
@@ -176,8 +186,6 @@ async def _handle_postback_inner(data: str, uid: str) -> list:
 
     if act == "screener_menu":
         return [_flex_screen_menu()]
-    if act == "more_menu":
-        return [_flex_more_menu()]
     if act == "screener":
         stype = params.get("type", "all")
         return await _cmd_report(stype, uid)
@@ -279,9 +287,19 @@ async def _handle_postback_inner(data: str, uid: str) -> list:
             )
         )]
 
-    if act == "more_menu_v2":
-        from line_webhook.flex_messages import flex_more_menu_v2
-        return [_flex("更多功能", flex_more_menu_v2())]
+    if act in ("more_menu_v2", "more_menu"):
+        return [_text(
+            "⚙️ 更多功能\n\n請選擇：",
+            _qr_postback(
+                ("📈 策略回測",  "act=more&sub=backtest"),
+                ("🛡️ 風控分析",  "act=more&sub=risk"),
+                ("🏆 績效排行",  "act=more&sub=ranking"),
+                ("🪙 零股計算",  "act=more&sub=odd"),
+                ("🔥 族群熱度",  "sector"),
+                ("📋 研究清單",  "act=recommend_detail&code=2330"),
+                ("🎯 今日決策",  "daily"),
+            ),
+        )]
 
     if act == "add_holding":
         return [_text(
@@ -1446,15 +1464,30 @@ def _help_text() -> str:
 # ── 訊息建構輔助 ──────────────────────────────────────────────────────────────
 
 def _make_qr(qr_dict: dict | None) -> QuickReply | None:
+    """支援 message / postback 兩種 action 類型"""
     if not qr_dict:
         return None
-    return QuickReply(items=[
-        QuickReplyItem(action=MessageAction(
-            label=item["action"]["label"],
-            text=item["action"]["text"],
-        ))
-        for item in qr_dict.get("items", [])
-    ])
+    items = []
+    for item in qr_dict.get("items", []):
+        a = item.get("action", {})
+        if a.get("type") == "postback":
+            action = PostbackAction(
+                label=a["label"],
+                data=a["data"],
+                display_text=a.get("displayText", a["label"]),
+            )
+        else:
+            action = MessageAction(label=a["label"], text=a.get("text", a["label"]))
+        items.append(QuickReplyItem(action=action))
+    return QuickReply(items=items)
+
+
+def _qr_postback(*items: tuple[str, str]) -> dict:
+    """Build Quick Reply dict with postback actions."""
+    return {"items": [
+        {"type": "action", "action": {"type": "postback", "label": lbl, "data": data}}
+        for lbl, data in items
+    ]}
 
 
 def _text(text: str, quick_reply: dict = None) -> TextMessage:
