@@ -347,6 +347,15 @@ async def _handle_postback_inner(data: str, uid: str) -> list:
     if act in ("news_menu", "news"):
         return await _cmd_news_feed(uid)
 
+    if act == "watchlist" or act == "portfolio_watchlist":
+        return await _cmd_watchlist(uid)
+
+    if act == "rs":
+        return await _cmd_rs(uid)
+
+    if act == "breadth":
+        return await _cmd_breadth(uid)
+
     # ── 未定義動作 → 嘗試 callback_router，否則友善提示 ──────────────────────
     try:
         from line_webhook.callback_router import get_callback_router
@@ -492,6 +501,20 @@ async def _handle_text(text: str, uid: str) -> list:
     if cmd == "/optimize":                      return await _cmd_optimize(uid)
     if cmd == "/var":                           return await _cmd_var(uid)
     if cmd == "/correlation":                   return await _cmd_correlation(uid)
+
+    # ── 新功能指令 ────────────────────────────────────────────────────────
+    if cmd == "/watch":
+        code = parts[1].upper() if len(parts) > 1 else ""
+        return await _cmd_watch_add(code, uid) if code else [_text(
+            "請輸入股票代碼，例：/watch 2330",
+            qr_items(("加入台積電", "/watch 2330"), ("查看清單", "/watchlist"))
+        )]
+    if cmd == "/watchlist":             return await _cmd_watchlist(uid)
+    if cmd == "/unwatch":
+        code = parts[1].upper() if len(parts) > 1 else ""
+        return await _cmd_watch_remove(code, uid) if code else [_text("請輸入要移除的代碼")]
+    if cmd == "/rs":                    return await _cmd_rs(uid)
+    if cmd == "/breadth":               return await _cmd_breadth(uid)
 
     # ── 機構級量化流程 ────────────────────────────────────────────────────
     if cmd == "/pipeline":
@@ -2998,3 +3021,89 @@ async def _cmd_strategy_analyze(code: str) -> list:
         ("💹 零股試算", f"/odd 5000 {code}"),
     )
     return [_text("\n".join(lines), qr)]
+
+
+# ── 新功能 Handler 函數 ────────────────────────────────────────────────────────
+
+async def _cmd_watch_add(code: str, uid: str) -> list:
+    """/watch CODE — 加入自選股"""
+    from backend.services.watchlist_service import add_to_watchlist
+    from backend.services.twse_service import fetch_realtime_quote
+    try:
+        q    = await fetch_realtime_quote(code)
+        name = q.get("name", code) if q else code
+        async with AsyncSessionLocal() as db:
+            item = await add_to_watchlist(db, uid, code, stock_name=name)
+        return [_text(
+            f"✅ 已加入自選股\n{code} {name}\n\n輸入 /watchlist 查看清單",
+            _qr_postback(
+                ("📋 查看清單", "watchlist"),
+                ("🔍 分析", f"act=recommend_detail&code={code}"),
+                ("❌ 移除",  f"/unwatch {code}"),
+            ),
+        )]
+    except Exception as e:
+        logger.error(f"[watch_add] {e}")
+        return [_text(f"❌ 加入失敗：{code}\n{type(e).__name__}: {str(e)[:80]}")]
+
+
+async def _cmd_watch_remove(code: str, uid: str) -> list:
+    """/unwatch CODE — 移除自選股"""
+    from backend.models.models import Watchlist
+    from sqlalchemy import delete
+    try:
+        async with AsyncSessionLocal() as db:
+            await db.execute(
+                delete(Watchlist).where(
+                    Watchlist.user_id == uid,
+                    Watchlist.stock_code == code,
+                )
+            )
+            await db.commit()
+        return [_text(f"🗑️ {code} 已從自選股移除",
+                      qr_items(("📋 查看清單", "/watchlist")))]
+    except Exception as e:
+        return [_text(f"❌ 移除失敗：{e}")]
+
+
+async def _cmd_watchlist(uid: str) -> list:
+    """/watchlist — 顯示自選股清單"""
+    try:
+        from backend.services.watchlist_monitor import scan_user_watchlist, format_watchlist_report, _build_watchlist_qr
+        results = await scan_user_watchlist(uid)
+        text    = format_watchlist_report(uid, results)
+        qr      = _build_watchlist_qr(results)
+        return [TextMessage(text=text, quick_reply=_make_qr(qr))]
+    except Exception as e:
+        logger.error(f"[watchlist] {e}")
+        return [_text("❌ 自選股讀取失敗，請稍後再試",
+                      qr_items(("重試", "/watchlist")))]
+
+
+async def _cmd_rs(uid: str) -> list:
+    """/rs — 今日相對強度排行"""
+    try:
+        from backend.services.rs_engine import get_top20, format_rs_ranking, get_rs_qr
+        records = get_top20()
+        text    = format_rs_ranking(records)
+        qr      = get_rs_qr(records)
+        return [TextMessage(text=text, quick_reply=_make_qr(qr))]
+    except Exception as e:
+        logger.error(f"[rs] {e}")
+        return [_text("❌ RS 排行計算失敗，請稍後再試")]
+
+
+async def _cmd_breadth(uid: str) -> list:
+    """/breadth — 市場廣度快照"""
+    try:
+        from backend.services.market_breadth import calculate_breadth
+        snap = calculate_breadth()
+        text = snap.summary_text()
+        qr = _qr_postback(
+            ("📊 大盤行情", "act=market_card"),
+            ("📈 今日選股", "act=screener_qr"),
+        )
+        return [TextMessage(text=text, quick_reply=_make_qr(qr))]
+    except Exception as e:
+        logger.error(f"[breadth] {e}")
+        return [_text("❌ 廣度計算失敗，請稍後再試")]

@@ -218,6 +218,36 @@ def start_scheduler() -> AsyncIOScheduler:
         id="smart_money", replace_existing=True,
     )
 
+    # ── 新功能排程 ────────────────────────────────────────────────────────────
+
+    # AI Feed 早報 — 08:30（與既有 morning_report 並行，訊息更精簡）
+    scheduler.add_job(
+        _push_ai_feed,
+        CronTrigger(day_of_week="mon-fri", hour=8, minute=31, timezone="Asia/Taipei"),
+        id="ai_feed", replace_existing=True,
+    )
+
+    # Smart Alert 2.0 — 交易時段每 10 分鐘掃描
+    scheduler.add_job(
+        _run_smart_alert,
+        CronTrigger(day_of_week="mon-fri", hour="9-13", minute="*/10", timezone="Asia/Taipei"),
+        id="smart_alert_v2", replace_existing=True,
+    )
+
+    # 自選股日報 — 每日 15:00 收盤後推送
+    scheduler.add_job(
+        _push_watchlist_daily,
+        CronTrigger(day_of_week="mon-fri", hour=15, minute=0, timezone="Asia/Taipei"),
+        id="watchlist_daily", replace_existing=True,
+    )
+
+    # 市場廣度監控 — 交易時段每 15 分鐘
+    scheduler.add_job(
+        _run_breadth_check,
+        CronTrigger(day_of_week="mon-fri", hour="9-13", minute="*/15", timezone="Asia/Taipei"),
+        id="market_breadth", replace_existing=True,
+    )
+
     scheduler.start()
     logger.info("Scheduler started (morning report 08:30 / weekly report Fri 14:30)")
     return scheduler
@@ -672,6 +702,38 @@ async def _run_pipeline_overlay_prep():
         logger.info("[Pipeline 18:45] conviction: %d 檔達交易門檻", len(results))
     except Exception as e:
         logger.error(f"[Pipeline 18:45] conviction failed: {e}")
+
+
+async def _push_ai_feed():
+    try:
+        from ..services.ai_feed import push_ai_feed
+        await push_ai_feed()
+    except Exception as e:
+        logger.error(f"AI Feed push failed: {e}")
+
+
+async def _run_smart_alert():
+    try:
+        from ..services.smart_alert_v2 import run_smart_alert_scan
+        await run_smart_alert_scan()
+    except Exception as e:
+        logger.error(f"Smart Alert scan failed: {e}")
+
+
+async def _push_watchlist_daily():
+    try:
+        from ..services.watchlist_monitor import push_daily_watchlist_reports
+        await push_daily_watchlist_reports()
+    except Exception as e:
+        logger.error(f"Watchlist daily push failed: {e}")
+
+
+async def _run_breadth_check():
+    try:
+        from ..services.market_breadth import run_breadth_check
+        await run_breadth_check()
+    except Exception as e:
+        logger.error(f"Market breadth check failed: {e}")
 
 
 async def _run_meta_alpha_weekly():
