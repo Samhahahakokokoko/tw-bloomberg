@@ -103,10 +103,18 @@ async def _handle_postback(data: str, uid: str) -> list:
 
 
 async def _handle_postback_inner(data: str, uid: str) -> list:
-    params = dict(urllib.parse.parse_qsl(data))
-    act  = params.get("act", "")
+    # 支援兩種格式：
+    #   "act=market_card&code=2330"  (query-string)
+    #   "market_card"               (Rich Menu 純字串)
+    if "=" in data:
+        params = dict(urllib.parse.parse_qsl(data))
+        act    = params.get("act", "")
+    else:
+        act    = data.strip()
+        params = {"act": act}
     hid  = int(params.get("id", 0))
     code = params.get("code", "")
+    logger.info("[postback] uid=%s act=%r", uid[:8], act)
 
     if act == "add":
         delta = int(params.get("delta", 100))
@@ -281,6 +289,19 @@ async def _handle_postback_inner(data: str, uid: str) -> list:
             f"例：/buy {code} 1000 850",
             qr_items((f"示範1張", f"/buy {code} 1000 100"))
         )]
+
+    if act == "report_next":
+        import asyncio
+        asyncio.create_task(_cmd_report_page(uid, delta=+1))
+        return [_text("⏩ 載入下一頁…", qr_items(("🔄 換策略", "act=screener_qr")))]
+
+    if act == "report_prev":
+        import asyncio
+        asyncio.create_task(_cmd_report_page(uid, delta=-1))
+        return [_text("⏪ 載入上一頁…", qr_items(("🔄 換策略", "act=screener_qr")))]
+
+    if act in ("news_menu", "news"):
+        return await _cmd_news_feed(uid)
 
     # ── 未定義動作 → 嘗試 callback_router，否則友善提示 ──────────────────────
     try:
@@ -1452,28 +1473,6 @@ def _flex(alt_text: str, container: dict, quick_reply: dict = None) -> FlexMessa
 #  量化策略 / 零股 / 比較 — 新增 LINE 指令
 # ═══════════════════════════════════════════════════════════════════
 
-async def _cmd_report(group: str, uid: str) -> list:
-    """/report [族群名]  → 產生選股表圖片並推送"""
-    import asyncio
-    from datetime import date
-
-    # 立即回 ACK，背景產生圖片
-    group_label = {
-        "ai": "AI族群", "AI": "AI族群",
-        "散熱": "散熱族群",
-    }.get(group.strip(), group.strip() or "族群連動")
-
-    asyncio.create_task(_push_report_bg(group_label, uid))
-    return [_text(
-        f"📊 正在產生「{group_label}」選股表…\n約需 5 秒，完成後自動推送圖片",
-        qr_items(
-            ("AI族群", "/report AI"),
-            ("散熱族群", "/report 散熱"),
-            ("💼 庫存", "/portfolio"),
-        )
-    )]
-
-
 async def _cmd_pipeline(code: str, uid: str) -> list:
     """/pipeline [代碼] — 觸發完整量化分析流程"""
     import asyncio
@@ -2413,7 +2412,7 @@ async def _report_bg(
     screen_type: str, sector: str, uid: str,
     page: int = 1, cached_rows=None,
 ) -> None:
-    """背景：篩選 → real-time 補充 → 分頁 → 產生圖 → 推送"""
+    """背景：篩選 → real-time 補充 → 分頁 → 產生圖 + 文字列表 → 推送"""
     import httpx
     from backend.services.report_screener import run_screener, paginate, get_label, enrich_with_realtime
     from backend.services.generate_report_image import generate_report_image
@@ -2422,15 +2421,20 @@ async def _report_bg(
     try:
         if cached_rows is None:
             rows = run_screener(screen_type, sector=sector)
-            # [FIX-1] 用 TWSE 真實收盤/量/法人覆蓋靜態假資料
+            logger.info(f"[report_bg] screener={screen_type} rows={len(rows)}")
+            if rows:
+                r0 = rows[0]
+                logger.info(f"[report_bg] row0: {r0.stock_id} {r0.name} close={r0.close} chg={r0.change_pct} vol={r0.volume}")
             try:
                 rows = await enrich_with_realtime(rows)
+                logger.info(f"[report_bg] after enrich: rows={len(rows)} close0={rows[0].close if rows else 'N/A'}")
             except Exception as e:
                 logger.warning(f"[report_bg] enrich failed (using pool data): {e}")
         else:
             rows = cached_rows
 
         page_rows, total_pages = paginate(rows, page)
+        logger.info(f"[report_bg] page={page}/{total_pages} page_rows={len(page_rows)}")
 
         # 快取分頁狀態
         _report_pages[uid] = {
@@ -2454,26 +2458,25 @@ async def _report_bg(
                 pass
 
         base_url = os.getenv("BASE_URL", "")
+        push_msgs = []
+
         if base_url:
             image_url = f"{base_url.rstrip('/')}/static/reports/{path.name}"
-            headers = {"Authorization": f"Bearer {settings.line_channel_access_token}"}
-            msg = {"type": "image", "originalContentUrl": image_url, "previewImageUrl": image_url}
+            push_msgs.append({"type": "image",
+                              "originalContentUrl": image_url,
+                              "previewImageUrl":    image_url})
         else:
-            msg = _build_text_fallback(page_rows, label, page, total_pages)
+            push_msgs.append(_build_text_fallback(page_rows, label, page, total_pages))
 
-        # 分頁提示文字
-        hint_msg = None
-        if total_pages > 1:
-            hint_msg = {"type": "text",
-                        "text": f"第 {page}/{total_pages} 頁\n/report next 下一頁  /report page N 跳頁"}
+        # 文字股票列表 + 翻頁 Quick Reply 按鈕
+        push_msgs.append(_build_stock_list_msg(page_rows, label, page, total_pages, screen_type))
 
-        msgs = [msg] + ([hint_msg] if hint_msg else [])
         async with httpx.AsyncClient(timeout=20) as c:
             await c.post("https://api.line.me/v2/bot/message/push",
-                         json={"to": uid, "messages": msgs[:5]},
+                         json={"to": uid, "messages": push_msgs[:5]},
                          headers={"Authorization": f"Bearer {settings.line_channel_access_token}"})
     except Exception as e:
-        logger.error(f"[report_bg] {screen_type} uid={uid[:8]} err={e}")
+        logger.error(f"[report_bg] {screen_type} uid={uid[:8]} err={e}", exc_info=True)
 
 
 def _build_text_fallback(rows, label: str, page: int, total: int) -> dict:
@@ -2482,6 +2485,61 @@ def _build_text_fallback(rows, label: str, page: int, total: int) -> dict:
         s = "+" if r.change_pct > 0 else ""
         lines.append(f"{r.stock_id} {r.name} {s}{r.change_pct:.2f}%  分:{r.model_score:.0f}")
     return {"type": "text", "text": "\n".join(lines)[:4800]}
+
+
+def _build_stock_list_msg(
+    rows: list, label: str, page: int, total_pages: int, screen_type: str,
+) -> dict:
+    """文字股票列表 + 翻頁 + 個股分析 Quick Reply 按鈕"""
+    lines = [f"📊 {label}  第{page}/{total_pages}頁", "─" * 18]
+    for i, r in enumerate(rows[:10], 1):
+        arrow = "▲" if r.change_pct > 0 else ("▼" if r.change_pct < 0 else "─")
+        sign  = "+" if r.change_pct > 0 else ""
+        close_str = f"{r.close:,.1f}" if r.close > 0 else "--"
+        lines.append(
+            f"#{i} {r.stock_id} {r.name}\n"
+            f"   {close_str}元  AI{r.confidence:.0f}分  {arrow}{sign}{r.change_pct:.1f}%"
+        )
+
+    qr_list = []
+    if page > 1:
+        qr_list.append({
+            "type": "action",
+            "action": {"type": "postback", "label": "⬅️ 上一頁",
+                       "data": "act=report_prev", "displayText": "上一頁"},
+        })
+    if page < total_pages:
+        qr_list.append({
+            "type": "action",
+            "action": {"type": "postback", "label": "➡️ 下一頁",
+                       "data": "act=report_next", "displayText": "下一頁"},
+        })
+    qr_list.append({
+        "type": "action",
+        "action": {"type": "postback", "label": "🔄 換策略",
+                   "data": "act=screener_qr", "displayText": "換策略"},
+    })
+    qr_list.append({
+        "type": "action",
+        "action": {"type": "postback", "label": "🏠 主選單",
+                   "data": "act=market_card", "displayText": "主選單"},
+    })
+    for r in rows[:4]:
+        qr_list.append({
+            "type": "action",
+            "action": {
+                "type": "postback",
+                "label": f"🔍{r.stock_id}",
+                "data": f"act=recommend_detail&code={r.stock_id}",
+                "displayText": f"分析 {r.stock_id}",
+            },
+        })
+
+    return {
+        "type": "text",
+        "text": "\n".join(lines)[:4800],
+        "quickReply": {"items": qr_list[:13]},
+    }
 
 
 async def _cmd_custom_screen(conditions: str, uid: str) -> list:

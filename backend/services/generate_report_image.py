@@ -15,12 +15,15 @@ generate_report_image.py — 族群連動選股表圖片產生器 v3（深色高
 
 from __future__ import annotations
 
+import logging
 import os
 from datetime import date, datetime
 from pathlib import Path
 from typing import Optional, TYPE_CHECKING
 
 import numpy as np
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from backend.services.report_screener import StockRow
@@ -169,6 +172,13 @@ def generate_report_image(
         output_path = STATIC_DIR / f"report_{ts}.png"
 
     n_rows = len(stocks)
+    logger.info(f"[generate_report_image] group={group!r} n_rows={n_rows} page={page}/{total_pages}")
+    if n_rows > 0:
+        r0 = stocks[0]
+        logger.info(f"[generate_report_image] row0: {r0.stock_id} {r0.name} close={r0.close} vol={r0.volume} chg={r0.change_pct}")
+    elif n_rows == 0:
+        logger.warning(f"[generate_report_image] ⚠️ stocks 清單為空！group={group!r}")
+
     fig_w  = 16.0       # 稍微加寬，讓字體更舒適
 
     # 行高加大以容納更大字體
@@ -266,8 +276,9 @@ def generate_report_image(
 
             # ── 價格（元）──────────────────────────────────────────────
             elif key == "close":
+                close_str = f"{row.close:,.1f}" if (row.close or 0) > 0 else "--"
                 ax.text(cx + cw / 2, cy,
-                        f"{row.close:,.1f}",
+                        close_str,
                         ha="center", va="center", fontsize=9.5, color=TXT_WHITE)
 
             # ── 漲跌 ▲▼ ─────────────────────────────────────────────────
@@ -283,27 +294,31 @@ def generate_report_image(
 
             # ── 成交量（張）────────────────────────────────────────────
             elif key == "volume_k":
+                vol_k = (row.volume or 0) / 1000
+                vol_str = f"{vol_k:,.0f}" if vol_k > 0 else "--"
                 ax.text(cx + cw / 2, cy,
-                        f"{row.volume / 1000:,.0f}",
+                        vol_str,
                         ha="center", va="center", fontsize=9, color=TXT_WHITE)
 
             # ── 籌碼（法人買賣超，含連買天數）────────────────────────────
             elif key in ("chip_5d", "chip_20d"):
                 val  = row.chip_5d if key == "chip_5d" else row.chip_20d
                 days = getattr(row, "foreign_buy_days", 0) or 0
-                # 負天數代表連賣
+                chip_str = _fmt_chip(val, abs(int(days)) if days else 0) if val != 0 else "--"
                 ax.text(cx + cw / 2, cy,
-                        _fmt_chip(val, abs(int(days)) if days else 0),
+                        chip_str,
                         ha="center", va="center", fontsize=8.0, fontweight="bold",
-                        color=_chip_clr(val))
+                        color=_chip_clr(val) if val != 0 else TXT_MUTED)
 
             # ── 基本面（年營收 / EPS 成長率）────────────────────────────
             elif key in ("rev_yoy", "eps_growth"):
-                val   = row.rev_yoy if key == "rev_yoy" else row.eps_growth
-                label = "年增" if key == "rev_yoy" else "EPS"
+                val      = row.rev_yoy if key == "rev_yoy" else row.eps_growth
+                lbl_pre  = "年增" if key == "rev_yoy" else "EPS"
+                fund_str = f"{lbl_pre}{_arrow(val)}{abs(val):.0f}%" if val != 0 else "--"
                 ax.text(cx + cw / 2, cy + 0.08,
-                        f"{label}{_arrow(val)}{abs(val):.0f}%",
-                        ha="center", va="center", fontsize=8.5, color=_pct_clr(val))
+                        fund_str,
+                        ha="center", va="center", fontsize=8.5,
+                        color=_pct_clr(val) if val != 0 else TXT_MUTED)
 
             # ── AI綜合評分（分數 + 進度條）────────────────────────────
             elif key == "confidence":
