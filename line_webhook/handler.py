@@ -515,6 +515,13 @@ async def _handle_text(text: str, uid: str) -> list:
         return await _cmd_watch_remove(code, uid) if code else [_text("請輸入要移除的代碼")]
     if cmd == "/rs":                    return await _cmd_rs(uid)
     if cmd == "/breadth":               return await _cmd_breadth(uid)
+    if cmd == "/journal":
+        code = parts[1].upper() if len(parts) > 1 else None
+        return await _cmd_journal(uid, code)
+    if cmd == "/review":                return await _cmd_review(uid)
+    if cmd == "/manage":                return await _cmd_manage(uid)
+    if cmd == "/exposure":              return await _cmd_exposure(uid)
+    if cmd == "/heatmap":               return await _cmd_heatmap(uid)
 
     # ── 機構級量化流程 ────────────────────────────────────────────────────
     if cmd == "/pipeline":
@@ -3107,3 +3114,102 @@ async def _cmd_breadth(uid: str) -> list:
     except Exception as e:
         logger.error(f"[breadth] {e}")
         return [_text("❌ 廣度計算失敗，請稍後再試")]
+
+
+async def _cmd_journal(uid: str, stock_id: str | None = None) -> list:
+    """/journal [代碼] — 查看交易日誌"""
+    try:
+        from backend.services.trade_journal import get_journal, format_journal_entry, format_journal_list
+        entries = await get_journal(uid, stock_id=stock_id, limit=8)
+        if entries and stock_id:
+            text = format_journal_entry(entries[0])
+        else:
+            text = format_journal_list(entries)
+        return [_text(text, qr_items(
+            ("📓 全部記錄", "/journal"),
+            ("💼 庫存", "/portfolio"),
+        ))]
+    except Exception as e:
+        logger.error(f"[journal] {e}")
+        return [_text("❌ 日誌讀取失敗，請稍後再試")]
+
+
+async def _cmd_review(uid: str) -> list:
+    """/review — 交易行為分析"""
+    try:
+        from backend.services.mistake_detector import analyze_user
+        report = await analyze_user(uid)
+        text   = report.to_line_text()
+        return [_text(text, _qr_postback(
+            ("📓 交易日誌", "journal"),
+            ("💼 看庫存",   "act=portfolio_view"),
+        ))]
+    except Exception as e:
+        logger.error(f"[review] {e}")
+        return [_text("❌ 分析失敗，請稍後再試")]
+
+
+async def _cmd_manage(uid: str) -> list:
+    """/manage — AI 投組管理建議"""
+    try:
+        from backend.services.portfolio_manager import analyze_portfolio
+        advice = await analyze_portfolio(uid)
+        text   = advice.to_line_text()
+        return [_text(text, _qr_postback(
+            ("💼 看庫存",   "act=portfolio_view"),
+            ("📊 今日選股", "act=screener_qr"),
+        ))]
+    except Exception as e:
+        logger.error(f"[manage] {e}")
+        return [_text("❌ 投組分析失敗，請稍後再試")]
+
+
+async def _cmd_exposure(uid: str) -> list:
+    """/exposure — 因子暴露分析"""
+    try:
+        from backend.services.factor_exposure import calculate_exposure
+        exp  = await calculate_exposure(uid)
+        text = exp.to_line_text()
+        return [_text(text, _qr_postback(
+            ("💼 看庫存", "act=portfolio_view"),
+            ("🤖 AI投組", "manage"),
+        ))]
+    except Exception as e:
+        logger.error(f"[exposure] {e}")
+        return [_text("❌ 因子計算失敗，請稍後再試")]
+
+
+async def _cmd_heatmap(uid: str) -> list:
+    """/heatmap — 族群熱力圖"""
+    try:
+        from backend.services.sector_heatmap import fetch_sector_changes, generate_heatmap_image
+        import asyncio, httpx
+
+        sector_chg = await fetch_sector_changes()
+        path       = generate_heatmap_image(sector_chg)
+        base_url   = os.getenv("BASE_URL", "")
+
+        if not base_url:
+            # fallback 文字
+            lines = ["🌡️ 族群熱力圖"]
+            for sec, chg in sorted(sector_chg.items(), key=lambda x: -x[1])[:10]:
+                icon = "🔥" if chg >= 1 else ("❄️" if chg <= -1 else "─")
+                lines.append(f"{icon} {sec}：{chg:+.1f}%")
+            return [_text("\n".join(lines))]
+
+        img_url = f"{base_url.rstrip('/')}/static/reports/{path.name}"
+        return [
+            FlexMessage(
+                alt_text="族群熱力圖",
+                contents={"type": "bubble", "body": {
+                    "type": "box", "layout": "vertical", "contents": [
+                        {"type": "image", "url": img_url, "size": "full",
+                         "aspectMode": "fit", "action": {
+                             "type": "uri", "uri": img_url}}
+                    ]
+                }}
+            )
+        ]
+    except Exception as e:
+        logger.error(f"[heatmap] {e}")
+        return [_text(f"❌ 熱力圖生成失敗\n{type(e).__name__}: {str(e)[:80]}")]

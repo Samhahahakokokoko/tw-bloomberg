@@ -218,34 +218,54 @@ def start_scheduler() -> AsyncIOScheduler:
         id="smart_money", replace_existing=True,
     )
 
-    # ── 新功能排程 ────────────────────────────────────────────────────────────
+    # ── 新功能排程（第一批）──────────────────────────────────────────────────
 
-    # AI Feed 早報 — 08:30（與既有 morning_report 並行，訊息更精簡）
     scheduler.add_job(
         _push_ai_feed,
         CronTrigger(day_of_week="mon-fri", hour=8, minute=31, timezone="Asia/Taipei"),
         id="ai_feed", replace_existing=True,
     )
-
-    # Smart Alert 2.0 — 交易時段每 10 分鐘掃描
     scheduler.add_job(
         _run_smart_alert,
-        CronTrigger(day_of_week="mon-fri", hour="9-13", minute="*/10", timezone="Asia/Taipei"),
+        CronTrigger(day_of_week="mon-fri", hour="9-13", minute="*/30", timezone="Asia/Taipei"),
         id="smart_alert_v2", replace_existing=True,
     )
-
-    # 自選股日報 — 每日 15:00 收盤後推送
     scheduler.add_job(
         _push_watchlist_daily,
-        CronTrigger(day_of_week="mon-fri", hour=15, minute=0, timezone="Asia/Taipei"),
+        CronTrigger(day_of_week="mon-fri", hour=19, minute=0, timezone="Asia/Taipei"),
         id="watchlist_daily", replace_existing=True,
     )
-
-    # 市場廣度監控 — 交易時段每 15 分鐘
     scheduler.add_job(
         _run_breadth_check,
         CronTrigger(day_of_week="mon-fri", hour="9-13", minute="*/15", timezone="Asia/Taipei"),
         id="market_breadth", replace_existing=True,
+    )
+
+    # ── 新功能排程（第二批）──────────────────────────────────────────────────
+
+    # 18:00 RS Ranking + Breadth 收盤計算
+    scheduler.add_job(
+        _run_post_market_breadth,
+        CronTrigger(day_of_week="mon-fri", hour=18, minute=0, timezone="Asia/Taipei"),
+        id="post_market_breadth", replace_existing=True,
+    )
+    # 18:30 Sector Heatmap 生成推送
+    scheduler.add_job(
+        _push_sector_heatmap,
+        CronTrigger(day_of_week="mon-fri", hour=18, minute=30, timezone="Asia/Taipei"),
+        id="sector_heatmap", replace_existing=True,
+    )
+    # 19:30 AI Portfolio Manager 建議推送
+    scheduler.add_job(
+        _push_portfolio_manager,
+        CronTrigger(day_of_week="mon-fri", hour=19, minute=30, timezone="Asia/Taipei"),
+        id="portfolio_manager_advice", replace_existing=True,
+    )
+    # 每週五 18:00 Mistake Detector 週報
+    scheduler.add_job(
+        _push_mistake_detector,
+        CronTrigger(day_of_week="fri", hour=18, minute=0, timezone="Asia/Taipei"),
+        id="mistake_detector_weekly", replace_existing=True,
     )
 
     scheduler.start()
@@ -702,6 +722,41 @@ async def _run_pipeline_overlay_prep():
         logger.info("[Pipeline 18:45] conviction: %d 檔達交易門檻", len(results))
     except Exception as e:
         logger.error(f"[Pipeline 18:45] conviction failed: {e}")
+
+
+async def _run_post_market_breadth():
+    try:
+        from ..services.market_breadth import run_breadth_check
+        from ..services.rs_engine import get_top20, format_rs_ranking
+        await run_breadth_check()
+        records = get_top20()
+        logger.info(f"[PostMarket] RS top={records[0].stock_id if records else 'N/A'}")
+    except Exception as e:
+        logger.error(f"Post-market breadth/RS failed: {e}")
+
+
+async def _push_sector_heatmap():
+    try:
+        from ..services.sector_heatmap import push_heatmap
+        await push_heatmap()
+    except Exception as e:
+        logger.error(f"Sector heatmap push failed: {e}")
+
+
+async def _push_portfolio_manager():
+    try:
+        from ..services.portfolio_manager import push_daily_portfolio_advice
+        await push_daily_portfolio_advice()
+    except Exception as e:
+        logger.error(f"Portfolio manager push failed: {e}")
+
+
+async def _push_mistake_detector():
+    try:
+        from ..services.mistake_detector import push_weekly_mistake_reports
+        await push_weekly_mistake_reports()
+    except Exception as e:
+        logger.error(f"Mistake detector push failed: {e}")
 
 
 async def _push_ai_feed():

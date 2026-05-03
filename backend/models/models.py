@@ -630,6 +630,27 @@ class CapitalFlowLog(Base):
     created_at           = Column(DateTime, default=datetime.utcnow)
 
 
+class TradeJournal(Base):
+    """AI 交易日誌：每筆買賣附帶 AI 生成原因與風險備註"""
+    __tablename__ = "trade_journal"
+
+    id           = Column(Integer, primary_key=True, index=True)
+    user_id      = Column(String(100), index=True, nullable=False)
+    date         = Column(Date, nullable=False)
+    stock_id     = Column(String(10), nullable=False, index=True)
+    stock_name   = Column(String(50), default="")
+    action       = Column(String(10), nullable=False)   # buy / sell
+    price        = Column(Float, nullable=False)
+    shares       = Column(Integer, nullable=False)
+    reason       = Column(Text, default="")             # AI 自動生成進場原因
+    risk_notes   = Column(Text, default="")             # AI 風險提示
+    stop_loss    = Column(Float, nullable=True)
+    target_price = Column(Float, nullable=True)
+    outcome      = Column(String(20), default="holding")  # holding/profit/loss
+    pnl          = Column(Float, nullable=True)
+    created_at   = Column(DateTime, default=datetime.utcnow)
+
+
 class RegimeMemoryModel(Base):
     """Regime 記憶：各市場狀態下策略績效"""
     __tablename__ = "regime_memory"

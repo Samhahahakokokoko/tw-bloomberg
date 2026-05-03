@@ -22,6 +22,8 @@ import Screener                 from "./pages/Screener";
 import Financials               from "./pages/Financials";
 import RecommendationPerformance from "./pages/RecommendationPerformance";
 import PortfolioOptimizer       from "./pages/PortfolioOptimizer";
+import DashboardPro             from "./pages/DashboardPro";
+import AlphaMonitor             from "./pages/AlphaMonitor";
 
 const NAV = [
   { to: "/",           label: "DASHBOARD",  icon: Activity },
@@ -41,6 +43,8 @@ const NAV = [
   { to: "/optimizer",  label: "投組最佳化",   icon: Layers },
   { to: "/copytrade",  label: "跟單",        icon: Users },
   { to: "/backtest",   label: "BACKTEST",   icon: BookOpen },
+  { to: "/pro",        label: "PRO",        icon: Activity },
+  { to: "/alpha",      label: "ALPHA",      icon: Layers },
 ];
 
 export default function App() {
@@ -100,6 +104,8 @@ export default function App() {
           <Route path="/financials"  element={<Financials />} />
           <Route path="/earnings"    element={<EarningsReminder />} />
           <Route path="/backtest"    element={<Backtest />} />
+          <Route path="/pro"         element={<DashboardPro />} />
+          <Route path="/alpha"       element={<AlphaMonitor />} />
         </Routes>
       </main>
     </div>
