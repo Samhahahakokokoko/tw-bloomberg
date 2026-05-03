@@ -241,6 +241,39 @@ def start_scheduler() -> AsyncIOScheduler:
         id="market_breadth", replace_existing=True,
     )
 
+    # ── 新功能排程（第三批/最終批）──────────────────────────────────────────
+
+    # 17:30 Autonomous Daily Research
+    scheduler.add_job(
+        _push_autonomous_research,
+        CronTrigger(day_of_week="mon-fri", hour=17, minute=30, timezone="Asia/Taipei"),
+        id="autonomous_research", replace_existing=True,
+    )
+    # 18:00 完整 AI Hedge Fund Agent 流程
+    scheduler.add_job(
+        _run_hedge_fund_agent,
+        CronTrigger(day_of_week="mon-fri", hour=18, minute=0, timezone="Asia/Taipei"),
+        id="hedge_fund_agent_run", replace_existing=True,
+    )
+    # 19:00 Smart Money 推送
+    scheduler.add_job(
+        _push_smart_money_v2,
+        CronTrigger(day_of_week="mon-fri", hour=19, minute=0, timezone="Asia/Taipei"),
+        id="smart_money_v2", replace_existing=True,
+    )
+    # 19:30 AI Agent 決策報告推送
+    scheduler.add_job(
+        _push_agent_report,
+        CronTrigger(day_of_week="mon-fri", hour=19, minute=30, timezone="Asia/Taipei"),
+        id="agent_report", replace_existing=True,
+    )
+    # 週五 公開投組排行更新
+    scheduler.add_job(
+        _update_public_rankings,
+        CronTrigger(day_of_week="fri", hour=15, minute=30, timezone="Asia/Taipei"),
+        id="public_rankings", replace_existing=True,
+    )
+
     # ── 新功能排程（第二批）──────────────────────────────────────────────────
 
     # 18:00 RS Ranking + Breadth 收盤計算
@@ -722,6 +755,48 @@ async def _run_pipeline_overlay_prep():
         logger.info("[Pipeline 18:45] conviction: %d 檔達交易門檻", len(results))
     except Exception as e:
         logger.error(f"[Pipeline 18:45] conviction failed: {e}")
+
+
+async def _push_autonomous_research():
+    try:
+        from ..services.autonomous_research import push_daily_research
+        await push_daily_research()
+    except Exception as e:
+        logger.error(f"Autonomous research push failed: {e}")
+
+
+async def _run_hedge_fund_agent():
+    try:
+        from ..services.hedge_fund_agent import run_agent_pipeline
+        report = await run_agent_pipeline("system")
+        logger.info(f"[HedgeFundAgent] decisions={len(report.decisions)} health={report.health_score}")
+    except Exception as e:
+        logger.error(f"Hedge fund agent run failed: {e}")
+
+
+async def _push_agent_report():
+    try:
+        from ..services.hedge_fund_agent import push_agent_report
+        await push_agent_report()
+    except Exception as e:
+        logger.error(f"Agent report push failed: {e}")
+
+
+async def _push_smart_money_v2():
+    try:
+        from ..services.broker_tracker import push_smart_money_alerts
+        await push_smart_money_alerts()
+    except Exception as e:
+        logger.error(f"Smart money v2 push failed: {e}")
+
+
+async def _update_public_rankings():
+    try:
+        from ..services.public_portfolio_service import update_weekly_returns
+        await update_weekly_returns()
+        logger.info("[PublicRankings] weekly returns updated")
+    except Exception as e:
+        logger.error(f"Public rankings update failed: {e}")
 
 
 async def _run_post_market_breadth():

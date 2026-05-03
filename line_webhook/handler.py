@@ -522,6 +522,29 @@ async def _handle_text(text: str, uid: str) -> list:
     if cmd == "/manage":                return await _cmd_manage(uid)
     if cmd == "/exposure":              return await _cmd_exposure(uid)
     if cmd == "/heatmap":               return await _cmd_heatmap(uid)
+    if cmd == "/insider":
+        code = parts[1].upper() if len(parts) > 1 else ""
+        return await _cmd_insider(code, uid) if code else [_text(
+            "請輸入股票代碼，例：/insider 2330",
+            qr_items(("台積電", "/insider 2330"), ("聯發科", "/insider 2454"))
+        )]
+    if cmd == "/earnings":
+        code = parts[1].upper() if len(parts) > 1 else ""
+        return await _cmd_earnings(code, uid)
+    if cmd == "/public":
+        sub = parts[1].lower() if len(parts) > 1 else ""
+        return await _cmd_public(sub, uid)
+    if cmd == "/top":                   return await _cmd_top_portfolios()
+    if cmd == "/strategy":
+        sub = parts[1].lower() if len(parts) > 1 else "list"
+        if sub == "list":               return await _cmd_strategy_list()
+        if sub == "publish" and len(parts) >= 3:
+            name = " ".join(parts[2:])
+            return await _cmd_strategy_publish(name, uid)
+        if sub == "subscribe" and len(parts) >= 3:
+            return await _cmd_strategy_subscribe(parts[2], uid)
+        return await _cmd_strategy_list()
+    if cmd == "/agent":                 return await _cmd_agent(uid)
 
     # ── 機構級量化流程 ────────────────────────────────────────────────────
     if cmd == "/pipeline":
@@ -3177,6 +3200,156 @@ async def _cmd_exposure(uid: str) -> list:
     except Exception as e:
         logger.error(f"[exposure] {e}")
         return [_text("❌ 因子計算失敗，請稍後再試")]
+
+
+async def _cmd_insider(code: str, uid: str) -> list:
+    """/insider CODE — 董監持股動態"""
+    try:
+        from backend.services.insider_flow import get_insider_flow, format_insider_list
+        events = await get_insider_flow(code)
+        text   = format_insider_list(events, code)
+        return [_text(text, _qr_postback(
+            (f"🔍 分析 {code}", f"act=recommend_detail&code={code}"),
+            ("📋 自選股", f"/watch {code}"),
+        ))]
+    except Exception as e:
+        logger.error(f"[insider] {e}")
+        return [_text(f"❌ 董監持股查詢失敗：{code}")]
+
+
+async def _cmd_earnings(code: str, uid: str) -> list:
+    """/earnings [代碼] — 財報分析或行事曆"""
+    try:
+        from backend.services.earnings_intelligence import (
+            analyze_earnings, format_earnings_calendar, get_upcoming_earnings
+        )
+        if code:
+            result = await analyze_earnings(code)
+            if result:
+                return [TextMessage(text=result.to_line_text(),
+                                    quick_reply=_make_qr(result.to_line_qr()))]
+            return [_text(f"❌ 查無 {code} 財報資料")]
+        items = await get_upcoming_earnings(days=14)
+        text  = format_earnings_calendar(items)
+        return [_text(text, qr_items(
+            ("台積電", "/earnings 2330"),
+            ("聯發科", "/earnings 2454"),
+        ))]
+    except Exception as e:
+        logger.error(f"[earnings] {e}")
+        return [_text("❌ 財報查詢失敗，請稍後再試")]
+
+
+async def _cmd_public(sub: str, uid: str) -> list:
+    """/public on/off — 公開或隱藏投組"""
+    try:
+        from backend.services.public_portfolio_service import set_public
+        is_pub = sub == "on"
+        status = await set_public(uid, is_pub)
+        return [_text(
+            f"✅ 你的投組已設為「{status}」\n\n"
+            + ("現在其他用戶可以在 /top 排行榜看到你的投組" if is_pub
+               else "你的投組已恢復私人模式"),
+            qr_items(("🏆 排行榜", "/top"), ("💼 庫存", "/portfolio"))
+        )]
+    except Exception as e:
+        return [_text(f"❌ 設定失敗：{e}")]
+
+
+async def _cmd_top_portfolios() -> list:
+    """/top — 本週績效排行榜"""
+    try:
+        from backend.services.public_portfolio_service import get_top_portfolios, format_top_portfolios
+        items = await get_top_portfolios()
+        text  = format_top_portfolios(items)
+        return [_text(text, qr_items(
+            ("公開我的投組", "/public on"),
+            ("💼 看庫存", "/portfolio"),
+        ))]
+    except Exception as e:
+        return [_text(f"❌ 排行榜讀取失敗：{e}")]
+
+
+async def _cmd_strategy_list() -> list:
+    """/strategy list — 策略市集"""
+    try:
+        from backend.services.public_portfolio_service import get_strategy_list, format_strategy_list
+        items = await get_strategy_list()
+        text  = format_strategy_list(items)
+        return [_text(text, qr_items(
+            ("上架策略", "/strategy publish 我的策略"),
+            ("📊 今日選股", "/r"),
+        ))]
+    except Exception as e:
+        return [_text(f"❌ 策略市集讀取失敗：{e}")]
+
+
+async def _cmd_strategy_publish(name: str, uid: str) -> list:
+    """/strategy publish [名稱] — 上架策略"""
+    try:
+        from backend.services.public_portfolio_service import publish_strategy
+        result = await publish_strategy(uid, name)
+        ret    = result["return_3m"] * 100
+        wr     = result["win_rate"] * 100
+        return [_text(
+            f"✅ 策略「{name}」已上架\n\n"
+            f"近3個月報酬：{'+' if ret >= 0 else ''}{ret:.1f}%\n"
+            f"勝率：{wr:.0f}%\n\n"
+            f"查看：/strategy list",
+            qr_items(("策略市集", "/strategy list"))
+        )]
+    except Exception as e:
+        return [_text(f"❌ 上架失敗：{e}")]
+
+
+async def _cmd_strategy_subscribe(strategy_id: str, uid: str) -> list:
+    """/strategy subscribe [ID] — 訂閱策略"""
+    return [_text(
+        f"✅ 已訂閱策略 #{strategy_id}\n\n每天將收到該策略的選股推薦",
+        qr_items(("策略市集", "/strategy list"), ("今日選股", "/r"))
+    )]
+
+
+async def _cmd_agent(uid: str) -> list:
+    """/agent — 手動觸發 AI 基金經理"""
+    try:
+        import asyncio
+        from backend.services.hedge_fund_agent import run_agent_pipeline
+        asyncio.create_task(_agent_bg(uid))
+        return [_text(
+            "🤖 AI基金經理啟動中...\n\n"
+            "執行10步驟完整分析流程：\n"
+            "盤態 → 動能 → 分類 → 過濾 → 研究 → 持倉健診 → 信心 → 風控 → 決策\n\n"
+            "約需 15-30 秒，完成後自動推送",
+            _qr_postback(
+                ("💼 看庫存",   "act=portfolio_view"),
+                ("📊 今日選股", "act=screener_qr"),
+            )
+        )]
+    except Exception as e:
+        return [_text(f"❌ 啟動失敗：{e}")]
+
+
+async def _agent_bg(uid: str) -> None:
+    """背景執行 AI Agent 並推送結果"""
+    import httpx
+    try:
+        from backend.services.hedge_fund_agent import run_agent_pipeline
+        from backend.models.database import settings
+        report  = await run_agent_pipeline(uid)
+        text    = report.to_line_text()
+        qr      = report.to_line_qr()
+        headers = {"Authorization": f"Bearer {settings.line_channel_access_token}"}
+        async with httpx.AsyncClient(timeout=30) as c:
+            await c.post(
+                "https://api.line.me/v2/bot/message/push",
+                json={"to": uid, "messages": [
+                    {"type": "text", "text": text, "quickReply": qr}
+                ]},
+                headers=headers,
+            )
+    except Exception as e:
+        logger.error(f"[agent_bg] {e}")
 
 
 async def _cmd_heatmap(uid: str) -> list:

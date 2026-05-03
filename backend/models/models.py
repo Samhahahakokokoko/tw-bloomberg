@@ -664,3 +664,86 @@ class RegimeMemoryModel(Base):
     sharpe      = Column(Float, default=0.0)
     weight      = Column(Float, default=1.0)
     updated_at  = Column(DateTime, default=datetime.utcnow)
+
+
+class SmartMoneyLog(Base):
+    """聰明錢追蹤記錄"""
+    __tablename__ = "smart_money_log"
+    id          = Column(Integer, primary_key=True, index=True)
+    date        = Column(String(10), nullable=False, index=True)
+    stock_id    = Column(String(10), nullable=False, index=True)
+    stock_name  = Column(String(50), default="")
+    broker_name = Column(String(50), default="")
+    signal_type = Column(String(30), default="")   # consecutive_buy / multi_broker / etf_add
+    shares      = Column(Integer, default=0)
+    days        = Column(Integer, default=1)        # 連續天數
+    note        = Column(Text, default="")
+    created_at  = Column(DateTime, default=datetime.utcnow)
+
+
+class InsiderFlowLog(Base):
+    """董監持股異動記錄"""
+    __tablename__ = "insider_flow_log"
+    id           = Column(Integer, primary_key=True, index=True)
+    date         = Column(String(10), nullable=False)
+    stock_id     = Column(String(10), nullable=False, index=True)
+    stock_name   = Column(String(50), default="")
+    insider_name = Column(String(100), default="")
+    role         = Column(String(50), default="")   # 董事長 / 獨立董事 / 大股東
+    action       = Column(String(10), default="")   # buy / sell
+    shares       = Column(Integer, default=0)
+    note         = Column(Text, default="")
+    created_at   = Column(DateTime, default=datetime.utcnow)
+
+
+class PublicPortfolio(Base):
+    """公開投組設定"""
+    __tablename__ = "public_portfolio"
+    id          = Column(Integer, primary_key=True, index=True)
+    user_id     = Column(String(100), unique=True, nullable=False, index=True)
+    display_name = Column(String(50), default="")
+    is_public   = Column(Boolean, default=False)
+    style_tag   = Column(String(50), default="")    # 散熱主力 / 半導體 / 存股
+    weekly_return = Column(Float, default=0.0)
+    total_return  = Column(Float, default=0.0)
+    updated_at  = Column(DateTime, default=datetime.utcnow)
+
+
+class StrategyMarketplace(Base):
+    """策略市集"""
+    __tablename__ = "strategy_marketplace"
+    id           = Column(Integer, primary_key=True, index=True)
+    owner_id     = Column(String(100), nullable=False, index=True)
+    name         = Column(String(100), nullable=False)
+    description  = Column(Text, default="")
+    screen_type  = Column(String(30), default="momentum")
+    return_3m    = Column(Float, default=0.0)
+    win_rate     = Column(Float, default=0.5)
+    max_drawdown = Column(Float, default=0.0)
+    subscribers  = Column(Integer, default=0)
+    is_active    = Column(Boolean, default=True)
+    created_at   = Column(DateTime, default=datetime.utcnow)
+
+
+class DailyResearchLog(Base):
+    """每日自動研究報告"""
+    __tablename__ = "daily_research_log"
+    id           = Column(Integer, primary_key=True, index=True)
+    date         = Column(String(10), nullable=False, index=True)
+    opportunities = Column(Text, default="[]")      # JSON list of stock picks
+    summary      = Column(Text, default="")
+    market_state = Column(String(20), default="unknown")
+    created_at   = Column(DateTime, default=datetime.utcnow)
+
+
+class AgentDecisionLog(Base):
+    """AI 基金經理決策記錄"""
+    __tablename__ = "agent_decision_log"
+    id           = Column(Integer, primary_key=True, index=True)
+    date         = Column(String(10), nullable=False, index=True)
+    user_id      = Column(String(100), default="system", index=True)
+    decisions    = Column(Text, default="[]")       # JSON list of decisions
+    health_score = Column(Integer, default=75)
+    market_state = Column(String(20), default="unknown")
+    main_risk    = Column(Text, default="")
+    created_at   = Column(DateTime, default=datetime.utcnow)
