@@ -61,8 +61,6 @@ async def webhook(request: Request):
 
     for event in events:
         try:
-            logger.info(f"=== EVENT TYPE: {type(event).__name__} ===")
-
             if isinstance(event, MessageEvent) and isinstance(event.message, TextMessageContent):
                 uid  = event.source.user_id
                 text = event.message.text.strip()
@@ -73,8 +71,7 @@ async def webhook(request: Request):
             elif isinstance(event, PostbackEvent):
                 uid  = event.source.user_id
                 data = event.postback.data
-                logger.info(f"=== POSTBACK RAW DATA: {data} ===")
-                logger.info(f"=== POSTBACK TYPE: {type(data)} ===")
+                logger.info(f"[{uid[:8]}] postback: {data!r}")
                 msgs = await _handle_postback(data, uid)
                 await _reply(event.reply_token, msgs)
 
@@ -98,15 +95,14 @@ async def _reply(token: str, messages: list):
 # ── Postback 處理 ─────────────────────────────────────────────────────────────
 
 async def _handle_postback(data: str, uid: str) -> list:
-    # ── DEBUG MODE：直接回傳原始 data，確認按鈕實際發送內容 ─────────────────
-    logger.info(f"=== POSTBACK ENTER uid={uid[:8]} ===")
-    logger.info(f"=== POSTBACK RAW DATA: {data!r} ===")
-    logger.info(f"=== POSTBACK DATA TYPE: {type(data)} ===")
-    params = dict(urllib.parse.parse_qsl(data))
-    logger.info(f"=== POSTBACK PARSED PARAMS: {params} ===")
-    return [TextMessage(text=f"[DEBUG] 收到：{data}\n解析：{params}")]
+    try:
+        return await _handle_postback_inner(data, uid)
+    except Exception as e:
+        logger.error(f"[postback] EXCEPTION act data={data!r} uid={uid[:8]} err={e}", exc_info=True)
+        return [TextMessage(text=f"⚠️ 處理失敗\n{type(e).__name__}: {str(e)[:120]}")]
 
-    # ── 以下保留原邏輯（DEBUG 期間不執行）────────────────────────────────────
+
+async def _handle_postback_inner(data: str, uid: str) -> list:
     params = dict(urllib.parse.parse_qsl(data))
     act  = params.get("act", "")
     hid  = int(params.get("id", 0))
