@@ -749,30 +749,6 @@ class AgentDecisionLog(Base):
     created_at   = Column(DateTime, default=datetime.utcnow)
 
 
-class UserSubscription(Base):
-    """用戶訂閱方案"""
-    __tablename__ = "user_subscriptions"
-    id           = Column(Integer, primary_key=True, index=True)
-    user_id      = Column(String(100), unique=True, nullable=False, index=True)
-    plan         = Column(String(20), default="free")   # free / standard / pro
-    expires_at   = Column(DateTime, nullable=True)
-    auto_trade   = Column(Boolean, default=False)
-    auto_threshold = Column(Float, default=0.95)
-    created_at   = Column(DateTime, default=datetime.utcnow)
-    updated_at   = Column(DateTime, default=datetime.utcnow)
-
-
-class ReferralCode(Base):
-    """用戶推薦碼"""
-    __tablename__ = "referral_codes"
-    id           = Column(Integer, primary_key=True, index=True)
-    user_id      = Column(String(100), nullable=False, index=True)
-    code         = Column(String(20), unique=True, nullable=False, index=True)
-    referrals    = Column(Integer, default=0)
-    bonus_months = Column(Integer, default=0)
-    created_at   = Column(DateTime, default=datetime.utcnow)
-
-
 class TradingOrder(Base):
     """Fugle 下單記錄"""
     __tablename__ = "trading_orders"

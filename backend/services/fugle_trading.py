@@ -214,17 +214,6 @@ async def get_fugle_holdings() -> list[dict]:
         return []
 
 
-async def check_auto_trade(uid: str, confidence: float, req: OrderRequest) -> bool:
-    """檢查是否符合自動交易條件"""
-    try:
-        from ..models.database import AsyncSessionLocal
-        from ..models.models import UserSubscription
-        from sqlalchemy import select
-        async with AsyncSessionLocal() as db:
-            r    = await db.execute(select(UserSubscription).where(UserSubscription.user_id == uid))
-            sub  = r.scalar_one_or_none()
-        if sub is None or not sub.auto_trade:
-            return False
-        return confidence >= sub.auto_threshold
-    except Exception:
-        return False
+def check_auto_trade(confidence: float, threshold: float = 0.95) -> bool:
+    """檢查信心指數是否達到自動交易門檻（純工具版，無訂閱限制）"""
+    return confidence >= threshold

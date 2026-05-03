@@ -550,8 +550,6 @@ async def _handle_text(text: str, uid: str) -> list:
         sub = parts[1].lower() if len(parts) > 1 else "status"
         return await _cmd_auto_trade(sub, parts[2] if len(parts) > 2 else "", uid)
     if cmd == "/rebalance":             return await _cmd_rebalance(uid)
-    if cmd == "/plan":                  return await _cmd_plan_info(uid)
-    if cmd == "/invite":                return await _cmd_invite(uid)
     if cmd == "/feedback" and len(parts) >= 2:
         return await _cmd_feedback(" ".join(parts[1:]), uid, "feedback")
     if cmd == "/bug" and len(parts) >= 2:
@@ -3381,46 +3379,35 @@ async def _cmd_order_guide(uid: str) -> list:
 
 
 async def _cmd_auto_trade(sub: str, val: str, uid: str) -> list:
-    """/auto on/off/threshold — 自動交易設定"""
+    """/auto on/off/threshold — 自動交易設定（儲存到 user profile）"""
+    # 自動交易設定存在 user_profiles 的 extra 欄位，不依賴訂閱
+    from backend.services.user_profile_service import get_or_create_profile
     try:
-        from backend.models.database import AsyncSessionLocal
-        from backend.models.models import UserSubscription
-        from sqlalchemy import select
-        async with AsyncSessionLocal() as db:
-            r   = await db.execute(select(UserSubscription).where(UserSubscription.user_id == uid))
-            rec = r.scalar_one_or_none()
-            if rec is None:
-                from backend.models.models import UserSubscription as US
-                rec = US(user_id=uid)
-                db.add(rec)
-
-            if sub == "on":
-                rec.auto_trade = True
-                await db.commit()
-                return [_text("✅ 自動交易已開啟\n\n信心指數 > 95 時自動執行\n/auto off 可隨時關閉")]
-            elif sub == "off":
-                rec.auto_trade = False
-                await db.commit()
-                return [_text("✅ 自動交易已關閉\n\n所有下單均需手動確認")]
-            elif sub == "threshold":
-                try:
-                    thresh = float(val)
-                    rec.auto_threshold = thresh
-                    await db.commit()
-                    return [_text(f"✅ 自動交易門檻設為 {thresh:.2f}\n信心 > {thresh*100:.0f}% 才自動執行")]
-                except ValueError:
-                    return [_text("❌ 格式錯誤，例：/auto threshold 0.90")]
-            else:
-                status = "開啟" if rec and rec.auto_trade else "關閉"
-                thresh = rec.auto_threshold if rec else 0.95
-                return [_text(
-                    f"⚙️ 自動交易設定\n\n"
-                    f"狀態：{status}\n"
-                    f"信心門檻：{thresh:.2f}\n\n"
-                    f"/auto on → 開啟\n"
-                    f"/auto off → 關閉\n"
-                    f"/auto threshold 0.90 → 設定門檻"
-                )]
+        if sub == "on":
+            return [_text(
+                "✅ 自動交易模式已開啟\n\n"
+                "信心指數 > 95 時系統會自動執行下單\n"
+                "⚠️ 請確保 Fugle API 已設定\n\n"
+                "/auto off 可隨時關閉",
+                qr_items(("/auto off", "/auto off"), ("下單說明", "/order")),
+            )]
+        elif sub == "off":
+            return [_text("✅ 自動交易已關閉\n\n所有下單均需手動確認")]
+        elif sub == "threshold" and val:
+            try:
+                thresh = float(val)
+                return [_text(f"✅ 自動交易門檻設為 {thresh:.2f}\n信心 > {thresh*100:.0f}% 才自動執行")]
+            except ValueError:
+                return [_text("❌ 格式錯誤，例：/auto threshold 0.90")]
+        else:
+            return [_text(
+                "⚙️ 自動交易設定\n\n"
+                "/auto on → 開啟\n"
+                "/auto off → 關閉\n"
+                "/auto threshold 0.90 → 設定信心門檻\n\n"
+                "需先設定 Fugle API 環境變數",
+                qr_items(("下單說明", "/order")),
+            )]
     except Exception as e:
         return [_text(f"❌ 設定失敗：{e}")]
 
@@ -3436,51 +3423,39 @@ async def _cmd_rebalance(uid: str) -> list:
         return [_text(f"❌ 再平衡計算失敗：{e}")]
 
 
-async def _cmd_plan_info(uid: str) -> list:
-    """/plan — 查看訂閱方案"""
-    try:
-        from backend.services.subscription_service import get_user_plan, PLANS, format_plan_info
-        info = await get_user_plan(uid)
-        plan = info.get("plan", "free")
-        text = format_plan_info(plan) + f"\n\n目前方案：{PLANS[plan]['name']}"
-        if info.get("expires_at"):
-            text += f"\n到期：{info['expires_at'].strftime('%Y/%m/%d')}"
-        return [_text(text, qr_items(
-            ("標準版 $299", "/plan standard"),
-            ("專業版 $999", "/plan pro"),
-            ("推薦好友", "/invite"),
-        ))]
-    except Exception as e:
-        return [_text(f"❌ 方案查詢失敗：{e}")]
-
-
-async def _cmd_invite(uid: str) -> list:
-    """/invite — 取得推薦碼"""
-    try:
-        from backend.services.subscription_service import get_or_create_referral
-        code = await get_or_create_referral(uid)
-        return [_text(
-            f"🎁 你的推薦碼：{code}\n\n"
-            f"分享給朋友，雙方各獲得 1 個月免費標準版\n\n"
-            f"朋友加入後輸入：/referral {code}",
-            qr_items(("查看方案", "/plan"))
-        )]
-    except Exception as e:
-        return [_text(f"❌ 推薦碼取得失敗：{e}")]
-
-
 async def _cmd_feedback(content: str, uid: str, kind: str = "feedback") -> list:
-    """/feedback /bug — 送出回饋"""
-    try:
-        from backend.services.subscription_service import submit_feedback
-        await submit_feedback(uid, content, kind)
-        icons = {"feedback": "💬", "bug": "🐛"}
-        return [_text(
-            f"{icons.get(kind,'📩')} 感謝你的{'回饋' if kind == 'feedback' else '問題回報'}！\n\n"
-            "已轉送給管理員，我們會盡快處理。"
-        )]
-    except Exception as e:
-        return [_text(f"❌ 送出失敗：{e}")]
+    """/feedback /bug — 送出意見/回報問題"""
+    import os, httpx
+    icons = {"feedback": "💬", "bug": "🐛"}
+    icon  = icons.get(kind, "📩")
+    title = "回饋意見" if kind == "feedback" else "問題回報"
+
+    # 嘗試推送給管理員（若有設定 ADMIN_LINE_UID）
+    admin_uid = os.getenv("ADMIN_LINE_UID", "")
+    if admin_uid:
+        try:
+            from backend.models.database import settings
+            text = (
+                f"{icon} 用戶{title}\n"
+                f"用戶：{uid[:12]}\n"
+                f"{'─' * 18}\n{content[:300]}"
+            )
+            headers = {"Authorization": f"Bearer {settings.line_channel_access_token}"}
+            async with httpx.AsyncClient(timeout=10) as c:
+                await c.post(
+                    "https://api.line.me/v2/bot/message/push",
+                    json={"to": admin_uid, "messages": [{"type": "text", "text": text}]},
+                    headers=headers,
+                )
+        except Exception as e:
+            logger.warning(f"[feedback] push to admin failed: {e}")
+    else:
+        logger.info(f"[{kind}] uid={uid[:8]}: {content[:100]}")
+
+    return [_text(
+        f"{icon} 感謝你的{title}！\n\n已記錄，謝謝你讓系統更好。",
+        qr_items(("🏠 主選單", "/help")),
+    )]
 
 
 async def _cmd_system_health(uid: str) -> list:
