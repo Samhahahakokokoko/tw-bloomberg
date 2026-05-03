@@ -47,20 +47,32 @@ _report_pages: dict[str, dict] = {}
 
 # ── Webhook 入口 ───────────────────────────────────────────────────────────────
 
+@router.get("/webhook_ping")
+async def webhook_ping():
+    """健康檢查端點，確認 handler 正在運行"""
+    import sys
+    return {"status": "ok", "handler": "loaded", "python": sys.version[:10]}
+
+
 @router.post("/webhook")
 async def webhook(request: Request):
     sig  = request.headers.get("X-Line-Signature", "")
     body = await request.body()
+    logger.info(f"=== WEBHOOK HIT body={len(body)}bytes sig={'yes' if sig else 'NO'} ===")
     try:
         events = parser.parse(body.decode(), sig)
     except InvalidSignatureError:
         raise HTTPException(400, "Invalid signature")
     except Exception as e:
-        logger.error(f"Parse error: {e}")
+        logger.error(f"Parse error: {e}", exc_info=True)
         return "OK"
 
+    logger.info(f"=== PARSED {len(events)} events ===")
     for event in events:
+        reply_token = getattr(event, "reply_token", None)
         try:
+            logger.info(f"=== EVENT {type(event).__name__} ===")
+
             if isinstance(event, MessageEvent) and isinstance(event.message, TextMessageContent):
                 uid  = event.source.user_id
                 text = event.message.text.strip()
@@ -75,8 +87,22 @@ async def webhook(request: Request):
                 msgs = await _handle_postback(data, uid)
                 await _reply(event.reply_token, msgs)
 
+            else:
+                logger.info(f"Ignored event type: {type(event).__name__}")
+
         except Exception as e:
-            logger.error(f"Event error: {e}")
+            logger.error(f"Event error: {e}", exc_info=True)
+            if reply_token:
+                try:
+                    async with AsyncApiClient(configuration) as c:
+                        await AsyncMessagingApi(c).reply_message(
+                            ReplyMessageRequest(
+                                reply_token=reply_token,
+                                messages=[TextMessage(text=f"系統錯誤: {type(e).__name__}")]
+                            )
+                        )
+                except Exception:
+                    pass
 
     return "OK"
 
