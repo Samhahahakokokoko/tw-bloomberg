@@ -270,6 +270,25 @@ class DecisionEngine:
                     tier="watch",
                 ))
 
+        # ── Step 11: Analyst Consensus 驗證 ────────────────────────────────────
+        try:
+            from backend.services.analyst_consensus_engine import (
+                get_stock_consensus, get_consensus_boost
+            )
+            for d in decisions:
+                if d.action not in ("buy", "add"):
+                    continue
+                consensus = await get_stock_consensus(d.stock_code)
+                boost     = get_consensus_boost(consensus)
+                if boost != 0:
+                    d.confidence = min(100, max(0, d.confidence + boost))
+                    if boost > 0:
+                        d.reasons.append(f"分析師共識支撐+{boost:.0f}%")
+                    elif boost < 0:
+                        d.reasons.append("分析師高分歧，建議謹慎")
+        except Exception as _e:
+            logger.debug("[Decision] Step11 analyst consensus failed: %s", _e)
+
         # 排序：sell/reduce > buy/add > watch
         _priority = {"sell": 0, "reduce": 1, "buy": 2, "add": 3, "watch": 4}
         decisions.sort(key=lambda d: _priority.get(d.action, 5))

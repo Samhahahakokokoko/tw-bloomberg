@@ -788,3 +788,62 @@ class UsageLog(Base):
     params       = Column(String(200), default="")
     response_ms  = Column(Integer, default=0)
     created_at   = Column(DateTime, default=datetime.utcnow)
+
+
+# ── Analyst Intelligence System ───────────────────────────────────────────────
+
+class Analyst(Base):
+    """分析師基本資料與歷史績效"""
+    __tablename__ = "analysts"
+    id                = Column(Integer, primary_key=True, index=True)
+    analyst_id        = Column(String(50), unique=True, nullable=False, index=True)
+    name              = Column(String(100), nullable=False)
+    channel_url       = Column(String(300), default="")
+    channel_id        = Column(String(100), default="")   # YouTube channel ID
+    specialty         = Column(String(100), default="")   # AI/散熱/半導體
+    total_calls       = Column(Integer, default=0)
+    win_rate          = Column(Float, default=0.5)
+    avg_return        = Column(Float, default=0.0)
+    max_drawdown      = Column(Float, default=0.0)
+    reliability_score = Column(Float, default=50.0)       # 0-100
+    is_active         = Column(Boolean, default=True)
+    created_at        = Column(DateTime, default=datetime.utcnow)
+    updated_at        = Column(DateTime, default=datetime.utcnow)
+
+
+class AnalystCall(Base):
+    """分析師每次推薦記錄"""
+    __tablename__ = "analyst_calls"
+    id           = Column(Integer, primary_key=True, index=True)
+    date         = Column(String(10), nullable=False, index=True)
+    analyst_id   = Column(String(50), nullable=False, index=True)
+    stock_id     = Column(String(10), nullable=False, index=True)
+    stock_name   = Column(String(50), default="")
+    sentiment    = Column(String(20), default="neutral")  # strong_bullish/bullish/neutral/bearish/strong_bearish
+    timeframe    = Column(String(20), default="medium")   # short/medium/long
+    key_points   = Column(Text, default="[]")             # JSON list of strings
+    source_title = Column(String(300), default="")        # YouTube video title
+    source_url   = Column(String(300), default="")
+    entry_price  = Column(Float, default=0.0)
+    result_5d    = Column(Float, nullable=True)
+    result_20d   = Column(Float, nullable=True)
+    was_correct  = Column(Boolean, nullable=True)
+    created_at   = Column(DateTime, default=datetime.utcnow)
+
+
+class AnalystConsensusDaily(Base):
+    """每日分析師共識分數"""
+    __tablename__ = "analyst_consensus_daily"
+    id              = Column(Integer, primary_key=True, index=True)
+    date            = Column(String(10), nullable=False, index=True)
+    stock_id        = Column(String(10), nullable=False, index=True)
+    stock_name      = Column(String(50), default="")
+    consensus_score = Column(Float, default=0.0)          # 0-100
+    bullish_count   = Column(Integer, default=0)
+    bearish_count   = Column(Integer, default=0)
+    total_analysts  = Column(Integer, default=0)
+    high_cred_count = Column(Integer, default=0)          # 高可信分析師數
+    key_thesis      = Column(Text, default="")
+    is_divergent    = Column(Boolean, default=False)      # 高分歧標記
+    created_at      = Column(DateTime, default=datetime.utcnow)
+    __table_args__  = (UniqueConstraint("date", "stock_id"),)

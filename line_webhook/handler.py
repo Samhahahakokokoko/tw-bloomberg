@@ -555,6 +555,20 @@ async def _handle_text(text: str, uid: str) -> list:
     if cmd == "/bug" and len(parts) >= 2:
         return await _cmd_feedback(" ".join(parts[1:]), uid, "bug")
     if cmd == "/system":                return await _cmd_system_health(uid)
+    if cmd == "/analyst":
+        sub = parts[1].lower() if len(parts) > 1 else ""
+        if sub == "list":               return await _cmd_analyst_list()
+        if sub == "ranking":            return await _cmd_analyst_ranking()
+        if sub == "add" and len(parts) >= 3:
+            return await _cmd_analyst_add(" ".join(parts[2:]), uid)
+        if sub == "stats" and len(parts) >= 3:
+            return await _cmd_analyst_stats(parts[2])
+        # /analyst 2330 → 查詢特定股票的分析師觀點
+        if sub and re.match(r"^\d{4,6}$", sub):
+            return await _cmd_analyst_stock(sub.upper())
+        # /analyst → 今日共識報告
+        return await _cmd_analyst_today()
+    if cmd == "/consensus":             return await _cmd_consensus_heatmap(uid)
 
     # ── 機構級量化流程 ────────────────────────────────────────────────────
     if cmd == "/pipeline":
@@ -3456,6 +3470,146 @@ async def _cmd_feedback(content: str, uid: str, kind: str = "feedback") -> list:
         f"{icon} 感謝你的{title}！\n\n已記錄，謝謝你讓系統更好。",
         qr_items(("🏠 主選單", "/help")),
     )]
+
+
+async def _cmd_analyst_today() -> list:
+    """/analyst — 今日分析師共識報告"""
+    try:
+        from backend.services.analyst_heatmap import (
+            calculate_daily_consensus_with_alpha, _format_consensus_report
+        )
+        from backend.services.analyst_tracker import init_default_analysts
+        await init_default_analysts()
+        clist = await calculate_daily_consensus_with_alpha()
+        text  = await _format_consensus_report(clist)
+        return [_text(text, _qr_postback(
+            ("📊 熱度圖",    "consensus"),
+            ("🏆 分析師排行", "act=analyst_ranking"),
+            ("📈 今日選股",  "act=screener_qr"),
+        ))]
+    except Exception as e:
+        logger.error(f"[analyst_today] {e}")
+        return [_text(f"❌ 共識報告讀取失敗：{type(e).__name__}")]
+
+
+async def _cmd_analyst_list() -> list:
+    """/analyst list — 分析師追蹤清單"""
+    try:
+        from backend.services.analyst_tracker import get_all_analysts, format_analyst_list, init_default_analysts
+        await init_default_analysts()
+        analysts = await get_all_analysts()
+        text     = format_analyst_list(analysts)
+        return [_text(text, qr_items(
+            ("新增分析師", "/analyst add 名稱"),
+            ("今日共識",   "/analyst"),
+        ))]
+    except Exception as e:
+        return [_text(f"❌ 分析師清單讀取失敗：{e}")]
+
+
+async def _cmd_analyst_ranking() -> list:
+    """/analyst ranking — 可信度排行"""
+    try:
+        from backend.services.analyst_tracker import get_all_analysts, init_default_analysts
+        await init_default_analysts()
+        analysts = await get_all_analysts()
+        lines    = ["🏆 分析師可信度排行", "─" * 18]
+        for i, a in enumerate(analysts[:8], 1):
+            lines.append(
+                f"#{i} {a['tier_label']}  {a['name']}\n"
+                f"   勝率{a['win_rate']*100:.0f}%  可信度{a['reliability_score']:.0f}/100"
+            )
+        return [_text("\n".join(lines), qr_items(("今日共識", "/analyst"), ("追蹤清單", "/analyst list")))]
+    except Exception as e:
+        return [_text(f"❌ 排行讀取失敗：{e}")]
+
+
+async def _cmd_analyst_add(name: str, uid: str) -> list:
+    """/analyst add [名稱] — 新增分析師"""
+    try:
+        from backend.services.analyst_tracker import add_analyst
+        import re as _re
+        analyst_id = _re.sub(r"[^a-zA-Z0-9_一-鿿]", "", name.lower())[:20]
+        result     = await add_analyst(analyst_id, name)
+        if result["ok"]:
+            return [_text(f"✅ 已新增分析師：{name}\n\n/analyst list 查看清單")]
+        return [_text(f"❌ {result.get('error', '新增失敗')}")]
+    except Exception as e:
+        return [_text(f"❌ 新增失敗：{e}")]
+
+
+async def _cmd_analyst_stats(analyst_id: str) -> list:
+    """/analyst stats [名稱] — 分析師績效"""
+    try:
+        from backend.services.analyst_tracker import get_analyst_stats, format_analyst_stats
+        stats = await get_analyst_stats(analyst_id)
+        if not stats:
+            return [_text(f"❌ 找不到分析師：{analyst_id}\n/analyst list 查看清單")]
+        return [_text(format_analyst_stats(stats), qr_items(("今日共識", "/analyst")))]
+    except Exception as e:
+        return [_text(f"❌ 統計讀取失敗：{e}")]
+
+
+async def _cmd_analyst_stock(stock_id: str) -> list:
+    """/analyst [股票代碼] — 查詢特定股票的分析師觀點"""
+    try:
+        from backend.services.analyst_consensus_engine import get_stock_consensus
+        from backend.services.analyst_tracker import init_default_analysts
+        await init_default_analysts()
+        cons = await get_stock_consensus(stock_id)
+        if not cons:
+            return [_text(f"📺 {stock_id} 分析師觀點\n\n近期無分析師提及此股票")]
+        text = (
+            f"📺 {stock_id} {cons.stock_name} 分析師觀點\n"
+            f"{'─' * 18}\n"
+            f"{cons.to_line_text()}"
+        )
+        return [_text(text, _qr_postback(
+            (f"🔍 分析 {stock_id}", f"act=recommend_detail&code={stock_id}"),
+            ("📊 今日共識",         "consensus"),
+        ))]
+    except Exception as e:
+        return [_text(f"❌ 查詢失敗：{e}")]
+
+
+async def _cmd_consensus_heatmap(uid: str) -> list:
+    """/consensus — 今日共識熱度圖"""
+    try:
+        from backend.services.analyst_heatmap import get_heatmap_data, generate_heatmap_image
+        from backend.services.analyst_tracker import init_default_analysts
+        await init_default_analysts()
+
+        rows     = await get_heatmap_data()
+        path     = generate_heatmap_image(rows)
+        base_url = os.getenv("BASE_URL", "")
+
+        if not base_url:
+            # fallback 文字版
+            lines = ["📺 分析師關注熱度", "─" * 18]
+            for r in rows[:8]:
+                agree = "✅" if r["alpha_agree"] else "❌"
+                lines.append(
+                    f"{r['strength_icons']} {r['stock_id']} {r['stock_name']}"
+                    f"  ×{r['total_mentions']}  Alpha:{agree}"
+                )
+            return [_text("\n".join(lines))]
+
+        img_url = f"{base_url.rstrip('/')}/static/reports/{path.name}"
+        return [
+            FlexMessage(
+                alt_text="分析師關注熱度圖",
+                contents={"type": "bubble", "body": {
+                    "type": "box", "layout": "vertical", "contents": [
+                        {"type": "image", "url": img_url, "size": "full",
+                         "aspectMode": "fit",
+                         "action": {"type": "uri", "uri": img_url}}
+                    ]
+                }}
+            )
+        ]
+    except Exception as e:
+        logger.error(f"[consensus_heatmap] {e}")
+        return [_text(f"❌ 熱度圖生成失敗：{type(e).__name__}: {str(e)[:80]}")]
 
 
 async def _cmd_system_health(uid: str) -> list:

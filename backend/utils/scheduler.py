@@ -241,6 +241,27 @@ def start_scheduler() -> AsyncIOScheduler:
         id="market_breadth", replace_existing=True,
     )
 
+    # ── Analyst Intelligence System 排程 ─────────────────────────────────
+
+    # 16:00 抓取 YouTube 新影片並分析
+    scheduler.add_job(
+        _run_youtube_fetch,
+        CronTrigger(day_of_week="mon-fri", hour=16, minute=0, timezone="Asia/Taipei"),
+        id="youtube_fetch", replace_existing=True,
+    )
+    # 17:00 更新分析師績效 + 計算共識
+    scheduler.add_job(
+        _run_analyst_performance,
+        CronTrigger(day_of_week="mon-fri", hour=17, minute=0, timezone="Asia/Taipei"),
+        id="analyst_performance", replace_existing=True,
+    )
+    # 20:00 推送共識報告
+    scheduler.add_job(
+        _push_analyst_consensus,
+        CronTrigger(day_of_week="mon-fri", hour=20, minute=0, timezone="Asia/Taipei"),
+        id="analyst_consensus_push", replace_existing=True,
+    )
+
     # ── 新功能排程（第三批/最終批）──────────────────────────────────────────
 
     # 17:30 Autonomous Daily Research
@@ -755,6 +776,32 @@ async def _run_pipeline_overlay_prep():
         logger.info("[Pipeline 18:45] conviction: %d 檔達交易門檻", len(results))
     except Exception as e:
         logger.error(f"[Pipeline 18:45] conviction failed: {e}")
+
+
+async def _run_youtube_fetch():
+    try:
+        from ..services.youtube_alpha_engine import run_daily_fetch
+        await run_daily_fetch()
+    except Exception as e:
+        logger.error(f"YouTube fetch failed: {e}")
+
+
+async def _run_analyst_performance():
+    try:
+        from ..services.analyst_performance_engine import run_daily_performance_update
+        from ..services.analyst_consensus_engine import run_daily_consensus
+        await run_daily_performance_update()
+        await run_daily_consensus()
+    except Exception as e:
+        logger.error(f"Analyst performance update failed: {e}")
+
+
+async def _push_analyst_consensus():
+    try:
+        from ..services.analyst_heatmap import push_consensus_report
+        await push_consensus_report()
+    except Exception as e:
+        logger.error(f"Analyst consensus push failed: {e}")
 
 
 async def _push_autonomous_research():
