@@ -334,6 +334,15 @@ def start_scheduler() -> AsyncIOScheduler:
         id="mistake_detector_weekly", replace_existing=True,
     )
 
+    # ── Production Grade Quant Infrastructure 排程 ──────────────────────────
+
+    # 系統健康監控 — 每 30 分鐘（交易日）
+    scheduler.add_job(
+        _run_system_health_check,
+        CronTrigger(day_of_week="mon-fri", hour="8-20", minute="*/30", timezone="Asia/Taipei"),
+        id="system_health_check", replace_existing=True,
+    )
+
     # ── 市場情報作戰系統排程 ─────────────────────────────────────────────────
 
     # 15:30 盤後：週期/領先/法人足跡掃描
@@ -1012,6 +1021,18 @@ async def _run_meta_alpha_weekly():
 
 
 # ── 市場情報作戰系統 job handlers ────────────────────────────────────────────
+
+async def _run_system_health_check():
+    """每 30 分鐘系統健康檢查"""
+    try:
+        from quant.system_health_dashboard import collect_health
+        health = await collect_health()
+        if health.overall_status == "red":
+            logger.critical("[Health] system status RED: %s",
+                            [m.name for m in health.modules if m.status == "red"])
+    except Exception as e:
+        logger.error(f"System health check failed: {e}")
+
 
 async def _run_market_intel_scan():
     """15:30 — 市場週期/領先滯後/主題擴散/法人足跡掃描"""

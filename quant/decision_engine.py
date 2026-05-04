@@ -128,10 +128,25 @@ class DecisionEngine:
     """
 
     async def run(self, uid: str) -> DailyDecision:
+        from quant.audit_log_engine import AuditLogger
+        from quant.risk_kill_switch import is_trading_enabled, check_and_activate, status_dict
+        from quant.mock_isolation import IS_PRODUCTION, assert_no_mock
+
+        audit = AuditLogger()
         decisions:     list[Decision] = []
         movers_count   = 0
         filtered_count = 0
         notes: list[str] = []
+
+        # ── 前置檢查：Kill Switch ────────────────────────────────────────────
+        if not is_trading_enabled():
+            ks = status_dict()
+            logger.warning("[Decision] Kill Switch active: %s", ks["reason"])
+            return DailyDecision(
+                decisions=[],
+                generated_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                pipeline_note=f"⛔ Kill Switch 啟動：{ks['reason']}",
+            )
 
         # ── Layer 1: 動能啟動掃描 ────────────────────────────────────────────
         movers = []
@@ -141,15 +156,30 @@ class DecisionEngine:
             movers   = await engine.scan()
             if not movers:
                 movers = engine.scan_mock(15)
+                for m in movers:
+                    m.is_mock = True
             movers_count = len(movers)
         except Exception as e:
             logger.warning("[Decision] movers failed: %s", e)
             try:
                 from quant.movers_engine import MoversEngine
                 movers = MoversEngine().scan_mock(10)
+                for m in movers:
+                    m.is_mock = True
                 movers_count = len(movers)
             except Exception:
                 pass
+
+        # Production 環境：若 movers 全為 mock → 停止
+        mock_movers = sum(1 for m in movers if getattr(m, "is_mock", False))
+        if not check_and_activate(mock_movers, max(len(movers), 1),
+                                   mock_in_production=IS_PRODUCTION and mock_movers == len(movers) and len(movers) > 0):
+            ks = status_dict()
+            return DailyDecision(
+                decisions=[],
+                generated_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                pipeline_note=f"⛔ Kill Switch 啟動：{ks['reason']}",
+            )
 
         # ── Layer 2: 三層分類 ─────────────────────────────────────────────────
         scan_records: list = []
@@ -289,12 +319,32 @@ class DecisionEngine:
         except Exception as _e:
             logger.debug("[Decision] Step11 analyst consensus failed: %s", _e)
 
+        # ── Audit Log ──────────────────────────────────────────────────────────
+        for d in decisions:
+            audit.record_decision(
+                stock_id   = d.stock_code,
+                action     = d.action,
+                confidence = d.confidence,
+                reasons    = d.reasons,
+            )
+        for m in movers:
+            code = m.stock_id if hasattr(m, "stock_id") else ""
+            if code and code not in {d.stock_code for d in decisions}:
+                audit.record_skip(code, "not_in_final_decisions",
+                                  kill_switch=not is_trading_enabled())
+
+        try:
+            await audit.flush()
+        except Exception:
+            pass
+
         # 排序：sell/reduce > buy/add > watch
         _priority = {"sell": 0, "reduce": 1, "buy": 2, "add": 3, "watch": 4}
         decisions.sort(key=lambda d: _priority.get(d.action, 5))
 
         if movers_count > 0:
-            notes.append(f"掃描 {movers_count} 檔動能股，通過過濾 {filtered_count} 檔")
+            mock_note = f"（⚠️ {mock_movers} 筆為示範資料）" if mock_movers else ""
+            notes.append(f"掃描 {movers_count} 檔動能股，通過過濾 {filtered_count} 檔{mock_note}")
 
         return DailyDecision(
             decisions=decisions[:MAX_DECISIONS],

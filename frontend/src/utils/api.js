@@ -28,7 +28,11 @@ export const deleteAlert  = (id)   => api.delete(`/api/alerts/${id}`).then(r => 
 
 // ── News ─────────────────────────────────────────────────────────────────────
 export const getNews       = (params) => api.get("/api/news", { params }).then(r => r.data);
-export const getDataStatus = ()       => api.get("/api/data-status").then(r => r.data);
+export const getDataStatus    = ()       => api.get("/api/data-status").then(r => r.data);
+export const getSystemHealth  = ()       => api.get("/api/system/health").then(r => r.data);
+export const getKillSwitch    = ()       => api.get("/api/system/kill-switch").then(r => r.data);
+export const activateKillSwitch   = (reason) => api.post(`/api/system/kill-switch/activate?reason=${encodeURIComponent(reason)}`).then(r => r.data);
+export const deactivateKillSwitch = ()       => api.post("/api/system/kill-switch/deactivate").then(r => r.data);
 
 // ── Backtest ─────────────────────────────────────────────────────────────────
 export const runBacktest = (data) => api.post("/api/backtest/run", data).then(r => r.data);

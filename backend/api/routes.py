@@ -973,4 +973,71 @@ async def data_source_status():
         results["database"] = {"ok": False, "latency_ms": None, "note": str(e)[:60]}
 
     all_ok = all(v["ok"] for v in results.values())
-    return {"sources": results, "all_ok": all_ok}
+    from quant.mock_isolation import env_info
+    from quant.risk_kill_switch import status_dict
+    return {
+        "sources":      results,
+        "all_ok":       all_ok,
+        "env":          env_info(),
+        "kill_switch":  status_dict(),
+    }
+
+
+# ── System Health ──────────────────────────────────────────────────────────────
+
+@router.get("/system/health")
+async def system_health():
+    """完整系統健康儀表板（供前端 /system 頁面使用）"""
+    from quant.system_health_dashboard import collect_health
+    health = await collect_health()
+    return health.to_dict()
+
+
+@router.get("/system/kill-switch")
+async def kill_switch_status():
+    """Kill Switch 目前狀態"""
+    from quant.risk_kill_switch import status_dict
+    return status_dict()
+
+
+@router.post("/system/kill-switch/activate")
+async def activate_kill_switch(reason: str = "manual_admin"):
+    """手動啟動 Kill Switch（管理員操作）"""
+    from quant.risk_kill_switch import get_state
+    get_state().activate(f"manual:{reason}")
+    return {"activated": True, "reason": reason}
+
+
+@router.post("/system/kill-switch/deactivate")
+async def deactivate_kill_switch():
+    """手動解除 Kill Switch"""
+    from quant.risk_kill_switch import get_state
+    get_state().deactivate("manual_admin_release")
+    return {"deactivated": True}
+
+
+@router.get("/system/audit-log")
+async def get_audit_log(limit: int = Query(50), stock_id: str = Query("")):
+    """查詢決策稽核日誌"""
+    from ..models.models import AuditLog
+    q = select(AuditLog).order_by(AuditLog.created_at.desc()).limit(limit)
+    if stock_id:
+        q = q.where(AuditLog.stock_id == stock_id)
+    result = await (await get_db().__anext__()).execute(q)
+    rows = result.scalars().all()
+    return [
+        {
+            "id":           r.id,
+            "session_id":   r.session_id,
+            "stock_id":     r.stock_id,
+            "action":       r.action,
+            "confidence":   r.confidence,
+            "eligible":     r.eligible,
+            "blocking":     r.blocking_reasons_json,
+            "mock_count":   r.mock_count,
+            "stale_count":  r.stale_count,
+            "kill_switch":  r.kill_switch_on,
+            "created_at":   str(r.created_at),
+        }
+        for r in rows
+    ]

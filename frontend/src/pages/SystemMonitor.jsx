@@ -69,20 +69,29 @@ function StatCard({ label, value, color = C.accent, sub }) {
 }
 
 export default function SystemMonitor() {
-  const [modules,  setModules]  = useState(MOCK_MODULES);
-  const [stats,    setStats]    = useState(MOCK_STATS);
-  const [time,     setTime]     = useState(new Date());
-  const [loading,  setLoading]  = useState(false);
+  const [modules,     setModules]     = useState(MOCK_MODULES);
+  const [stats,       setStats]       = useState(MOCK_STATS);
+  const [health,      setHealth]      = useState(null);
+  const [killSwitch,  setKillSwitch]  = useState(null);
+  const [isMock,      setIsMock]      = useState(true);
+  const [time,        setTime]        = useState(new Date());
+  const [loading,     setLoading]     = useState(false);
 
   const reload = useCallback(async () => {
     setLoading(true);
     try {
-      const [mRes, sRes] = await Promise.allSettled([
+      const [mRes, sRes, ksRes] = await Promise.allSettled([
         fetch("/api/system/health").then(r => r.ok ? r.json() : null),
         fetch("/api/system/stats").then(r => r.ok ? r.json() : null),
+        fetch("/api/system/kill-switch").then(r => r.ok ? r.json() : null),
       ]);
-      if (mRes.status === "fulfilled" && mRes.value?.modules) setModules(mRes.value.modules);
+      if (mRes.status === "fulfilled" && mRes.value?.modules) {
+        setModules(mRes.value.modules);
+        setHealth(mRes.value);
+        setIsMock(false);
+      }
       if (sRes.status === "fulfilled" && sRes.value) setStats(sRes.value);
+      if (ksRes.status === "fulfilled" && ksRes.value) setKillSwitch(ksRes.value);
     } catch {}
     setLoading(false);
   }, []);
@@ -101,6 +110,30 @@ export default function SystemMonitor() {
 
   return (
     <div style={{ background: C.bg, minHeight: "100vh", padding: "12px", fontFamily: "monospace" }}>
+
+      {/* Kill Switch 警示 */}
+      {killSwitch?.kill_switch_active && (
+        <div style={{ background: "#330000", border: `1px solid ${C.red}`, borderRadius: 6, padding: "8px 12px", marginBottom: 8, fontSize: 11, color: C.red }}>
+          ⛔ KILL SWITCH 啟動中 — {killSwitch.reason}
+          <span style={{ color: C.muted, marginLeft: 8 }}>交易訊號已停止</span>
+        </div>
+      )}
+
+      {/* 示範資料提示 */}
+      {isMock && (
+        <div style={{ background: "#1a1200", border: `1px solid ${C.yellow}66`, borderRadius: 6, padding: "5px 12px", marginBottom: 6, fontSize: 10, color: C.yellow }}>
+          ⚠️ 示範資料 — 尚未從後端載入真實模組狀態
+        </div>
+      )}
+
+      {/* 資料品質指標 */}
+      {health && (
+        <div className="flex gap-4 mb-2" style={{ fontSize: 10, color: C.muted }}>
+          <span>全系統可信度：<span style={{ color: health.global_data_quality >= 0.85 ? C.green : C.yellow }}>{(health.global_data_quality * 100).toFixed(0)}%</span></span>
+          <span>Mock 比例：<span style={{ color: health.mock_ratio > 0 ? C.red : C.green }}>{(health.mock_ratio * 100).toFixed(0)}%</span></span>
+          <span>API 成功率：<span style={{ color: C.accent }}>{(health.api_success_rate * 100).toFixed(0)}%</span></span>
+        </div>
+      )}
 
       {/* 標題 */}
       <div className="flex items-center justify-between mb-3 pb-2" style={{ borderBottom: `1px solid ${C.border}` }}>

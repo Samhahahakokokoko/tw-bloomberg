@@ -890,3 +890,95 @@ class AnalystConsensusDaily(Base):
     is_divergent    = Column(Boolean, default=False)      # 高分歧標記
     created_at      = Column(DateTime, default=datetime.utcnow)
     __table_args__  = (UniqueConstraint("date", "stock_id"),)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Production Grade Quant Infrastructure — 資料品質與稽核資料表
+# ══════════════════════════════════════════════════════════════════════════════
+
+class DataQualityLog(Base):
+    """每筆資料品質記錄"""
+    __tablename__ = "data_quality_log"
+
+    id           = Column(Integer, primary_key=True, index=True)
+    stock_id     = Column(String(10), index=True)
+    data_type    = Column(String(30), nullable=False)    # tick/daily/institutional/financial/news/analyst
+    source       = Column(String(30), nullable=False)
+    confidence   = Column(Float, nullable=False)
+    is_mock      = Column(Boolean, default=False)
+    stale        = Column(Boolean, default=False)
+    stale_reason = Column(String(100))
+    created_at   = Column(DateTime, default=datetime.utcnow, index=True)
+
+
+class TradeEligibilityLog(Base):
+    """交易資格記錄"""
+    __tablename__ = "trade_eligibility_log"
+
+    id               = Column(Integer, primary_key=True, index=True)
+    stock_id         = Column(String(10), index=True, nullable=False)
+    trade_eligible   = Column(Boolean, nullable=False)
+    confidence_score = Column(Float)
+    blocking_reasons = Column(Text)    # JSON 陣列
+    warnings         = Column(Text)    # JSON 陣列
+    created_at       = Column(DateTime, default=datetime.utcnow, index=True)
+
+
+class AuditLog(Base):
+    """決策稽核日誌"""
+    __tablename__ = "audit_logs"
+
+    id                     = Column(Integer, primary_key=True, index=True)
+    session_id             = Column(String(30), index=True)
+    stock_id               = Column(String(10), index=True, nullable=False)
+    action                 = Column(String(20), nullable=False)
+    confidence             = Column(Float)
+    reasons_json           = Column(Text)
+    layer_results_json     = Column(Text)
+    avg_data_confidence    = Column(Float)
+    mock_count             = Column(Integer, default=0)
+    stale_count            = Column(Integer, default=0)
+    eligible               = Column(Boolean, default=True)
+    blocking_reasons_json  = Column(Text)
+    kill_switch_on         = Column(Boolean, default=False)
+    created_at             = Column(DateTime, default=datetime.utcnow, index=True)
+
+
+class KillSwitchLog(Base):
+    """Kill Switch 啟動記錄"""
+    __tablename__ = "kill_switch_log"
+
+    id           = Column(Integer, primary_key=True, index=True)
+    enabled      = Column(Boolean, nullable=False)
+    reason       = Column(String(200))
+    triggered_at = Column(String(30))
+    created_at   = Column(DateTime, default=datetime.utcnow, index=True)
+
+
+class BacktestIntegrityLog(Base):
+    """回測完整性記錄"""
+    __tablename__ = "backtest_integrity_log"
+
+    id                      = Column(Integer, primary_key=True, index=True)
+    session_id              = Column(String(50), index=True)
+    lookahead_bias          = Column(Boolean, default=False)
+    survivorship_bias_risk  = Column(String(10))    # LOW/MEDIUM/HIGH
+    data_leakage            = Column(Boolean, default=False)
+    mock_data_in_backtest   = Column(Boolean, default=False)
+    integrity_score         = Column(Float)
+    warnings_json           = Column(Text)
+    created_at              = Column(DateTime, default=datetime.utcnow, index=True)
+
+
+class SystemHealthLog(Base):
+    """系統健康狀態記錄（每次 collect_health 寫入）"""
+    __tablename__ = "system_health_log"
+
+    id                   = Column(Integer, primary_key=True, index=True)
+    overall_status       = Column(String(10))    # green/yellow/red
+    modules_json         = Column(Text)          # 各模組狀態 JSON
+    global_data_quality  = Column(Float)
+    mock_ratio           = Column(Float)
+    stale_ratio          = Column(Float)
+    kill_switch_active   = Column(Boolean, default=False)
+    created_at           = Column(DateTime, default=datetime.utcnow, index=True)
