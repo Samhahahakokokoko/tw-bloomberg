@@ -1,14 +1,16 @@
 import React, { useEffect, useState } from "react";
-import { getMarketOverview, getPortfolio, getNews, getMarketAnomaly } from "../utils/api";
+import { getMarketOverview, getPortfolio, getNews, getMarketAnomaly, getDataStatus } from "../utils/api";
 import Card from "../components/Card";
 import PriceTag from "../components/PriceTag";
 
 export default function Dashboard() {
-  const [market, setMarket]   = useState(null);
-  const [portfolio, setPortfolio] = useState([]);
-  const [news, setNews]       = useState([]);
-  const [anomaly, setAnomaly] = useState(null);
-  const [time, setTime]       = useState(new Date());
+  const [market, setMarket]         = useState(null);
+  const [marketErr, setMarketErr]   = useState(false);
+  const [portfolio, setPortfolio]   = useState([]);
+  const [news, setNews]             = useState([]);
+  const [anomaly, setAnomaly]       = useState(null);
+  const [dataStatus, setDataStatus] = useState(null);
+  const [time, setTime]             = useState(new Date());
 
   useEffect(() => {
     const load = async () => {
@@ -18,10 +20,14 @@ export default function Dashboard() {
         getNews({ limit: 6 }),
         getMarketAnomaly(),
       ]);
-      if (m.status === "fulfilled") setMarket(m.value);
+      if (m.status === "fulfilled") { setMarket(m.value); setMarketErr(false); }
+      else setMarketErr(true);
       if (p.status === "fulfilled") setPortfolio(p.value);
       if (n.status === "fulfilled") setNews(n.value);
       if (a.status === "fulfilled") setAnomaly(a.value);
+
+      // 資料來源狀態（不阻塞主流程）
+      getDataStatus().then(setDataStatus).catch(() => {});
     };
     load();
     const tick = setInterval(() => setTime(new Date()), 1000);
@@ -39,6 +45,21 @@ export default function Dashboard() {
         <h1 className="text-terminal-accent text-lg font-bold tracking-widest">◈ MARKET DASHBOARD</h1>
         <div className="text-terminal-muted text-xs font-mono">{time.toLocaleString("zh-TW")}</div>
       </div>
+
+      {/* 資料來源狀態列 */}
+      {dataStatus && !dataStatus.all_ok && (
+        <div className="flex flex-wrap gap-2 px-3 py-2 rounded border text-xs"
+          style={{ background: "#1a1200", borderColor: "#ffd74066" }}>
+          <span style={{ color: "#ffd740" }}>⚠️ 資料來源異常：</span>
+          {Object.entries(dataStatus.sources).map(([src, s]) =>
+            !s.ok ? (
+              <span key={src} style={{ color: "#ff5252" }}>
+                {src} ✗ {s.note ? `(${s.note})` : ""}
+              </span>
+            ) : null
+          )}
+        </div>
+      )}
 
       {/* 大盤異常警報 */}
       {anomaly?.has_anomaly && (
@@ -63,6 +84,8 @@ export default function Dashboard() {
               </div>
               <PriceTag value={market.change || 0} pct={market.change_pct} />
             </div>
+          ) : marketErr ? (
+            <div className="text-terminal-red text-xs">⚠️ API 連線失敗</div>
           ) : (
             <div className="text-terminal-muted text-sm">載入中...</div>
           )}

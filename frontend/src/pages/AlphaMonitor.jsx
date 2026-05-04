@@ -67,8 +67,10 @@ function IcBar({ value }) {
 }
 
 export default function AlphaMonitor() {
-  const [alphas,    setAlphas]    = useState(MOCK_ALPHAS);
-  const [loading,   setLoading]   = useState(false);
+  const [alphas,    setAlphas]    = useState([]);
+  const [loading,   setLoading]   = useState(true);
+  const [dataErr,   setDataErr]   = useState(null);   // null=ok, string=error msg
+  const [isMock,    setIsMock]    = useState(false);
   const [filter,    setFilter]    = useState("ALL");
   const [editMode,  setEditMode]  = useState(false);
   const [weights,   setWeights]   = useState({});
@@ -76,11 +78,26 @@ export default function AlphaMonitor() {
 
   useEffect(() => {
     const tick = setInterval(() => setTime(new Date()), 1000);
-    // 嘗試從 API 取真實資料
+    setLoading(true);
     fetch("/api/quant/alpha_status")
-      .then(r => r.ok ? r.json() : null)
-      .then(data => { if (data?.alphas) setAlphas(data.alphas); })
-      .catch(() => {});
+      .then(r => r.ok ? r.json() : Promise.reject(`HTTP ${r.status}`))
+      .then(data => {
+        if (data?.alphas?.length) {
+          setAlphas(data.alphas);
+          setIsMock(data.is_mock || false);
+          setDataErr(null);
+        } else {
+          setAlphas(MOCK_ALPHAS);
+          setIsMock(true);
+          setDataErr("API 回傳空資料，顯示示範資料");
+        }
+      })
+      .catch(e => {
+        setAlphas(MOCK_ALPHAS);
+        setIsMock(true);
+        setDataErr(`無法連接 API（${e}），顯示示範資料`);
+      })
+      .finally(() => setLoading(false));
     return () => clearInterval(tick);
   }, []);
 
@@ -112,6 +129,18 @@ export default function AlphaMonitor() {
       className="p-4 space-y-4 overflow-auto"
       style={{ background: C.bg, minHeight: "100vh", fontFamily: "monospace" }}
     >
+      {/* 資料狀態提示條 */}
+      {isMock && (
+        <div style={{ background: "#332200", border: "1px solid #ffd740", borderRadius: 6, padding: "6px 12px", fontSize: 11, color: "#ffd740" }}>
+          ⚠️ 示範資料 — {dataErr || "目前顯示模擬數據，非即時市場資料"}
+        </div>
+      )}
+      {loading && (
+        <div style={{ fontSize: 11, color: C.muted, textAlign: "center", padding: 8 }}>
+          載入中...
+        </div>
+      )}
+
       {/* 標題列 */}
       <div className="flex items-center justify-between border-b border-[#1e3a5f] pb-3">
         <div className="flex items-center gap-2">

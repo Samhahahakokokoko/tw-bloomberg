@@ -99,20 +99,46 @@ function ConsensusRow({ c }) {
 }
 
 export default function AnalystDashboard() {
-  const [analysts, setAnalysts]   = useState(MOCK_ANALYSTS);
-  const [consensus, setConsensus] = useState(MOCK_CONSENSUS);
+  const [analysts, setAnalysts]   = useState([]);
+  const [consensus, setConsensus] = useState([]);
   const [selected, setSelected]   = useState(null);
   const [filter,   setFilter]     = useState("ALL");
-  const [loading,  setLoading]    = useState(false);
+  const [loading,  setLoading]    = useState(true);
+  const [isMock,   setIsMock]     = useState(false);
+  const [dataErr,  setDataErr]    = useState(null);
 
   const reload = useCallback(async () => {
     setLoading(true);
+    let usedMock = false;
+    let errMsg   = null;
     try {
-      const r = await fetch("/api/analysts").then(r => r.ok ? r.json() : null);
-      if (r?.analysts) setAnalysts(r.analysts);
-      const c = await fetch("/api/analysts/consensus").then(r => r.ok ? r.json() : null);
-      if (c?.consensus) setConsensus(c.consensus);
-    } catch {}
+      const r = await fetch("/api/analysts").then(r => r.ok ? r.json() : Promise.reject(`HTTP ${r.status}`));
+      if (r?.analysts?.length) {
+        setAnalysts(r.analysts);
+      } else {
+        setAnalysts(MOCK_ANALYSTS);
+        usedMock = true;
+        errMsg = "分析師 API 回傳空資料";
+      }
+    } catch (e) {
+      setAnalysts(MOCK_ANALYSTS);
+      usedMock = true;
+      errMsg = `分析師資料無法載入（${e}）`;
+    }
+    try {
+      const c = await fetch("/api/analysts/consensus").then(r => r.ok ? r.json() : Promise.reject(`HTTP ${r.status}`));
+      if (c?.consensus?.length) {
+        setConsensus(c.consensus);
+      } else {
+        setConsensus(MOCK_CONSENSUS);
+        usedMock = true;
+      }
+    } catch {
+      setConsensus(MOCK_CONSENSUS);
+      usedMock = true;
+    }
+    setIsMock(usedMock);
+    setDataErr(usedMock ? (errMsg || "部分資料使用示範內容") : null);
     setLoading(false);
   }, []);
 
@@ -131,6 +157,13 @@ export default function AnalystDashboard() {
 
   return (
     <div style={{ background: C.bg, minHeight: "100vh", padding: "12px", fontFamily: "monospace" }}>
+
+      {/* 資料狀態提示條 */}
+      {isMock && (
+        <div style={{ background: "#332200", border: `1px solid ${C.yellow}`, borderRadius: 6, padding: "6px 12px", fontSize: 11, color: C.yellow, marginBottom: 8 }}>
+          ⚠️ 示範資料 — {dataErr || "目前顯示模擬數據，非即時市場資料"}
+        </div>
+      )}
 
       <div className="flex items-center justify-between mb-3 pb-2" style={{ borderBottom: `1px solid ${C.border}` }}>
         <div className="flex items-center gap-2">

@@ -27,7 +27,8 @@ export const createAlert  = (data) => api.post("/api/alerts", data).then(r => r.
 export const deleteAlert  = (id)   => api.delete(`/api/alerts/${id}`).then(r => r.data);
 
 // ── News ─────────────────────────────────────────────────────────────────────
-export const getNews = (params) => api.get("/api/news", { params }).then(r => r.data);
+export const getNews       = (params) => api.get("/api/news", { params }).then(r => r.data);
+export const getDataStatus = ()       => api.get("/api/data-status").then(r => r.data);
 
 // ── Backtest ─────────────────────────────────────────────────────────────────
 export const runBacktest = (data) => api.post("/api/backtest/run", data).then(r => r.data);

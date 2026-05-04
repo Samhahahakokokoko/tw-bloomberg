@@ -927,3 +927,50 @@ async def portfolio_correlation(user_id: str = Query("")):
     if "error" in result:
         raise HTTPException(422, result["error"])
     return result.get("correlation", {})
+
+
+# ── Data Source Status ─────────────────────────────────────────────────────────
+
+@router.get("/data-status")
+async def data_source_status():
+    """
+    回傳各資料來源的連線狀態，前端用來顯示資料可靠性警示。
+    每個來源：{ ok: bool, latency_ms: int | null, note: str }
+    """
+    import time
+    import httpx
+
+    results: dict = {}
+
+    # TWSE
+    t0 = time.monotonic()
+    try:
+        async with httpx.AsyncClient(timeout=5) as c:
+            r = await c.get("https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL")
+            ok = r.status_code == 200 and len(r.json()) > 0
+        results["twse"] = {"ok": ok, "latency_ms": int((time.monotonic() - t0) * 1000), "note": "上市即時報價"}
+    except Exception as e:
+        results["twse"] = {"ok": False, "latency_ms": None, "note": str(e)[:60]}
+
+    # FinMind
+    t0 = time.monotonic()
+    try:
+        async with httpx.AsyncClient(timeout=5) as c:
+            r = await c.get("https://api.finmindtrade.com/api/v4/info")
+            ok = r.status_code == 200
+        results["finmind"] = {"ok": ok, "latency_ms": int((time.monotonic() - t0) * 1000), "note": "歷史財務資料"}
+    except Exception as e:
+        results["finmind"] = {"ok": False, "latency_ms": None, "note": str(e)[:60]}
+
+    # 本地 DB
+    try:
+        from ..models.database import AsyncSessionLocal
+        from sqlalchemy import text
+        async with AsyncSessionLocal() as db:
+            await db.execute(text("SELECT 1"))
+        results["database"] = {"ok": True, "latency_ms": 0, "note": "本地資料庫"}
+    except Exception as e:
+        results["database"] = {"ok": False, "latency_ms": None, "note": str(e)[:60]}
+
+    all_ok = all(v["ok"] for v in results.values())
+    return {"sources": results, "all_ok": all_ok}

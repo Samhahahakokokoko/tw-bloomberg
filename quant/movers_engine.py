@@ -57,6 +57,7 @@ class MoverResult:
     score:          float      # 0~100 動能啟動分
     stage:          str        # early_breakout / trend_continuation / watch
     include_reasons: list[str] = field(default_factory=list)
+    is_mock:        bool = False   # 標記是否為假資料（screener 失敗 fallback）
 
     def to_series(self) -> pd.Series:
         return pd.Series({
@@ -105,12 +106,17 @@ class MoversEngine:
         try:
             from backend.services.report_screener import all_screener
             rows = all_screener(limit=300)
+            if not rows:
+                raise ValueError("screener returned empty result")
             results = [r for r in (self._eval(row) for row in rows) if r]
             results.sort(key=lambda r: r.score, reverse=True)
             return results[:self.top_n]
         except Exception as e:
-            logger.warning("[Movers] screener failed (%s) → mock", e)
-            return self.scan_mock()
+            logger.warning("[Movers] screener failed (%s) → using MOCK data", e)
+            mock = self.scan_mock()
+            for r in mock:
+                r.is_mock = True
+            return mock
 
     def scan_mock(self, n: int = 20) -> list[MoverResult]:
         """Mock 資料（測試 / API 失敗時）"""
