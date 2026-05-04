@@ -249,11 +249,23 @@ def start_scheduler() -> AsyncIOScheduler:
         CronTrigger(day_of_week="mon-fri", hour=16, minute=0, timezone="Asia/Taipei"),
         id="youtube_fetch", replace_existing=True,
     )
-    # 17:00 更新分析師績效 + 計算共識
+    # 16:30 觀點轉變偵測（抓片完成後）
+    scheduler.add_job(
+        _run_analyst_alert_check,
+        CronTrigger(day_of_week="mon-fri", hour=16, minute=30, timezone="Asia/Taipei"),
+        id="analyst_alert_check", replace_existing=True,
+    )
+    # 17:00 更新分析師績效 + 計算共識 + 話題統計
     scheduler.add_job(
         _run_analyst_performance,
         CronTrigger(day_of_week="mon-fri", hour=17, minute=0, timezone="Asia/Taipei"),
         id="analyst_performance", replace_existing=True,
+    )
+    # 每月1日 00:00 重新評定 Tier
+    scheduler.add_job(
+        _run_monthly_tier_update,
+        CronTrigger(day=1, hour=0, minute=0, timezone="Asia/Taipei"),
+        id="monthly_tier_update", replace_existing=True,
     )
     # 20:00 推送共識報告
     scheduler.add_job(
@@ -786,12 +798,53 @@ async def _run_youtube_fetch():
         logger.error(f"YouTube fetch failed: {e}")
 
 
+async def _run_analyst_alert_check():
+    try:
+        from ..services.analyst_alert_engine import run_daily_alert_check
+        await run_daily_alert_check()
+    except Exception as e:
+        logger.error(f"Analyst alert check failed: {e}")
+
+
+async def _run_monthly_tier_update():
+    try:
+        from ..services.analyst_quality_engine import run_monthly_tier_update, generate_monthly_report
+        from ..services.analyst_performance_engine import run_daily_performance_update
+        await run_daily_performance_update()
+        await run_monthly_tier_update()
+        report = await generate_monthly_report()
+        # 推送月度評比給所有訂閱者
+        from ..models.database import AsyncSessionLocal, settings
+        from ..models.models import Subscriber
+        from sqlalchemy import select
+        import httpx
+        async with AsyncSessionLocal() as db:
+            r    = await db.execute(select(Subscriber).where(Subscriber.subscribed_morning == True))
+            subs = r.scalars().all()
+        headers = {"Authorization": f"Bearer {settings.line_channel_access_token}"}
+        async with httpx.AsyncClient(timeout=30) as c:
+            for sub in subs:
+                try:
+                    await c.post(
+                        "https://api.line.me/v2/bot/message/push",
+                        json={"to": sub.line_user_id, "messages": [{"type": "text", "text": report}]},
+                        headers=headers,
+                    )
+                except Exception:
+                    pass
+        logger.info(f"[monthly_tier] pushed report to {len(subs)} subscribers")
+    except Exception as e:
+        logger.error(f"Monthly tier update failed: {e}")
+
+
 async def _run_analyst_performance():
     try:
         from ..services.analyst_performance_engine import run_daily_performance_update
         from ..services.analyst_consensus_engine import run_daily_consensus
+        from ..services.analyst_topic_engine import update_topics_from_calls
         await run_daily_performance_update()
         await run_daily_consensus()
+        await update_topics_from_calls()
     except Exception as e:
         logger.error(f"Analyst performance update failed: {e}")
 

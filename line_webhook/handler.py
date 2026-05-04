@@ -350,6 +350,21 @@ async def _handle_postback_inner(data: str, uid: str) -> list:
     if act == "watchlist" or act == "portfolio_watchlist":
         return await _cmd_watchlist(uid)
 
+    if act == "analyst_consensus":
+        return await _cmd_analyst_today()
+
+    if act == "analyst_add_guide":
+        return [_text(
+            "➕ 新增分析師\n\n"
+            "指令格式：\n"
+            "/analyst add [名稱] [channel_id] [專長]\n\n"
+            "例：\n"
+            "/analyst add 財經雪倫 UCxxxxx AI,散熱\n"
+            "/analyst add 存股研究室 UCyyyyy 存股,高股息\n\n"
+            "channel_id 可在 YouTube 頻道 URL 中找到（UC開頭）",
+            qr_items(("查看清單", "/analyst list"), ("今日共識", "/analyst")),
+        )]
+
     if act == "rs":
         return await _cmd_rs(uid)
 
@@ -560,9 +575,23 @@ async def _handle_text(text: str, uid: str) -> list:
         if sub == "list":               return await _cmd_analyst_list()
         if sub == "ranking":            return await _cmd_analyst_ranking()
         if sub == "add" and len(parts) >= 3:
-            return await _cmd_analyst_add(" ".join(parts[2:]), uid)
+            # /analyst add [名稱] [channel_id] [specialty]
+            name       = parts[2]
+            channel_id = parts[3] if len(parts) > 3 else ""
+            specialty  = " ".join(parts[4:]) if len(parts) > 4 else ""
+            return await _cmd_analyst_add_v2(name, channel_id, specialty, uid)
+        if sub == "remove" and len(parts) >= 3:
+            return await _cmd_analyst_remove(parts[2])
+        if sub == "enable" and len(parts) >= 3:
+            return await _cmd_analyst_set_enabled(parts[2], True)
+        if sub == "disable" and len(parts) >= 3:
+            return await _cmd_analyst_set_enabled(parts[2], False)
+        if sub == "tier" and len(parts) >= 4:
+            return await _cmd_analyst_set_tier(parts[2], parts[3])
         if sub == "stats" and len(parts) >= 3:
             return await _cmd_analyst_stats(parts[2])
+        if sub == "topics" and len(parts) >= 3:
+            return await _cmd_analyst_topics(parts[2])
         # /analyst 2330 → 查詢特定股票的分析師觀點
         if sub and re.match(r"^\d{4,6}$", sub):
             return await _cmd_analyst_stock(sub.upper())
@@ -3495,13 +3524,12 @@ async def _cmd_analyst_today() -> list:
 async def _cmd_analyst_list() -> list:
     """/analyst list — 分析師追蹤清單"""
     try:
-        from backend.services.analyst_tracker import get_all_analysts, format_analyst_list, init_default_analysts
-        await init_default_analysts()
-        analysts = await get_all_analysts()
-        text     = format_analyst_list(analysts)
-        return [_text(text, qr_items(
-            ("新增分析師", "/analyst add 名稱"),
-            ("今日共識",   "/analyst"),
+        from backend.services.analyst_source_manager import get_all_sources, format_source_list
+        sources = await get_all_sources()
+        text    = format_source_list(sources)
+        return [_text(text, _qr_postback(
+            ("➕ 新增分析師", "analyst_add_guide"),
+            ("今日共識",     "analyst_consensus"),
         ))]
     except Exception as e:
         return [_text(f"❌ 分析師清單讀取失敗：{e}")]
@@ -3525,17 +3553,83 @@ async def _cmd_analyst_ranking() -> list:
 
 
 async def _cmd_analyst_add(name: str, uid: str) -> list:
-    """/analyst add [名稱] — 新增分析師"""
+    """/analyst add [名稱] — 舊版（向後兼容）"""
+    return await _cmd_analyst_add_v2(name, "", "", uid)
+
+
+async def _cmd_analyst_add_v2(name: str, channel_id: str, specialty: str, uid: str) -> list:
+    """/analyst add [名稱] [channel_id] [specialty] — 新增分析師（升級版）"""
     try:
-        from backend.services.analyst_tracker import add_analyst
-        import re as _re
-        analyst_id = _re.sub(r"[^a-zA-Z0-9_一-鿿]", "", name.lower())[:20]
-        result     = await add_analyst(analyst_id, name)
+        from backend.services.analyst_source_manager import add_analyst
+        result = await add_analyst(
+            name=name, channel_id=channel_id,
+            specialty=specialty, tier="A",
+        )
         if result["ok"]:
-            return [_text(f"✅ 已新增分析師：{name}\n\n/analyst list 查看清單")]
+            return [_text(
+                f"✅ 已新增分析師：{name}\n"
+                f"Channel ID：{channel_id or '（未設定）'}\n"
+                f"專長：{specialty or '（未設定）'}\n"
+                f"初始評級：A級\n\n"
+                f"設定 Channel ID 才能自動抓取 YouTube 影片\n"
+                f"/analyst list 查看清單",
+                qr_items(("查看清單", "/analyst list"), ("今日共識", "/analyst")),
+            )]
         return [_text(f"❌ {result.get('error', '新增失敗')}")]
     except Exception as e:
         return [_text(f"❌ 新增失敗：{e}")]
+
+
+async def _cmd_analyst_remove(name: str) -> list:
+    """/analyst remove [名稱] — 移除分析師"""
+    try:
+        from backend.services.analyst_source_manager import remove_analyst
+        result = await remove_analyst(name)
+        if result["ok"]:
+            return [_text(f"🗑️ 已移除：{name}", qr_items(("查看清單", "/analyst list")))]
+        return [_text(f"❌ {result.get('error', '移除失敗')}")]
+    except Exception as e:
+        return [_text(f"❌ 移除失敗：{e}")]
+
+
+async def _cmd_analyst_set_enabled(name: str, enabled: bool) -> list:
+    """/analyst enable|disable [名稱] — 啟用/停用"""
+    try:
+        from backend.services.analyst_source_manager import set_enabled
+        result = await set_enabled(name, enabled)
+        status = "已啟用 ✅" if enabled else "已停用 ⏸"
+        if result["ok"]:
+            return [_text(f"{status}：{name}", qr_items(("查看清單", "/analyst list")))]
+        return [_text(f"❌ {result.get('error', '操作失敗')}")]
+    except Exception as e:
+        return [_text(f"❌ 操作失敗：{e}")]
+
+
+async def _cmd_analyst_set_tier(name: str, tier: str) -> list:
+    """/analyst tier [名稱] [S/A/B/C] — 手動調整評級"""
+    try:
+        from backend.services.analyst_source_manager import set_tier
+        result = await set_tier(name, tier)
+        if result["ok"]:
+            return [_text(
+                f"✅ 已調整 {name} 評級\n"
+                f"新評級：{result['label']}",
+                qr_items(("查看清單", "/analyst list")),
+            )]
+        return [_text(f"❌ {result.get('error', '調整失敗')}")]
+    except Exception as e:
+        return [_text(f"❌ 調整失敗：{e}")]
+
+
+async def _cmd_analyst_topics(analyst_id: str) -> list:
+    """/analyst topics [名稱] — 話題專長分析"""
+    try:
+        from backend.services.analyst_topic_engine import get_analyst_topics, format_topic_profile
+        topics = await get_analyst_topics(analyst_id)
+        text   = format_topic_profile(analyst_id, topics)
+        return [_text(text, qr_items(("績效統計", f"/analyst stats {analyst_id}")))]
+    except Exception as e:
+        return [_text(f"❌ 話題分析讀取失敗：{e}")]
 
 
 async def _cmd_analyst_stats(analyst_id: str) -> list:

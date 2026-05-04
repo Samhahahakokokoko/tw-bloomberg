@@ -25,6 +25,7 @@ import PortfolioOptimizer       from "./pages/PortfolioOptimizer";
 import DashboardPro             from "./pages/DashboardPro";
 import AlphaMonitor             from "./pages/AlphaMonitor";
 import LiveDashboard            from "./pages/LiveDashboard";
+import AnalystDashboard         from "./pages/AnalystDashboard";
 import StrategyPerformance      from "./pages/StrategyPerformance";
 import SystemMonitor            from "./pages/SystemMonitor";
 
@@ -49,6 +50,7 @@ const NAV = [
   { to: "/pro",        label: "PRO",        icon: Activity },
   { to: "/alpha",      label: "ALPHA",      icon: Layers },
   { to: "/live",       label: "LIVE",       icon: Activity },
+  { to: "/analysts",   label: "分析師",     icon: Users },
   { to: "/strat-perf", label: "績效分析",   icon: TrendingUp },
   { to: "/system",     label: "系統監控",   icon: BarChart2 },
 ];
@@ -113,6 +115,7 @@ export default function App() {
           <Route path="/pro"         element={<DashboardPro />} />
           <Route path="/alpha"       element={<AlphaMonitor />} />
           <Route path="/live"        element={<LiveDashboard />} />
+          <Route path="/analysts"    element={<AnalystDashboard />} />
           <Route path="/strat-perf"  element={<StrategyPerformance />} />
           <Route path="/system"      element={<SystemMonitor />} />
         </Routes>

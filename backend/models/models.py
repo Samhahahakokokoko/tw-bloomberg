@@ -793,22 +793,65 @@ class UsageLog(Base):
 # ── Analyst Intelligence System ───────────────────────────────────────────────
 
 class Analyst(Base):
-    """分析師基本資料與歷史績效"""
+    """分析師資料源（AnalystSource 白名單模式）"""
     __tablename__ = "analysts"
     id                = Column(Integer, primary_key=True, index=True)
     analyst_id        = Column(String(50), unique=True, nullable=False, index=True)
     name              = Column(String(100), nullable=False)
     channel_url       = Column(String(300), default="")
     channel_id        = Column(String(100), default="")   # YouTube channel ID
-    specialty         = Column(String(100), default="")   # AI/散熱/半導體
+    specialty         = Column(String(200), default="")   # AI/散熱/半導體,PCB
+    # ── 新增欄位（升級版）────────────────────────────────────────────────────
+    tier              = Column(String(2),   default="A")  # S/A/B/C
+    style             = Column(String(50),  default="")   # momentum/value/chip/fundamental
+    source_type       = Column(String(20),  default="youtube")  # youtube/twitter/ptt
+    weight            = Column(Float, default=1.0)        # 0-1 共識加權
+    enabled           = Column(Boolean, default=True)
+    notes             = Column(Text, default="")
+    # ── 品質指標 ──────────────────────────────────────────────────────────────
     total_calls       = Column(Integer, default=0)
     win_rate          = Column(Float, default=0.5)
     avg_return        = Column(Float, default=0.0)
     max_drawdown      = Column(Float, default=0.0)
-    reliability_score = Column(Float, default=50.0)       # 0-100
+    reliability_score = Column(Float, default=50.0)
+    quality_score     = Column(Float, default=0.5)        # 0-1 綜合品質分
+    timing_score      = Column(Float, default=0.5)        # 買低點比例
+    consistency       = Column(Float, default=0.5)        # 觀點一致性
+    chase_high_rate   = Column(Float, default=0.5)        # 追高比例（越低越好）
     is_active         = Column(Boolean, default=True)
+    added_date        = Column(String(10), default="")
     created_at        = Column(DateTime, default=datetime.utcnow)
     updated_at        = Column(DateTime, default=datetime.utcnow)
+
+
+class AnalystTopicStats(Base):
+    """分析師話題專長統計"""
+    __tablename__ = "analyst_topic_stats"
+    id           = Column(Integer, primary_key=True, index=True)
+    analyst_id   = Column(String(50), nullable=False, index=True)
+    topic        = Column(String(50), nullable=False, index=True)  # AI伺服器/散熱/半導體
+    mention_count = Column(Integer, default=0)
+    win_rate     = Column(Float, default=0.5)
+    avg_return   = Column(Float, default=0.0)
+    last_updated = Column(String(10), default="")
+    __table_args__ = (UniqueConstraint("analyst_id", "topic"),)
+
+
+class AnalystViewChange(Base):
+    """分析師觀點轉變記錄"""
+    __tablename__ = "analyst_view_changes"
+    id           = Column(Integer, primary_key=True, index=True)
+    date         = Column(String(10), nullable=False, index=True)
+    analyst_id   = Column(String(50), nullable=False, index=True)
+    analyst_name = Column(String(100), default="")
+    stock_id     = Column(String(10), nullable=False, index=True)
+    stock_name   = Column(String(50), default="")
+    prev_sentiment = Column(String(20), default="")
+    new_sentiment  = Column(String(20), default="")
+    change_type    = Column(String(30), default="")  # reversal/silent_exit/new_topic
+    source_title   = Column(String(300), default="")
+    alerted        = Column(Boolean, default=False)
+    created_at     = Column(DateTime, default=datetime.utcnow)
 
 
 class AnalystCall(Base):

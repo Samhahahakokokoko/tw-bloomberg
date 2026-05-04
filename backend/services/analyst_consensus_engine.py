@@ -52,26 +52,39 @@ class ConsensusResult:
 
 
 async def calculate_daily_consensus(days: int = 7) -> list[ConsensusResult]:
-    """計算過去 N 日的分析師共識（每日 17:00 執行）"""
+    """計算過去 N 日的分析師共識（升級版：Tier 加權 + 專長加成）"""
     from ..models.database import AsyncSessionLocal
     from ..models.models import AnalystCall, Analyst
-    from .twse_service import fetch_realtime_quote
 
     cutoff = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
     results: list[ConsensusResult] = []
 
-    async with AsyncSessionLocal() as db:
-        # 取得所有分析師的可信度
-        r = await db.execute(select(Analyst).where(Analyst.is_active == True))
-        analysts    = r.scalars().all()
-        cred_map    = {a.analyst_id: a.reliability_score for a in analysts}
-        win_map     = {a.analyst_id: a.win_rate for a in analysts}
+    # Tier 加權表
+    TIER_W = {"S": 1.5, "A": 1.0, "B": 0.5, "C": -0.3}
 
-        # 取得近 N 日所有推薦
+    async with AsyncSessionLocal() as db:
+        r = await db.execute(select(Analyst).where(Analyst.is_active == True))
+        analysts   = r.scalars().all()
+        cred_map   = {a.analyst_id: a.reliability_score for a in analysts}
+        win_map    = {a.analyst_id: a.win_rate for a in analysts}
+        tier_map   = {a.analyst_id: getattr(a, "tier", "A") for a in analysts}
+        spec_map   = {a.analyst_id: getattr(a, "specialty", "") for a in analysts}
+
         r2 = await db.execute(
-            select(AnalystCall).where(AnalystCall.date >= cutoff)
+            select(AnalystCall)
+            .where(AnalystCall.date >= cutoff)
+            .where(AnalystCall.analyst_id.in_(list(cred_map.keys())))
         )
         calls = r2.scalars().all()
+
+    # 取得股票族群資訊（for specialty bonus）
+    stock_sector_map: dict[str, str] = {}
+    try:
+        from .report_screener import all_screener
+        rows = all_screener(200)
+        stock_sector_map = {r.stock_id: r.sector for r in rows}
+    except Exception:
+        pass
 
     # 按股票聚合
     stock_map: dict[str, list] = {}
@@ -82,31 +95,53 @@ async def calculate_daily_consensus(days: int = 7) -> list[ConsensusResult]:
 
     for stock_id, stock_calls in stock_map.items():
         total        = len(stock_calls)
+        sector       = stock_sector_map.get(stock_id, "")
         bullish      = sum(1 for c in stock_calls if c.sentiment in ("bullish", "strong_bullish"))
         bearish      = sum(1 for c in stock_calls if c.sentiment in ("bearish", "strong_bearish"))
-        high_cred    = sum(1 for c in stock_calls if cred_map.get(c.analyst_id, 50) >= 65)
+        high_cred    = sum(1 for c in stock_calls
+                          if tier_map.get(c.analyst_id, "B") in ("S", "A"))
 
-        # 加權共識分數
+        # 升級加權共識分數：Tier × 專長加成 × 情緒
         weighted_sum = 0.0
         weight_total = 0.0
         for c in stock_calls:
-            cred     = cred_map.get(c.analyst_id, 50) / 100
+            tier     = tier_map.get(c.analyst_id, "A")
+            tier_w   = TIER_W.get(tier, 1.0)
+            spec     = spec_map.get(c.analyst_id, "")
             sent_val = SENTIMENT_SCORE.get(c.sentiment, 0)
-            # 反向指標：勝率 < 35% 則反轉信號
-            if win_map.get(c.analyst_id, 0.5) < 0.35:
-                sent_val = -sent_val
-            weighted_sum += cred * sent_val
-            weight_total += cred
+
+            # C 級反向處理
+            if tier == "C" and sent_val > 0:
+                sent_val = -abs(sent_val) * 0.3
+            elif win_map.get(c.analyst_id, 0.5) < 0.35:
+                sent_val = -sent_val * 0.3
+
+            # 專長加成（符合族群 +20%）
+            try:
+                from .analyst_topic_engine import get_specialty_bonus
+                bonus = get_specialty_bonus(spec, sector) if sector else 1.0
+            except Exception:
+                bonus = 1.0
+
+            weighted_sum += tier_w * sent_val * bonus
+            weight_total += abs(tier_w) * bonus
 
         if weight_total == 0:
             continue
 
-        raw_score = weighted_sum / weight_total   # -2 to +2
-        # 正規化到 0-100
-        consensus = (raw_score + 2) / 4 * 100
+        # 高分歧偵測：只看 S/A 級之間的分歧才重要
+        sa_bullish = sum(1 for c in stock_calls
+                         if c.sentiment in ("bullish", "strong_bullish")
+                         and tier_map.get(c.analyst_id, "B") in ("S", "A"))
+        sa_bearish = sum(1 for c in stock_calls
+                         if c.sentiment in ("bearish", "strong_bearish")
+                         and tier_map.get(c.analyst_id, "B") in ("S", "A"))
 
-        # 高分歧檢測
-        is_divergent = bullish > 0 and bearish > 0 and abs(bullish - bearish) <= 1
+        raw_score = weighted_sum / weight_total   # -2 to +2
+        consensus = (raw_score + 2) / 4 * 100   # 正規化到 0-100
+
+        # 升級高分歧偵測：S/A 級之間的分歧才是真正值得注意的
+        is_divergent = (sa_bullish > 0 and sa_bearish > 0 and abs(sa_bullish - sa_bearish) <= 1)
 
         # 整合論點
         all_points: list[str] = []
