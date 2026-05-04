@@ -334,6 +334,39 @@ def start_scheduler() -> AsyncIOScheduler:
         id="mistake_detector_weekly", replace_existing=True,
     )
 
+    # ── 市場情報作戰系統排程 ─────────────────────────────────────────────────
+
+    # 15:30 盤後：週期/領先/法人足跡掃描
+    scheduler.add_job(
+        _run_market_intel_scan,
+        CronTrigger(day_of_week="mon-fri", hour=15, minute=30, timezone="Asia/Taipei"),
+        id="market_intel_scan", replace_existing=True,
+    )
+    # 16:30 分析師觀點飄移偵測（YouTube 抓完後）
+    scheduler.add_job(
+        _run_drift_detection_job,
+        CronTrigger(day_of_week="mon-fri", hour=16, minute=30, timezone="Asia/Taipei"),
+        id="drift_detection", replace_existing=True,
+    )
+    # 17:00 過熱/壓力計算 + 推送
+    scheduler.add_job(
+        _push_euphoria_stress,
+        CronTrigger(day_of_week="mon-fri", hour=17, minute=0, timezone="Asia/Taipei"),
+        id="euphoria_stress_push", replace_existing=True,
+    )
+    # 20:30 AI 多空辯論（重點個股）
+    scheduler.add_job(
+        _push_ai_debate,
+        CronTrigger(day_of_week="mon-fri", hour=20, minute=30, timezone="Asia/Taipei"),
+        id="ai_debate_push", replace_existing=True,
+    )
+    # 每週五 19:00 預測市場快照 + 上週結算
+    scheduler.add_job(
+        _run_prediction_market_weekly,
+        CronTrigger(day_of_week="fri", hour=19, minute=0, timezone="Asia/Taipei"),
+        id="prediction_market_weekly", replace_existing=True,
+    )
+
     scheduler.start()
     logger.info("Scheduler started (morning report 08:30 / weekly report Fri 14:30)")
     return scheduler
@@ -976,3 +1009,179 @@ async def _run_meta_alpha_weekly():
         logger.info("[MetaAlpha] weekly report pushed")
     except Exception as e:
         logger.error(f"[MetaAlpha] weekly report failed: {e}")
+
+
+# ── 市場情報作戰系統 job handlers ────────────────────────────────────────────
+
+async def _run_market_intel_scan():
+    """15:30 — 市場週期/領先滯後/主題擴散/法人足跡掃描"""
+    try:
+        from quant.timeline_engine import run_market_timeline
+        from quant.lead_lag_engine import run_lead_lag_scan
+        from quant.theme_propagation_engine import run_theme_propagation
+        from quant.institutional_footprint_engine import scan_institutional_footprint
+
+        results_tl = await run_market_timeline()
+        logger.info("[Intel 15:30] timeline: %d stocks scanned", len(results_tl))
+
+        result_ll = await run_lead_lag_scan()
+        logger.info("[Intel 15:30] lead_lag: %d triggered", len(result_ll.triggered_signals))
+
+        results_theme = await run_theme_propagation()
+        logger.info("[Intel 15:30] theme: top=%s %.0f%%",
+                    results_theme[0].theme if results_theme else "N/A",
+                    results_theme[0].total_score if results_theme else 0)
+
+        results_fp = await scan_institutional_footprint()
+        smart = sum(1 for r in results_fp if r.is_smart_money)
+        logger.info("[Intel 15:30] footprint: %d smart money", smart)
+    except Exception as e:
+        logger.error(f"[Intel 15:30] market intel scan failed: {e}")
+
+
+async def _run_drift_detection_job():
+    """16:30 — 分析師觀點飄移偵測並推送高嚴重度警報"""
+    try:
+        from quant.analyst_drift_detector import get_drift_from_db
+        from ..models.database import settings
+        import httpx
+
+        report = await get_drift_from_db()
+        if not report.high_severity:
+            logger.info("[drift 16:30] no high-severity drift alerts")
+            return
+
+        from ..models.database import AsyncSessionLocal
+        from ..models.models import Subscriber
+        from sqlalchemy import select
+
+        text = report.to_line_text()
+        async with AsyncSessionLocal() as db:
+            r    = await db.execute(select(Subscriber).where(Subscriber.subscribed_morning == True))
+            subs = r.scalars().all()
+
+        headers = {"Authorization": f"Bearer {settings.line_channel_access_token}"}
+        async with httpx.AsyncClient(timeout=30) as c:
+            for sub in subs:
+                try:
+                    await c.post(
+                        "https://api.line.me/v2/bot/message/push",
+                        json={"to": sub.line_user_id, "messages": [{"type": "text", "text": text}]},
+                        headers=headers,
+                    )
+                except Exception:
+                    pass
+        logger.info("[drift 16:30] pushed %d alerts to %d subscribers",
+                    len(report.high_severity), len(subs))
+    except Exception as e:
+        logger.error(f"[drift 16:30] drift detection failed: {e}")
+
+
+async def _push_euphoria_stress():
+    """17:00 — 計算過熱/壓力指數並推送"""
+    try:
+        from quant.euphoria_engine import compute_euphoria
+        from quant.stress_engine import compute_stress
+        from ..models.database import settings, AsyncSessionLocal
+        from ..models.models import Subscriber
+        from sqlalchemy import select
+        import httpx
+
+        euphoria = await compute_euphoria()
+        stress   = await compute_stress()
+
+        text = (
+            f"{euphoria.to_line_text()}\n\n"
+            f"─────────────────\n\n"
+            f"{stress.to_line_text()}"
+        )
+
+        async with AsyncSessionLocal() as db:
+            r    = await db.execute(select(Subscriber).where(Subscriber.subscribed_morning == True))
+            subs = r.scalars().all()
+
+        if not subs:
+            return
+
+        headers = {"Authorization": f"Bearer {settings.line_channel_access_token}"}
+        async with httpx.AsyncClient(timeout=30) as c:
+            for sub in subs:
+                try:
+                    await c.post(
+                        "https://api.line.me/v2/bot/message/push",
+                        json={"to": sub.line_user_id, "messages": [{"type": "text", "text": text}]},
+                        headers=headers,
+                    )
+                except Exception:
+                    pass
+        logger.info("[intel 17:00] euphoria=%.1f stress=%.1f pushed to %d",
+                    euphoria.euphoria_score, stress.stress_score, len(subs))
+    except Exception as e:
+        logger.error(f"[intel 17:00] euphoria/stress push failed: {e}")
+
+
+async def _push_ai_debate():
+    """20:30 — AI 多空辯論（今日重點個股）"""
+    try:
+        from quant.ai_debate_engine import run_ai_debate
+        from quant.movers_engine import MoversEngine
+        from ..models.database import settings, AsyncSessionLocal
+        from ..models.models import Subscriber
+        from sqlalchemy import select
+        import httpx
+
+        movers = await MoversEngine().scan()
+        if not movers:
+            movers = MoversEngine().scan_mock(5)
+
+        target = movers[:2] if movers else []
+        if not target:
+            return
+
+        texts = []
+        for m in target:
+            sid   = m.stock_id if hasattr(m, "stock_id") else m.get("stock_id", "")
+            sname = m.name     if hasattr(m, "name")     else m.get("name", sid)
+            result = await run_ai_debate(sid, sname)
+            texts.append(result.to_line_text())
+
+        full_text = "\n\n─────────────────\n\n".join(texts)
+
+        async with AsyncSessionLocal() as db:
+            r    = await db.execute(select(Subscriber).where(Subscriber.subscribed_morning == True))
+            subs = r.scalars().all()
+
+        if not subs:
+            return
+
+        headers = {"Authorization": f"Bearer {settings.line_channel_access_token}"}
+        async with httpx.AsyncClient(timeout=30) as c:
+            for sub in subs:
+                try:
+                    await c.post(
+                        "https://api.line.me/v2/bot/message/push",
+                        json={"to": sub.line_user_id, "messages": [{"type": "text", "text": full_text}]},
+                        headers=headers,
+                    )
+                except Exception:
+                    pass
+        logger.info("[intel 20:30] debate pushed %d stocks to %d subscribers",
+                    len(target), len(subs))
+    except Exception as e:
+        logger.error(f"[intel 20:30] ai debate push failed: {e}")
+
+
+async def _run_prediction_market_weekly():
+    """週五 19:00 — 預測市場快照 + 過期命題自動結算"""
+    try:
+        from quant.prediction_market_engine import get_snapshot
+        from datetime import datetime
+
+        snapshot = await get_snapshot()
+
+        expired = [p for p in snapshot.predictions if p.days_left <= 0]
+        logger.info("[predict Fri19:00] active=%d resolved=%d expired_today=%d acc=%.0f%%",
+                    snapshot.total_active, snapshot.total_resolved,
+                    len(expired), snapshot.accuracy_30d * 100)
+    except Exception as e:
+        logger.error(f"[predict Fri19:00] prediction market weekly failed: {e}")

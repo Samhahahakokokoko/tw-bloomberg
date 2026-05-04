@@ -599,6 +599,25 @@ async def _handle_text(text: str, uid: str) -> list:
         return await _cmd_analyst_today()
     if cmd == "/consensus":             return await _cmd_consensus_heatmap(uid)
 
+    # ── 市場情報作戰系統 ──────────────────────────────────────────────────
+    if cmd == "/timeline":
+        sub = parts[1].upper() if len(parts) > 1 else ""
+        return await _cmd_timeline(sub)
+    if cmd == "/leadlag":               return await _cmd_lead_lag()
+    if cmd == "/theme":                 return await _cmd_theme()
+    if cmd == "/footprint":
+        sub = parts[1].upper() if len(parts) > 1 else ""
+        return await _cmd_footprint(sub)
+    if cmd == "/euphoria":              return await _cmd_euphoria()
+    if cmd == "/stress":                return await _cmd_stress()
+    if cmd == "/debate":
+        sub = parts[1].upper() if len(parts) > 1 else ""
+        return await _cmd_debate(sub)
+    if cmd == "/predict":
+        sub = " ".join(parts[1:]) if len(parts) > 1 else ""
+        return await _cmd_predict(sub)
+    if cmd == "/drift":                 return await _cmd_drift()
+
     # ── 機構級量化流程 ────────────────────────────────────────────────────
     if cmd == "/pipeline":
         code = parts[1] if len(parts) > 1 else "2330"
@@ -1590,6 +1609,19 @@ def _help_text() -> str:
         "/compare 2330 2454    比較圖\n"
         "/track 2330           歷史追蹤\n"
         "\n/morning /week /subscribe"
+        "\n\n🧠 分析師情報\n"
+        "/analyst      今日共識報告\n"
+        "/analyst list 追蹤清單\n"
+        "/drift        觀點飄移偵測\n"
+        "\n🔭 市場情報作戰\n"
+        "/timeline     市場週期位置\n"
+        "/leadlag      領先/滯後信號\n"
+        "/theme        主題擴散鏈\n"
+        "/footprint    法人4D足跡\n"
+        "/euphoria     過熱溫度計\n"
+        "/stress       壓力測試\n"
+        "/debate 代碼  AI多空辯論\n"
+        "/predict      預測市場\n"
     )
 
 
@@ -3751,3 +3783,167 @@ async def _cmd_heatmap(uid: str) -> list:
     except Exception as e:
         logger.error(f"[heatmap] {e}")
         return [_text(f"❌ 熱力圖生成失敗\n{type(e).__name__}: {str(e)[:80]}")]
+
+
+# ── 市場情報作戰系統指令 ──────────────────────────────────────────────────────
+
+async def _cmd_timeline(stock_id: str) -> list:
+    """/timeline [股票代號] — 市場週期辨識"""
+    try:
+        from quant.timeline_engine import run_market_timeline, format_timeline_summary
+        if stock_id:
+            results = await run_market_timeline()
+            matched = [r for r in results if r.stock_id == stock_id]
+            if matched:
+                return [_text(matched[0].to_line_text(),
+                              qr_items(("多空辯論", f"/debate {stock_id}"),
+                                       ("法人足跡", f"/footprint {stock_id}"),
+                                       ("週期總覽", "/timeline")))]
+            return [_text(f"⚠️ 查無 {stock_id} 週期資料，顯示全市場概況"),
+                    _text(format_timeline_summary(results))]
+        results = await run_market_timeline()
+        text = format_timeline_summary(results)
+        return [_text(text, qr_items(("過熱溫度", "/euphoria"),
+                                     ("壓力測試", "/stress"),
+                                     ("領先信號", "/leadlag")))]
+    except Exception as e:
+        logger.error(f"[timeline] {e}")
+        return [_text(f"❌ 週期分析失敗：{type(e).__name__}")]
+
+
+async def _cmd_lead_lag() -> list:
+    """/leadlag — 產業鏈領先/滯後信號"""
+    try:
+        from quant.lead_lag_engine import run_lead_lag_scan
+        result = await run_lead_lag_scan()
+        text   = result.to_line_text()
+        return [_text(text, qr_items(("主題擴散", "/theme"),
+                                     ("法人足跡", "/footprint"),
+                                     ("週期位置", "/timeline")))]
+    except Exception as e:
+        logger.error(f"[leadlag] {e}")
+        return [_text(f"❌ 領先滯後分析失敗：{type(e).__name__}")]
+
+
+async def _cmd_theme() -> list:
+    """/theme — 主題擴散鏈追蹤"""
+    try:
+        from quant.theme_propagation_engine import run_theme_propagation, format_theme_summary
+        results = await run_theme_propagation()
+        if not results:
+            return [_text("⚠️ 暫無主題擴散資料")]
+        text = format_theme_summary(results)
+        detail_lines = []
+        for r in results[:2]:
+            detail_lines.append("")
+            detail_lines.append(r.to_line_text())
+        full_text = text + "\n" + "\n".join(detail_lines)
+        return [_text(full_text, qr_items(("領先信號", "/leadlag"),
+                                          ("週期位置", "/timeline")))]
+    except Exception as e:
+        logger.error(f"[theme] {e}")
+        return [_text(f"❌ 主題擴散分析失敗：{type(e).__name__}")]
+
+
+async def _cmd_footprint(stock_id: str) -> list:
+    """/footprint [股票代號] — 法人4D足跡"""
+    try:
+        from quant.institutional_footprint_engine import scan_institutional_footprint, format_footprint_summary
+        results = await scan_institutional_footprint()
+        if stock_id:
+            matched = [r for r in results if r.stock_id == stock_id]
+            if matched:
+                return [_text(matched[0].to_line_text(),
+                              qr_items(("多空辯論", f"/debate {stock_id}"),
+                                       ("週期位置", f"/timeline {stock_id}"),
+                                       ("總覽", "/footprint")))]
+            return [_text(f"⚠️ 查無 {stock_id}，顯示全市場概況"),
+                    _text(format_footprint_summary(results))]
+        text = format_footprint_summary(results)
+        return [_text(text, qr_items(("週期位置", "/timeline"),
+                                     ("主題擴散", "/theme")))]
+    except Exception as e:
+        logger.error(f"[footprint] {e}")
+        return [_text(f"❌ 法人足跡分析失敗：{type(e).__name__}")]
+
+
+async def _cmd_euphoria() -> list:
+    """/euphoria — 市場過熱溫度計"""
+    try:
+        from quant.euphoria_engine import compute_euphoria
+        result = await compute_euphoria()
+        return [_text(result.to_line_text(),
+                      qr_items(("壓力測試", "/stress"),
+                                ("週期位置", "/timeline"),
+                                ("AI辯論", "/debate 2330")))]
+    except Exception as e:
+        logger.error(f"[euphoria] {e}")
+        return [_text(f"❌ 過熱分析失敗：{type(e).__name__}")]
+
+
+async def _cmd_stress() -> list:
+    """/stress — 市場壓力測試"""
+    try:
+        from quant.stress_engine import compute_stress
+        result = await compute_stress()
+        return [_text(result.to_line_text(),
+                      qr_items(("過熱溫度", "/euphoria"),
+                                ("週期位置", "/timeline"),
+                                ("預測市場", "/predict")))]
+    except Exception as e:
+        logger.error(f"[stress] {e}")
+        return [_text(f"❌ 壓力測試失敗：{type(e).__name__}")]
+
+
+async def _cmd_debate(stock_id: str) -> list:
+    """/debate [股票代號] — AI 多空辯論"""
+    try:
+        from quant.ai_debate_engine import run_ai_debate
+        sid   = stock_id or "2330"
+        sname = {
+            "2330": "台積電", "3661": "世芯-KY", "2382": "廣達",
+            "6669": "緯穎",   "2454": "聯發科",
+        }.get(sid, sid)
+        result = await run_ai_debate(sid, sname)
+        ai_note = "" if result.used_ai else "\n（⚠️ 使用預設內容，API 未設定）"
+        return [_text(result.to_line_text() + ai_note,
+                      qr_items(("法人足跡", f"/footprint {sid}"),
+                                ("週期位置", f"/timeline {sid}"),
+                                ("預測市場", "/predict")))]
+    except Exception as e:
+        logger.error(f"[debate] {e}")
+        return [_text(f"❌ AI辯論失敗：{type(e).__name__}")]
+
+
+async def _cmd_predict(proposition: str) -> list:
+    """/predict [命題] — 預測市場"""
+    try:
+        from quant.prediction_market_engine import get_snapshot, add_prediction
+        if proposition and len(proposition) > 5:
+            new_pred = await add_prediction(proposition, deadline_days=30)
+            return [_text(
+                f"🔮 已新增預測命題\n\n{new_pred.to_line_text()}",
+                qr_items(("查看全部", "/predict"), ("壓力測試", "/stress")),
+            )]
+        snapshot = await get_snapshot()
+        return [_text(snapshot.to_line_text(),
+                      qr_items(("過熱溫度", "/euphoria"),
+                                ("壓力測試", "/stress"),
+                                ("AI辯論", "/debate 2330")))]
+    except Exception as e:
+        logger.error(f"[predict] {e}")
+        return [_text(f"❌ 預測市場失敗：{type(e).__name__}")]
+
+
+async def _cmd_drift() -> list:
+    """/drift — 分析師觀點飄移偵測"""
+    try:
+        from quant.analyst_drift_detector import get_drift_from_db
+        report = await get_drift_from_db()
+        return [_text(report.to_line_text(),
+                      qr_items(("今日共識", "/analyst"),
+                                ("分析師列表", "/analyst list"),
+                                ("週期位置", "/timeline")))]
+    except Exception as e:
+        logger.error(f"[drift] {e}")
+        return [_text(f"❌ 飄移偵測失敗：{type(e).__name__}")]
