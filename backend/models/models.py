@@ -893,6 +893,47 @@ class AnalystConsensusDaily(Base):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# Analyst Onboarding — 沙盒追蹤 + DNA 學習
+# ══════════════════════════════════════════════════════════════════════════════
+
+class AnalystSandbox(Base):
+    """分析師沙盒追蹤記錄（核准後 30 天觀察期）"""
+    __tablename__ = "analyst_sandbox"
+
+    id            = Column(Integer, primary_key=True, index=True)
+    analyst_id    = Column(String(50), unique=True, nullable=False, index=True)
+    channel_id    = Column(String(100), default="")
+    channel_name  = Column(String(200), default="")
+    sandbox_start = Column(String(10), nullable=False)
+    sandbox_end   = Column(String(10), nullable=False)
+    status        = Column(String(20), default="active")   # active / promoted / rejected
+    final_tier    = Column(String(2),  default="")
+    final_win_rate = Column(Float,     default=0.0)
+    created_at    = Column(DateTime,   default=datetime.utcnow)
+    updated_at    = Column(DateTime,   default=datetime.utcnow)
+
+
+class AnalystDNARecord(Base):
+    """分析師 DNA 學習記錄（最佳市場環境/族群/時機）"""
+    __tablename__ = "analyst_dna"
+
+    id                    = Column(Integer, primary_key=True, index=True)
+    analyst_id            = Column(String(50), unique=True, nullable=False, index=True)
+    analyst_name          = Column(String(100), default="")
+    best_market           = Column(String(20),  default="")    # bull/bear/sideways
+    market_win_rates_json = Column(Text,         default="{}")
+    best_sectors_json     = Column(Text,         default="[]")
+    sector_win_rates_json = Column(Text,         default="{}")
+    preferred_holding_days = Column(Integer,     default=15)
+    holding_profile       = Column(String(10),   default="medium")  # short/medium/long
+    signal_style          = Column(String(20),   default="momentum")
+    sample_size           = Column(Integer,      default=0)
+    confidence            = Column(Float,         default=0.3)
+    last_updated          = Column(String(10),   default="")
+    created_at            = Column(DateTime,     default=datetime.utcnow)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # Production Grade Quant Infrastructure — 資料品質與稽核資料表
 # ══════════════════════════════════════════════════════════════════════════════
 

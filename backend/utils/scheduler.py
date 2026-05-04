@@ -343,6 +343,21 @@ def start_scheduler() -> AsyncIOScheduler:
         id="system_health_check", replace_existing=True,
     )
 
+    # ── 分析師入職沙盒 + DNA 排程 ──────────────────────────────────────────────
+
+    # 每日 17:30 沙盒評估（在 YouTube 抓片後）
+    scheduler.add_job(
+        _run_sandbox_daily_eval,
+        CronTrigger(day_of_week="mon-fri", hour=17, minute=30, timezone="Asia/Taipei"),
+        id="sandbox_daily_eval", replace_existing=True,
+    )
+    # 每週五 21:00 DNA 重新計算
+    scheduler.add_job(
+        _run_dna_weekly_update,
+        CronTrigger(day_of_week="fri", hour=21, minute=0, timezone="Asia/Taipei"),
+        id="dna_weekly_update", replace_existing=True,
+    )
+
     # ── 市場情報作戰系統排程 ─────────────────────────────────────────────────
 
     # 15:30 盤後：週期/領先/法人足跡掃描
@@ -1021,6 +1036,22 @@ async def _run_meta_alpha_weekly():
 
 
 # ── 市場情報作戰系統 job handlers ────────────────────────────────────────────
+
+async def _run_sandbox_daily_eval():
+    try:
+        from backend.services.analyst_sandbox_engine import run_daily_sandbox_evaluation
+        await run_daily_sandbox_evaluation()
+    except Exception as e:
+        logger.error(f"Sandbox daily eval failed: {e}")
+
+
+async def _run_dna_weekly_update():
+    try:
+        from backend.services.analyst_dna_engine import run_weekly_dna_update
+        await run_weekly_dna_update()
+    except Exception as e:
+        logger.error(f"DNA weekly update failed: {e}")
+
 
 async def _run_system_health_check():
     """每 30 分鐘系統健康檢查"""

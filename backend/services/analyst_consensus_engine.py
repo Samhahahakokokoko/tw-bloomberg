@@ -101,9 +101,22 @@ async def calculate_daily_consensus(days: int = 7) -> list[ConsensusResult]:
         high_cred    = sum(1 for c in stock_calls
                           if tier_map.get(c.analyst_id, "B") in ("S", "A"))
 
-        # 升級加權共識分數：Tier × 專長加成 × 情緒
+        # 升級加權共識分數：Tier × 專長加成 × DNA市場加成 × 情緒
         weighted_sum = 0.0
         weight_total = 0.0
+
+        # 預載 DNA 加權（非同步，快取化）
+        dna_weights: dict[str, float] = {}
+        try:
+            from .analyst_dna_engine import get_weighted_analysts
+            weighted_list = await get_weighted_analysts(
+                current_market="bull",   # 可從 regime_engine 取得實際市場狀態
+                current_sector=sector,
+            )
+            dna_weights = {aid: w for aid, w in weighted_list}
+        except Exception:
+            pass
+
         for c in stock_calls:
             tier     = tier_map.get(c.analyst_id, "A")
             tier_w   = TIER_W.get(tier, 1.0)
@@ -123,8 +136,11 @@ async def calculate_daily_consensus(days: int = 7) -> list[ConsensusResult]:
             except Exception:
                 bonus = 1.0
 
-            weighted_sum += tier_w * sent_val * bonus
-            weight_total += abs(tier_w) * bonus
+            # DNA 市場加成（在對應市場加權使用）
+            dna_bonus = dna_weights.get(c.analyst_id, 1.0)
+
+            weighted_sum += tier_w * sent_val * bonus * dna_bonus
+            weight_total += abs(tier_w) * bonus * max(dna_bonus, 0.1)
 
         if weight_total == 0:
             continue

@@ -574,8 +574,24 @@ async def _handle_text(text: str, uid: str) -> list:
         sub = parts[1].lower() if len(parts) > 1 else ""
         if sub == "list":               return await _cmd_analyst_list()
         if sub == "ranking":            return await _cmd_analyst_ranking()
+        if sub == "sandbox":            return await _cmd_analyst_sandbox()
+        if sub == "dna" and len(parts) >= 3:
+            return await _cmd_analyst_dna(parts[2])
+        if sub == "approve" and len(parts) >= 3:
+            return await _cmd_analyst_approve(parts[2])
+        if sub == "reject" and len(parts) >= 3:
+            reason = " ".join(parts[3:]) if len(parts) > 3 else ""
+            return await _cmd_analyst_reject_pending(parts[2], reason)
+        if sub == "promote" and len(parts) >= 3:
+            new_tier = parts[3].upper() if len(parts) > 3 else ""
+            return await _cmd_analyst_promote(parts[2], new_tier)
+        if sub == "pending":            return await _cmd_analyst_pending()
         if sub == "add" and len(parts) >= 3:
-            # /analyst add [名稱] [channel_id] [specialty]
+            arg = " ".join(parts[2:])
+            # 偵測是否為 YouTube URL
+            if "youtube.com" in arg or "youtu.be" in arg:
+                return await _cmd_analyst_add_url(arg)
+            # 舊格式：/analyst add [名稱] [channel_id] [specialty]
             name       = parts[2]
             channel_id = parts[3] if len(parts) > 3 else ""
             specialty  = " ".join(parts[4:]) if len(parts) > 4 else ""
@@ -3947,3 +3963,121 @@ async def _cmd_drift() -> list:
     except Exception as e:
         logger.error(f"[drift] {e}")
         return [_text(f"❌ 飄移偵測失敗：{type(e).__name__}")]
+
+
+# ── YouTube 分析師入職流程指令 ────────────────────────────────────────────────
+
+async def _cmd_analyst_add_url(url: str) -> list:
+    """/analyst add [YouTube URL] — 解析頻道並送入審核"""
+    try:
+        from backend.services.analyst_onboarding import start_review
+        preview, err = await start_review(url)
+        if err:
+            return [_text(f"❌ {err}\n\n格式：/analyst add https://youtube.com/@頻道名")]
+        return [_text(
+            preview.format_review(),
+            qr_items(
+                ("✅ 核准", f"/analyst approve {preview.channel_id}"),
+                ("❌ 拒絕", f"/analyst reject {preview.channel_id}"),
+                ("待審清單", "/analyst pending"),
+            )
+        )]
+    except Exception as e:
+        logger.error(f"[analyst_add_url] {e}")
+        return [_text(f"❌ URL 解析失敗：{type(e).__name__}: {str(e)[:80]}")]
+
+
+async def _cmd_analyst_approve(channel_id: str) -> list:
+    """/analyst approve [channel_id] — 核准頻道進入沙盒"""
+    try:
+        from backend.services.analyst_onboarding import approve_channel
+        ok, msg = await approve_channel(channel_id)
+        if ok:
+            return [_text(msg, qr_items(
+                ("沙盒狀態", "/analyst sandbox"),
+                ("追蹤清單", "/analyst list"),
+            ))]
+        return [_text(f"❌ {msg}")]
+    except Exception as e:
+        return [_text(f"❌ 核准失敗：{type(e).__name__}")]
+
+
+async def _cmd_analyst_reject_pending(channel_id: str, reason: str) -> list:
+    """/analyst reject [channel_id] [原因] — 拒絕待審頻道"""
+    try:
+        from backend.services.analyst_onboarding import reject_channel
+        msg = await reject_channel(channel_id, reason)
+        return [_text(msg, qr_items(("待審清單", "/analyst pending"), ("追蹤清單", "/analyst list")))]
+    except Exception as e:
+        return [_text(f"❌ 拒絕操作失敗：{type(e).__name__}")]
+
+
+async def _cmd_analyst_pending() -> list:
+    """/analyst pending — 待審核頻道清單"""
+    try:
+        from backend.services.analyst_onboarding import list_pending
+        previews = list_pending()
+        if not previews:
+            return [_text("📭 目前無待審核頻道\n\n貼上 YouTube URL 開始新增：\n/analyst add [YouTube URL]")]
+        lines = [f"📋 待審核頻道（{len(previews)} 個）"]
+        for p in previews:
+            subs = f"{p.subscriber_count:,}" if p.subscriber_count else "?"
+            lines.append(f"\n📺 {p.title}")
+            lines.append(f"  {p.channel_id}  訂閱：{subs}")
+            lines.append(f"  推斷專長：{p.auto_specialty or '待確認'}")
+        return [_text("\n".join(lines), qr_items(
+            ("追蹤清單", "/analyst list"),
+            ("今日共識", "/analyst"),
+        ))]
+    except Exception as e:
+        return [_text(f"❌ 待審清單取得失敗：{type(e).__name__}")]
+
+
+async def _cmd_analyst_sandbox() -> list:
+    """/analyst sandbox — 沙盒追蹤狀態"""
+    try:
+        from backend.services.analyst_sandbox_engine import list_sandbox_analysts
+        evals = await list_sandbox_analysts()
+        if not evals:
+            return [_text("📭 目前無分析師在沙盒追蹤中\n\n新增分析師：/analyst add [YouTube URL]")]
+
+        lines = [f"🧪 沙盒追蹤中（{len(evals)} 位）\n"]
+        for ev in evals:
+            icon = "✅" if ev.eligible_for_promotion else ("❌" if ev.reject else "⏳")
+            lines.append(
+                f"{icon} {ev.analyst_name}\n"
+                f"   {ev.sandbox_days}/30天  {ev.total_calls}筆  勝率{ev.win_rate:.0%}"
+            )
+        return [_text("\n".join(lines), qr_items(
+            ("追蹤清單", "/analyst list"),
+            ("新增分析師", "/analyst add"),
+        ))]
+    except Exception as e:
+        return [_text(f"❌ 沙盒狀態取得失敗：{type(e).__name__}")]
+
+
+async def _cmd_analyst_promote(analyst_id: str, new_tier: str = "") -> list:
+    """/analyst promote [analyst_id] [tier] — 手動晉升沙盒分析師"""
+    try:
+        from backend.services.analyst_sandbox_engine import promote_analyst
+        ok, msg = await promote_analyst(analyst_id, new_tier)
+        if ok:
+            return [_text(msg, qr_items(("追蹤清單", "/analyst list"), ("今日共識", "/analyst")))]
+        return [_text(f"⚠️ {msg}")]
+    except Exception as e:
+        return [_text(f"❌ 晉升失敗：{type(e).__name__}")]
+
+
+async def _cmd_analyst_dna(analyst_id: str) -> list:
+    """/analyst dna [analyst_id] — 查看分析師 DNA"""
+    try:
+        from backend.services.analyst_dna_engine import load_dna
+        dna = await load_dna(analyst_id)
+        if not dna:
+            return [_text(f"⚠️ 找不到 {analyst_id} 的 DNA 資料（可能推薦筆數不足）")]
+        return [_text(dna.format_line(), qr_items(
+            ("今日共識", "/analyst"),
+            ("追蹤清單", "/analyst list"),
+        ))]
+    except Exception as e:
+        return [_text(f"❌ DNA 查詢失敗：{type(e).__name__}")]
