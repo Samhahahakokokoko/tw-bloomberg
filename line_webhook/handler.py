@@ -633,6 +633,13 @@ async def _handle_text(text: str, uid: str) -> list:
         sub = " ".join(parts[1:]) if len(parts) > 1 else ""
         return await _cmd_predict(sub)
     if cmd == "/drift":                 return await _cmd_drift()
+    if cmd == "/narrative":             return await _cmd_narrative()
+    if cmd == "/rotation":              return await _cmd_rotation()
+    if cmd == "/memory":                return await _cmd_memory()
+    if cmd == "/committee":
+        sub = parts[1].upper() if len(parts) > 1 else "2330"
+        return await _cmd_committee(sub)
+    if cmd == "/weights":               return await _cmd_weights()
 
     # ── 機構級量化流程 ────────────────────────────────────────────────────
     if cmd == "/pipeline":
@@ -1638,6 +1645,12 @@ def _help_text() -> str:
         "/stress       壓力測試\n"
         "/debate 代碼  AI多空辯論\n"
         "/predict      預測市場\n"
+        "\n🏛️ 市場情報中心\n"
+        "/narrative    市場敘事地圖\n"
+        "/rotation     資金輪動預測\n"
+        "/memory       歷史情境比對\n"
+        "/committee 代碼  委員會決議\n"
+        "/weights      因子調權週報\n"
     )
 
 
@@ -3963,6 +3976,85 @@ async def _cmd_drift() -> list:
     except Exception as e:
         logger.error(f"[drift] {e}")
         return [_text(f"❌ 飄移偵測失敗：{type(e).__name__}")]
+
+
+# ── 市場情報作戰中心指令 ─────────────────────────────────────────────────────
+
+async def _cmd_narrative() -> list:
+    """/narrative — 今日市場敘事地圖"""
+    try:
+        from quant.narrative_os import compute_narrative_heatmap
+        hm = await compute_narrative_heatmap()
+        return [_text(hm.format_line(),
+                      qr_items(("輪動預測", "/rotation"),
+                                ("歷史比對", "/memory"),
+                                ("委員會", "/committee 2330")))]
+    except Exception as e:
+        logger.error(f"[narrative] {e}")
+        return [_text(f"❌ 敘事分析失敗：{type(e).__name__}")]
+
+
+async def _cmd_rotation() -> list:
+    """/rotation — 資金輪動預測"""
+    try:
+        from quant.capital_rotation_engine import compute_rotation
+        pred = await compute_rotation()
+        return [_text(pred.format_line(),
+                      qr_items(("敘事地圖", "/narrative"),
+                                ("歷史比對", "/memory"),
+                                ("週期位置", "/timeline")))]
+    except Exception as e:
+        logger.error(f"[rotation] {e}")
+        return [_text(f"❌ 輪動分析失敗：{type(e).__name__}")]
+
+
+async def _cmd_memory() -> list:
+    """/memory — 歷史情境比對"""
+    try:
+        from quant.market_memory_engine import get_best_match
+        match = await get_best_match()
+        if not match:
+            return [_text("⚠️ 找不到足夠的歷史資料進行比對")]
+        return [_text(match.format_line(),
+                      qr_items(("敘事地圖", "/narrative"),
+                                ("輪動預測", "/rotation"),
+                                ("委員會", "/committee 2330")))]
+    except Exception as e:
+        logger.error(f"[memory] {e}")
+        return [_text(f"❌ 歷史比對失敗：{type(e).__name__}")]
+
+
+async def _cmd_committee(stock_id: str) -> list:
+    """/committee [股票代號] — AI 委員會決議"""
+    try:
+        from agents.committee_engine import run_committee
+        NAMES = {
+            "2330": "台積電", "3661": "世芯-KY", "2382": "廣達",
+            "6669": "緯穎",   "2454": "聯發科",  "2303": "聯電",
+        }
+        sid   = stock_id or "2330"
+        sname = NAMES.get(sid, sid)
+        decision = await run_committee(sid, sname)
+        return [_text(decision.format_line(),
+                      qr_items(("敘事地圖", "/narrative"),
+                                ("AI辯論",  f"/debate {sid}"),
+                                ("法人足跡", f"/footprint {sid}")))]
+    except Exception as e:
+        logger.error(f"[committee] {e}")
+        return [_text(f"❌ 委員會執行失敗：{type(e).__name__}")]
+
+
+async def _cmd_weights() -> list:
+    """/weights — 因子自動調權週報"""
+    try:
+        from quant.self_learning_weight_engine import compute_weight_update
+        report = await compute_weight_update()
+        return [_text(report.format_line(),
+                      qr_items(("敘事地圖", "/narrative"),
+                                ("Alpha監控", "/alpha")))]
+    except Exception as e:
+        logger.error(f"[weights] {e}")
+        return [_text(f"❌ 調權計算失敗：{type(e).__name__}")]
 
 
 # ── YouTube 分析師入職流程指令 ────────────────────────────────────────────────

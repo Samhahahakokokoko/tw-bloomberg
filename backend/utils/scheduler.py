@@ -343,6 +343,33 @@ def start_scheduler() -> AsyncIOScheduler:
         id="system_health_check", replace_existing=True,
     )
 
+    # ── 市場情報作戰中心排程 ──────────────────────────────────────────────────────
+
+    # 每日 20:00 市場敘事地圖計算 + 推播
+    scheduler.add_job(
+        _push_narrative_map,
+        CronTrigger(day_of_week="mon-fri", hour=20, minute=0, timezone="Asia/Taipei"),
+        id="narrative_map_push", replace_existing=True,
+    )
+    # 每日 20:30 委員會批次投票（重點個股）
+    scheduler.add_job(
+        _run_committee_batch,
+        CronTrigger(day_of_week="mon-fri", hour=20, minute=30, timezone="Asia/Taipei"),
+        id="committee_batch", replace_existing=True,
+    )
+    # 每週五 21:30 因子自動調權
+    scheduler.add_job(
+        _run_self_learning_weights,
+        CronTrigger(day_of_week="fri", hour=21, minute=30, timezone="Asia/Taipei"),
+        id="self_learning_weights", replace_existing=True,
+    )
+    # 每週一 08:05 總經週報
+    scheduler.add_job(
+        _push_macro_weekly,
+        CronTrigger(day_of_week="mon", hour=8, minute=5, timezone="Asia/Taipei"),
+        id="macro_weekly", replace_existing=True,
+    )
+
     # ── 分析師入職沙盒 + DNA 排程 ──────────────────────────────────────────────
 
     # 每日 17:30 沙盒評估（在 YouTube 抓片後）
@@ -1036,6 +1063,92 @@ async def _run_meta_alpha_weekly():
 
 
 # ── 市場情報作戰系統 job handlers ────────────────────────────────────────────
+
+async def _push_narrative_map():
+    try:
+        from quant.narrative_os import compute_narrative_heatmap
+        from ..models.database import settings, AsyncSessionLocal
+        from ..models.models import Subscriber
+        from sqlalchemy import select
+        import httpx
+
+        hm = await compute_narrative_heatmap()
+        text = hm.format_line()
+
+        async with AsyncSessionLocal() as db:
+            r = await db.execute(select(Subscriber).where(Subscriber.subscribed_morning == True))
+            subs = r.scalars().all()
+        if not subs:
+            return
+        headers = {"Authorization": f"Bearer {settings.line_channel_access_token}"}
+        async with httpx.AsyncClient(timeout=30) as c:
+            for sub in subs:
+                try:
+                    await c.post("https://api.line.me/v2/bot/message/push",
+                                 json={"to": sub.line_user_id, "messages": [{"type": "text", "text": text}]},
+                                 headers=headers)
+                except Exception:
+                    pass
+        logger.info("[Narrative] pushed to %d subscribers", len(subs))
+    except Exception as e:
+        logger.error(f"Narrative map push failed: {e}")
+
+
+async def _run_committee_batch():
+    try:
+        from quant.movers_engine import MoversEngine
+        from agents.committee_engine import run_batch_committee
+
+        movers = await MoversEngine().scan()
+        if not movers:
+            movers = MoversEngine().scan_mock(5)
+        stocks = [{"stock_id": m.stock_id, "name": m.name, "sector": m.sector}
+                  for m in movers[:3]]
+        results = await run_batch_committee(stocks)
+        buy_signals = [r for r in results if r.final_action in ("buy", "strong_buy")]
+        logger.info("[Committee] batch: %d stocks, %d buy signals", len(results), len(buy_signals))
+    except Exception as e:
+        logger.error(f"Committee batch failed: {e}")
+
+
+async def _run_self_learning_weights():
+    try:
+        from quant.self_learning_weight_engine import compute_weight_update
+        report = await compute_weight_update()
+        logger.info("[SelfLearn] weights updated: +%d -%d pause=%d",
+                    len(report.boosted_factors), len(report.decayed_factors),
+                    len(report.disabled_factors))
+    except Exception as e:
+        logger.error(f"Self-learning weights failed: {e}")
+
+
+async def _push_macro_weekly():
+    try:
+        from agents.macro_agent import generate_weekly_report
+        from ..models.database import settings, AsyncSessionLocal
+        from ..models.models import Subscriber
+        from sqlalchemy import select
+        import httpx
+
+        report = await generate_weekly_report()
+        async with AsyncSessionLocal() as db:
+            r = await db.execute(select(Subscriber).where(Subscriber.subscribed_morning == True))
+            subs = r.scalars().all()
+        if not subs:
+            return
+        headers = {"Authorization": f"Bearer {settings.line_channel_access_token}"}
+        async with httpx.AsyncClient(timeout=30) as c:
+            for sub in subs:
+                try:
+                    await c.post("https://api.line.me/v2/bot/message/push",
+                                 json={"to": sub.line_user_id, "messages": [{"type": "text", "text": report}]},
+                                 headers=headers)
+                except Exception:
+                    pass
+        logger.info("[Macro] weekly report pushed to %d", len(subs))
+    except Exception as e:
+        logger.error(f"Macro weekly push failed: {e}")
+
 
 async def _run_sandbox_daily_eval():
     try:

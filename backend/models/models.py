@@ -1023,3 +1023,49 @@ class SystemHealthLog(Base):
     stale_ratio          = Column(Float)
     kill_switch_active   = Column(Boolean, default=False)
     created_at           = Column(DateTime, default=datetime.utcnow, index=True)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 市場情報作戰中心 — 敘事 + 輪動 + 委員會
+# ══════════════════════════════════════════════════════════════════════════════
+
+class NarrativeLog(Base):
+    """市場敘事熱度日誌"""
+    __tablename__ = "narrative_log"
+
+    id        = Column(Integer, primary_key=True, index=True)
+    date      = Column(String(10), nullable=False, index=True)
+    narrative = Column(String(50), nullable=False, index=True)
+    score     = Column(Float, default=0.0)
+    trend     = Column(String(4), default="→")
+    stage     = Column(String(20), default="AWARENESS")
+    created_at = Column(DateTime, default=datetime.utcnow)
+    __table_args__ = (UniqueConstraint("date", "narrative"),)
+
+
+class CommitteeDecisionLog(Base):
+    """AI 委員會決策記錄"""
+    __tablename__ = "committee_decision_log"
+
+    id            = Column(Integer, primary_key=True, index=True)
+    stock_id      = Column(String(10), index=True, nullable=False)
+    stock_name    = Column(String(50), default="")
+    bullish_count = Column(Integer, default=0)
+    neutral_count = Column(Integer, default=0)
+    bearish_count = Column(Integer, default=0)
+    final_action  = Column(String(20), nullable=False)
+    confidence    = Column(Float, default=0.0)
+    veto_active   = Column(Boolean, default=False)
+    veto_reason   = Column(String(200), default="")
+    votes_json    = Column(Text, default="[]")
+    created_at    = Column(DateTime, default=datetime.utcnow, index=True)
+
+
+class FactorWeightLog(Base):
+    """因子權重歷史記錄（自學習引擎）"""
+    __tablename__ = "factor_weight_log"
+
+    id           = Column(Integer, primary_key=True, index=True)
+    factor_name  = Column(String(50), nullable=False, index=True)
+    weight       = Column(Float, nullable=False)
+    created_at   = Column(DateTime, default=datetime.utcnow, index=True)
