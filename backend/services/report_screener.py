@@ -719,24 +719,30 @@ def _build_rows(raw_list: list[dict]) -> list[StockRow]:
 # ── 篩選器 ───────────────────────────────────────────────────────────────────
 
 def momentum_screener(limit: int = 50) -> list[StockRow]:
-    pool = sorted(_POOL_RAW,
-                  key=lambda d: d["momentum_score"] * 0.6 + d["change_pct"] * 2.0,
-                  reverse=True)
-    return _build_rows(pool[:limit])
+    """動能選股：快取暖時用全市場，否則用靜態池"""
+    rows = all_screener(limit * 4)  # 先取較多，再按動能排序
+    rows.sort(key=lambda r: r.momentum_score * 0.6 + r.change_pct * 2.0, reverse=True)
+    return rows[:limit]
 
 
 def value_screener(limit: int = 50) -> list[StockRow]:
-    pool = sorted(_POOL_RAW,
-                  key=lambda d: d["dividend_yield"] * 0.5 + d["eps_stability"] * 40 + d["value_score"] * 0.3,
-                  reverse=True)
-    return _build_rows(pool[:limit])
+    """存股/價值選股：快取暖時用全市場"""
+    rows = all_screener(limit * 4)
+    rows.sort(
+        key=lambda r: r.dividend_yield * 0.5 + r.eps_stability * 40 + r.value_score * 0.3,
+        reverse=True,
+    )
+    return rows[:limit]
 
 
 def chip_screener(limit: int = 50) -> list[StockRow]:
-    pool = sorted(_POOL_RAW,
-                  key=lambda d: d["chip_score_v"] * 0.5 + d["foreign_buy_days"] * 2.5 + d["chip_5d"] / 500,
-                  reverse=True)
-    return _build_rows(pool[:limit])
+    """籌碼選股：快取暖時用全市場"""
+    rows = all_screener(limit * 4)
+    rows.sort(
+        key=lambda r: r.chip_score_v * 0.5 + r.foreign_buy_days * 2.5 + r.chip_5d / 500,
+        reverse=True,
+    )
+    return rows[:limit]
 
 
 def breakout_screener(limit: int = 50) -> list[StockRow]:
@@ -768,6 +774,78 @@ def sector_screener(sector: str, limit: int = 50) -> list[StockRow]:
 
 
 def all_screener(limit: int = 50) -> list[StockRow]:
+    """
+    全維度選股。
+    若 TWSE 即時快取已暖（由 async_all_screener 或 _fetch_rt_cache 填充），
+    自動展開為全市場動態池；否則使用靜態 MASTER_POOL。
+    """
+    prices = _rt_cache.get("prices", {})
+    chips  = _rt_cache.get("chips",  {})
+
+    if prices:
+        # ── 快取已暖：動態建構全市場池 ─────────────────────────────────────
+        rows: list[StockRow] = []
+        for code, price_data in prices.items():
+            close      = float(price_data.get("close", 0) or 0)
+            change_pct = float(price_data.get("change_pct", 0) or 0)
+            volume     = float(price_data.get("volume", 0) or 0)
+            name       = str(price_data.get("name", code) or code)
+            if close <= 0 or volume < 200:
+                continue
+
+            chip_data   = chips.get(code, {})
+            foreign_net = int(chip_data.get("foreign_net", 0) or 0)
+            trust_net   = int(chip_data.get("trust_net",   0) or 0)
+            chip_5d     = foreign_net + trust_net
+
+            fundamental = _POOL_FUNDAMENTAL.get(code, {})
+            chip_score  = max(0, min(60, 50 + chip_5d / 500))
+            mom_score   = max(0, min(100, 50 + change_pct * 5))
+
+            d = {
+                "stock_id":    code,
+                "name":        fundamental.get("name", name),
+                "sector":      fundamental.get("sector", _SECTOR_KEYWORDS.get(code, "其他")),
+                "close":       close,
+                "change_pct":  change_pct,
+                "volume":      volume,
+                "chip_5d":     float(chip_5d),
+                "chip_20d":    float(fundamental.get("chip_20d", chip_5d * 4)),
+                "foreign_buy_days": fundamental.get(
+                    "foreign_buy_days",
+                    1 if chip_5d > 0 else (-1 if chip_5d < 0 else 0)
+                ),
+                "rev_yoy":         fundamental.get("rev_yoy",        0.0),
+                "rev_mom":         fundamental.get("rev_mom",         0.0),
+                "eps_growth":      fundamental.get("eps_growth",      0.0),
+                "dividend_yield":  fundamental.get("dividend_yield",  0.0),
+                "pe_ratio":        fundamental.get("pe_ratio",        20.0),
+                "eps_stability":   fundamental.get("eps_stability",   0.5),
+                "kd_weekly":       fundamental.get("kd_weekly",       50.0),
+                "ma20_slope":      fundamental.get("ma20_slope",      change_pct * 0.1),
+                "consec_up":       fundamental.get("consec_up",       1 if change_pct > 0 else 0),
+                "vol_20d_max":     fundamental.get("vol_20d_max",     volume * 1.5),
+                "intraday_range":  fundamental.get("intraday_range",  abs(change_pct)),
+                "momentum_score":  fundamental.get("momentum_score",  mom_score),
+                "chip_score_v":    fundamental.get("chip_score_v",    chip_score),
+                "tech_score":      fundamental.get("tech_score",      mom_score * 0.8),
+                "fundamental_score": fundamental.get("fundamental_score", 50.0),
+                "model_score":     fundamental.get("model_score",     round(mom_score * 0.4 + chip_score * 0.4 + 20, 1)),
+                "confidence":      fundamental.get("confidence",      50.0),
+                "_data_source":    "twse_live" if fundamental else "twse_dynamic",
+            }
+            rows.append(safe_build_row(d))
+
+        if rows:
+            rows.sort(
+                key=lambda r: r.model_score * 0.6 + max(0, r.change_pct) * 0.4,
+                reverse=True,
+            )
+            _log.debug("[all_screener] dynamic universe=%d returning top %d", len(rows), min(limit, len(rows)))
+            return rows[:limit]
+
+    # ── 快取未暖：靜態 MASTER_POOL ────────────────────────────────────────────
+    _log.debug("[all_screener] cache cold, using static MASTER_POOL (%d stocks)", len(_POOL_RAW))
     pool = sorted(
         _POOL_RAW,
         key=lambda d: (
@@ -779,14 +857,14 @@ def all_screener(limit: int = 50) -> list[StockRow]:
         ),
         reverse=True,
     )
-    rows = _build_rows(pool[:limit])
-    for row in rows:
+    result = _build_rows(pool[:limit])
+    for row in result:
         row.model_score = round(
             row.momentum_score * 0.25 + row.value_score * 0.15 +
             row.chip_score_v   * 0.25 + row.tech_score  * 0.20 +
             row.fundamental_score * 0.15, 1
         )
-    return rows
+    return result
 
 
 def favorites_screener(stock_ids: list[str]) -> list[StockRow]:

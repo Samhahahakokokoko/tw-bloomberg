@@ -42,6 +42,13 @@ async def lifespan(app: FastAPI):
         await asyncio.wait_for(init_db(), timeout=30)
         logger.info("Starting background scheduler...")
         scheduler = start_scheduler()
+        # 預熱 TWSE 即時快取（讓 all_screener 啟動後立即有全市場資料）
+        try:
+            from backend.services.report_screener import _fetch_rt_cache
+            asyncio.create_task(_fetch_rt_cache())
+            logger.info("TWSE cache warm-up scheduled")
+        except Exception as _ce:
+            logger.warning(f"Cache warm-up failed: {_ce}")
         logger.info("Startup complete.")
     except asyncio.TimeoutError:
         _startup_error = "Database connection timed out after 30s"
