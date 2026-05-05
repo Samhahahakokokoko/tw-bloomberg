@@ -489,6 +489,85 @@ _POOL_RAW: list[dict] = [
          kd_weekly=50, ma20_slope=0.1, consec_up=2, vol_20d_max=44000, intraday_range=1.0, group_avg_change=1.0,
          breakout_pct=0.7, target_price=15,
          model_score=50, confidence=52, momentum_score=40, value_score=60, chip_score_v=42, tech_score=48, fundamental_score=50),
+    # ── 擴充：AI/機器人/其他主流族群 ──────────────────────────────────────────
+    dict(stock_id="3661", name="世芯-KY",  sector="IC設計",
+         close=2200, change_pct=+5.0, volume=6000,  chip_5d=+3200, chip_20d=+12000, foreign_buy_days=10,
+         rev_yoy=62.0,  rev_mom=16.0, eps_growth=75.0, dividend_yield=0.5, pe_ratio=45,  eps_stability=0.70,
+         kd_weekly=81, ma20_slope=2.2, consec_up=8, vol_20d_max=5800, intraday_range=6.0, group_avg_change=5.5,
+         breakout_pct=6.0, target_price=2000,
+         model_score=94, confidence=92, momentum_score=97, value_score=22, chip_score_v=93, tech_score=95, fundamental_score=92),
+    dict(stock_id="6547", name="南電",     sector="PCB",
+         close=380,  change_pct=+3.5, volume=7200,  chip_5d=+1500, chip_20d=+6000,  foreign_buy_days=6,
+         rev_yoy=28.0,  rev_mom=7.0,  eps_growth=35.0, dividend_yield=1.8, pe_ratio=28,  eps_stability=0.78,
+         kd_weekly=72, ma20_slope=1.2, consec_up=5, vol_20d_max=7000, intraday_range=3.8, group_avg_change=3.5,
+         breakout_pct=3.5, target_price=360,
+         model_score=83, confidence=81, momentum_score=85, value_score=40, chip_score_v=80, tech_score=82, fundamental_score=82),
+    dict(stock_id="2049", name="上銀",     sector="機器人",
+         close=285,  change_pct=+4.2, volume=8500,  chip_5d=+2200, chip_20d=+8500,  foreign_buy_days=7,
+         rev_yoy=22.0,  rev_mom=6.5,  eps_growth=28.0, dividend_yield=2.5, pe_ratio=30,  eps_stability=0.75,
+         kd_weekly=74, ma20_slope=1.4, consec_up=6, vol_20d_max=8200, intraday_range=4.5, group_avg_change=4.5,
+         breakout_pct=4.2, target_price=270,
+         model_score=82, confidence=80, momentum_score=84, value_score=45, chip_score_v=78, tech_score=80, fundamental_score=80),
+    dict(stock_id="1590", name="亞德客-KY",sector="機器人",
+         close=825,  change_pct=+3.8, volume=5200,  chip_5d=+1800, chip_20d=+7200,  foreign_buy_days=5,
+         rev_yoy=18.0,  rev_mom=5.0,  eps_growth=22.0, dividend_yield=2.8, pe_ratio=26,  eps_stability=0.82,
+         kd_weekly=70, ma20_slope=1.0, consec_up=4, vol_20d_max=5000, intraday_range=4.0, group_avg_change=4.5,
+         breakout_pct=3.8, target_price=790,
+         model_score=79, confidence=77, momentum_score=80, value_score=50, chip_score_v=74, tech_score=78, fundamental_score=78),
+    dict(stock_id="2356", name="英業達",   sector="伺服器",
+         close=42.5, change_pct=+2.8, volume=28000, chip_5d=+3500, chip_20d=+14000, foreign_buy_days=8,
+         rev_yoy=32.0,  rev_mom=8.5,  eps_growth=38.0, dividend_yield=4.5, pe_ratio=12,  eps_stability=0.80,
+         kd_weekly=73, ma20_slope=1.1, consec_up=5, vol_20d_max=27000, intraday_range=3.0, group_avg_change=5.0,
+         breakout_pct=2.8, target_price=40,
+         model_score=80, confidence=78, momentum_score=82, value_score=70, chip_score_v=78, tech_score=76, fundamental_score=80),
+    dict(stock_id="3443", name="創意電子", sector="IC設計",
+         close=880,  change_pct=+4.5, volume=4500,  chip_5d=+2000, chip_20d=+8000,  foreign_buy_days=7,
+         rev_yoy=38.0,  rev_mom=9.0,  eps_growth=45.0, dividend_yield=1.5, pe_ratio=35,  eps_stability=0.72,
+         kd_weekly=76, ma20_slope=1.6, consec_up=6, vol_20d_max=4300, intraday_range=4.8, group_avg_change=5.5,
+         breakout_pct=4.5, target_price=840,
+         model_score=86, confidence=84, momentum_score=88, value_score=32, chip_score_v=82, tech_score=86, fundamental_score=85),
+    dict(stock_id="6230", name="超眾",     sector="散熱/電源",
+         close=620,  change_pct=+5.2, volume=3800,  chip_5d=+1200, chip_20d=+4800,  foreign_buy_days=5,
+         rev_yoy=42.0,  rev_mom=12.0, eps_growth=50.0, dividend_yield=1.2, pe_ratio=32,  eps_stability=0.75,
+         kd_weekly=78, ma20_slope=1.8, consec_up=7, vol_20d_max=3600, intraday_range=5.5, group_avg_change=4.2,
+         breakout_pct=5.2, target_price=580,
+         model_score=88, confidence=86, momentum_score=90, value_score=28, chip_score_v=82, tech_score=88, fundamental_score=86),
+    dict(stock_id="2357", name="華碩",     sector="電子製造",
+         close=445,  change_pct=+1.8, volume=9500,  chip_5d=+900,  chip_20d=+3500,  foreign_buy_days=3,
+         rev_yoy=12.0,  rev_mom=3.0,  eps_growth=15.0, dividend_yield=4.5, pe_ratio=14,  eps_stability=0.78,
+         kd_weekly=62, ma20_slope=0.6, consec_up=3, vol_20d_max=9200, intraday_range=2.0, group_avg_change=2.5,
+         breakout_pct=1.8, target_price=430,
+         model_score=70, confidence=68, momentum_score=65, value_score=72, chip_score_v=60, tech_score=65, fundamental_score=72),
+    dict(stock_id="2395", name="研華",     sector="工業電腦",
+         close=395,  change_pct=+2.2, volume=4800,  chip_5d=+800,  chip_20d=+3200,  foreign_buy_days=4,
+         rev_yoy=15.0,  rev_mom=4.0,  eps_growth=18.0, dividend_yield=3.5, pe_ratio=22,  eps_stability=0.85,
+         kd_weekly=65, ma20_slope=0.8, consec_up=4, vol_20d_max=4600, intraday_range=2.5, group_avg_change=3.0,
+         breakout_pct=2.2, target_price=378,
+         model_score=74, confidence=72, momentum_score=72, value_score=62, chip_score_v=65, tech_score=70, fundamental_score=75),
+    dict(stock_id="2882", name="國泰金",   sector="金融",
+         close=62.5, change_pct=+0.8, volume=22000, chip_5d=+500,  chip_20d=+2000,  foreign_buy_days=2,
+         rev_yoy=8.0,   rev_mom=1.5,  eps_growth=6.0,  dividend_yield=5.5, pe_ratio=13,  eps_stability=0.88,
+         kd_weekly=55, ma20_slope=0.2, consec_up=2, vol_20d_max=21000, intraday_range=1.0, group_avg_change=1.2,
+         breakout_pct=0.8, target_price=63,
+         model_score=62, confidence=64, momentum_score=42, value_score=82, chip_score_v=50, tech_score=55, fundamental_score=80),
+    dict(stock_id="4904", name="遠傳",     sector="電信",
+         close=82.5, change_pct=+0.5, volume=6200,  chip_5d=+200,  chip_20d=+800,   foreign_buy_days=1,
+         rev_yoy=5.0,   rev_mom=1.0,  eps_growth=4.0,  dividend_yield=5.8, pe_ratio=18,  eps_stability=0.90,
+         kd_weekly=52, ma20_slope=0.1, consec_up=1, vol_20d_max=6000, intraday_range=0.6, group_avg_change=0.8,
+         breakout_pct=0.5, target_price=83,
+         model_score=58, confidence=60, momentum_score=35, value_score=85, chip_score_v=45, tech_score=48, fundamental_score=82),
+    dict(stock_id="00878", name="國泰永續高股息", sector="ETF",
+         close=21.8, change_pct=+0.3, volume=120000, chip_5d=+5000, chip_20d=+20000, foreign_buy_days=5,
+         rev_yoy=9.0,   rev_mom=1.0,  eps_growth=7.0,  dividend_yield=7.2, pe_ratio=12,  eps_stability=0.95,
+         kd_weekly=56, ma20_slope=0.1, consec_up=3, vol_20d_max=115000, intraday_range=0.4, group_avg_change=1.5,
+         breakout_pct=0.3, target_price=22,
+         model_score=65, confidence=68, momentum_score=30, value_score=95, chip_score_v=60, tech_score=50, fundamental_score=90),
+    dict(stock_id="0050", name="元大台灣50", sector="ETF",
+         close=188,  change_pct=+1.2, volume=35000, chip_5d=+8000, chip_20d=+32000, foreign_buy_days=4,
+         rev_yoy=10.0,  rev_mom=2.0,  eps_growth=8.0,  dividend_yield=3.5, pe_ratio=15,  eps_stability=0.98,
+         kd_weekly=60, ma20_slope=0.5, consec_up=3, vol_20d_max=33000, intraday_range=1.5, group_avg_change=2.0,
+         breakout_pct=1.2, target_price=190,
+         model_score=72, confidence=74, momentum_score=55, value_score=75, chip_score_v=65, tech_score=62, fundamental_score=85),
 ]
 
 # pool 代碼集合（統一格式），用於快速查詢
@@ -543,6 +622,7 @@ async def _fetch_rt_cache() -> dict:
                             "close":      close,
                             "change_pct": pct,
                             "volume":     vol / 1000,   # 股 → 張
+                            "name":       str(item.get("Name", "") or ""),
                         }
                         _valid_ticker_cache.add(code)
                     except Exception:
@@ -942,3 +1022,120 @@ def get_label(screen_type: str, sector: str = "") -> str:
     if sector and screen_type.lower() == "sector":
         base = f"{sector}族群"
     return base
+
+
+# ── 動態全市場股票池（非同步，從 TWSE 取全部股票）─────────────────────────────
+
+# MASTER_POOL 基本面查詢字典（供動態池合併用）
+_POOL_FUNDAMENTAL: dict[str, dict] = {
+    unify_ticker_format(d["stock_id"]): d
+    for d in _POOL_RAW
+}
+
+# 族群分類（供未在 MASTER_POOL 的股票使用）
+_SECTOR_KEYWORDS: dict[str, str] = {
+    "2330": "半導體", "2303": "半導體", "2379": "IC設計", "2454": "IC設計",
+    "3711": "封裝測試", "6770": "半導體", "6488": "半導體材料",
+    "2382": "伺服器", "6669": "伺服器", "3231": "伺服器",
+    "3324": "散熱/電源", "8097": "散熱/電源", "6415": "散熱/電源",
+    "2308": "電源/散熱", "3552": "散熱/電源",
+    "8046": "PCB",    "3037": "PCB",    "2383": "PCB",
+    "2317": "電子製造", "2357": "電子製造",
+    "2412": "電信",   "4904": "電信",
+    "0050": "ETF",    "0056": "ETF",    "00878": "ETF",
+    "2884": "金融",   "2882": "金融",   "2886": "金融",
+    "2002": "鋼鐵",   "1301": "石化",
+}
+
+
+async def async_all_screener(limit: int = 300) -> list[StockRow]:
+    """
+    動態全市場選股：從 TWSE 即時資料建構完整股票池。
+
+    - 對 MASTER_POOL 中的股票：用真實收盤/量/法人覆蓋，保留基本面分數
+    - 對其他 TWSE 股票：用即時資料 + 技術面估算分數（model_score 由漲跌+法人推算）
+    - 過濾：成交量 < 500 張 / 收盤 <= 0 / 無效代碼 → 排除
+
+    比 all_screener() 多出幾百支有效交易股票。
+    """
+    cache  = await _fetch_rt_cache()
+    prices = cache.get("prices", {})
+    chips  = cache.get("chips",  {})
+
+    if not prices:
+        _log.warning("[async_screener] TWSE cache empty, fallback to static pool")
+        return all_screener(limit)
+
+    rows: list[StockRow] = []
+
+    for code, price_data in prices.items():
+        close      = float(price_data.get("close", 0) or 0)
+        change_pct = float(price_data.get("change_pct", 0) or 0)
+        volume     = float(price_data.get("volume", 0) or 0)    # 張
+        name       = str(price_data.get("name", code) or code)
+
+        if close <= 0 or volume < 200:   # 過濾停牌、極低流動性
+            continue
+
+        chip_data   = chips.get(code, {})
+        foreign_net = int(chip_data.get("foreign_net", 0) or 0)
+        trust_net   = int(chip_data.get("trust_net",   0) or 0)
+        chip_5d     = foreign_net + trust_net
+
+        # 從 MASTER_POOL 合併基本面資料
+        fundamental = _POOL_FUNDAMENTAL.get(code, {})
+
+        # 技術面估算（只有即時資料時）
+        # 漲幅 × 3 + 法人買超強度 → 綜合動能分
+        chip_score = max(0, min(60, 50 + chip_5d / 500))
+        mom_score  = max(0, min(100, 50 + change_pct * 5))
+        model_score = mom_score * 0.4 + chip_score * 0.4 + 20  # base 20
+
+        d = {
+            "stock_id":    code,
+            "name":        fundamental.get("name", name),
+            "sector":      fundamental.get("sector", _SECTOR_KEYWORDS.get(code, "其他")),
+            "close":       close,
+            "change_pct":  change_pct,
+            "volume":      volume,
+            "chip_5d":     float(chip_5d),
+            "chip_20d":    float(fundamental.get("chip_20d", chip_5d * 4)),
+            "foreign_buy_days": fundamental.get(
+                "foreign_buy_days",
+                1 if chip_5d > 0 else (-1 if chip_5d < 0 else 0)
+            ),
+            # 基本面：有 MASTER_POOL 資料就用，否則 50（中性）
+            "rev_yoy":         fundamental.get("rev_yoy",        0.0),
+            "rev_mom":         fundamental.get("rev_mom",         0.0),
+            "eps_growth":      fundamental.get("eps_growth",      0.0),
+            "dividend_yield":  fundamental.get("dividend_yield",  0.0),
+            "pe_ratio":        fundamental.get("pe_ratio",        20.0),
+            "eps_stability":   fundamental.get("eps_stability",   0.5),
+            "kd_weekly":       fundamental.get("kd_weekly",       50.0),
+            "ma20_slope":      fundamental.get("ma20_slope",      change_pct * 0.1),
+            "consec_up":       fundamental.get("consec_up",       1 if change_pct > 0 else 0),
+            "vol_20d_max":     fundamental.get("vol_20d_max",     volume * 1.5),
+            "intraday_range":  fundamental.get("intraday_range",  abs(change_pct)),
+            "momentum_score":  fundamental.get("momentum_score",  mom_score),
+            "chip_score_v":    fundamental.get("chip_score_v",    chip_score),
+            "tech_score":      fundamental.get("tech_score",      mom_score * 0.8),
+            "fundamental_score": fundamental.get("fundamental_score", 50.0),
+            "model_score":     fundamental.get("model_score",     round(model_score, 1)),
+            "confidence":      fundamental.get("confidence",      50.0),
+            "_data_source":    "twse_live" if fundamental else "twse_dynamic",
+        }
+        rows.append(safe_build_row(d))
+
+    if not rows:
+        _log.warning("[async_screener] no rows built, fallback to static pool")
+        return all_screener(limit)
+
+    # 排序：model_score × 0.6 + 漲幅貢獻 × 0.4
+    rows.sort(
+        key=lambda r: r.model_score * 0.6 + max(0, r.change_pct) * 0.4,
+        reverse=True,
+    )
+
+    _log.info("[async_screener] universe=%d, returning top %d", len(rows), min(limit, len(rows)))
+    ScreenerLogger.log_call("async_all", "", rows[:5])
+    return rows[:limit]

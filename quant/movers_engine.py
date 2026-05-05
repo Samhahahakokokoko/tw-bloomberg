@@ -102,21 +102,35 @@ class MoversEngine:
     # ── 主入口 ───────────────────────────────────────────────────────────────
 
     async def scan(self) -> list[MoverResult]:
-        """從 report_screener 取資料並評估"""
+        """從 TWSE 全市場動態池取資料並評估（優先）；失敗才用靜態 pool；最後 mock"""
+        try:
+            from backend.services.report_screener import async_all_screener
+            rows = await async_all_screener(limit=500)
+            if not rows:
+                raise ValueError("async_all_screener returned empty")
+            results = [r for r in (self._eval(row) for row in rows) if r]
+            results.sort(key=lambda r: r.score, reverse=True)
+            logger.info("[Movers] universe=%d → passed=%d", len(rows), len(results))
+            return results[:self.top_n]
+        except Exception as e:
+            logger.warning("[Movers] async_all_screener failed (%s), trying static pool", e)
+
         try:
             from backend.services.report_screener import all_screener
             rows = all_screener(limit=300)
             if not rows:
-                raise ValueError("screener returned empty result")
+                raise ValueError("all_screener empty")
             results = [r for r in (self._eval(row) for row in rows) if r]
             results.sort(key=lambda r: r.score, reverse=True)
+            logger.info("[Movers] static pool=%d → passed=%d", len(rows), len(results))
             return results[:self.top_n]
-        except Exception as e:
-            logger.warning("[Movers] screener failed (%s) → using MOCK data", e)
-            mock = self.scan_mock()
-            for r in mock:
-                r.is_mock = True
-            return mock
+        except Exception as e2:
+            logger.warning("[Movers] static pool failed (%s) → MOCK", e2)
+
+        mock = self.scan_mock()
+        for r in mock:
+            r.is_mock = True
+        return mock
 
     def scan_mock(self, n: int = 20) -> list[MoverResult]:
         """Mock 資料（測試 / API 失敗時）"""
