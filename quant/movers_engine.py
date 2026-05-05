@@ -167,21 +167,39 @@ class MoversEngine:
             name     = gs("name", stock_id)
             sector   = gs("sector", "其他")
             close    = g("close", 100)
-            ma20     = g("ma20", close * 0.97)
-            ma60     = g("ma60", close * 0.94)
-            vol_r    = g("volume_ratio", g("vol_ratio", 1.0))
+            vol_k    = g("volume", 0) / 1000   # volume in shares（張）
+
+            # ── 量比：優先讀 StockRow 衍生欄位 vol_ratio ──────────────────────
+            vol_r = g("vol_ratio", g("volume_ratio", 0.0))
+            if vol_r == 0.0:
+                # fallback：用 volume / vol_20d_max × 1.8 自行計算
+                vol_max = g("vol_20d_max", 0)
+                vol_r = (vol_k / (vol_max / 1000 / 1.8)) if vol_max > 100 else 1.0
+
+            # ── 外資/法人淨買：優先 foreign_net_5d（chip_5d 別名）──────────────
             f_days   = int(g("foreign_buy_days", 0))
-            foreign5 = g("foreign_net", f_days * 500)
+            foreign5 = g("foreign_net_5d", g("chip_5d", g("foreign_net", f_days * 300)))
             trust5   = g("trust_net", 0)
-            vol_k    = g("volume", 0) / 1000   # volume in shares
 
-            # 動能估算
-            mom20    = g("momentum_20d", 1.0)
-            ret_5d   = g("ret_5d", (mom20 - 1.0) * 0.25 if mom20 > 0.9 else 0.03)
-            ret_1m   = mom20 - 1.0 if mom20 > 0.5 else ret_5d * 4
-            ret_3m   = ret_1m * 2.5
+            # ── 5日報酬：優先 ret_5d_approx（screener 計算的估算值）────────────
+            ret_5d = g("ret_5d", g("ret_5d_approx", 0.0))
+            if ret_5d == 0.0:
+                # 最後備援：用今日漲幅 × 2 + 斜率補正
+                ret_5d = g("change_pct", 0) / 100 * 2.0 + g("ma20_slope", 0) * 0.005
 
-            dist     = (close - ma20) / ma20 if ma20 > 0 else 0.0
+            ret_1m  = ret_5d * 4
+            ret_3m  = ret_5d * 10
+
+            # ── 均線：優先讀欄位，否則從斜率估算 ─────────────────────────────
+            ma20 = g("ma20", 0.0)
+            if ma20 <= 0:
+                slope = g("ma20_slope", 0)
+                # slope 為%/期，正斜率表示股價在均線上方
+                # close = ma20 × (1 + slope × 0.01) → ma20 = close / (1 + slope*0.01)
+                ma20 = close / (1.0 + max(slope, 0) * 0.01) if close > 0 else close * 0.97
+            ma60 = g("ma60", close * 0.93)
+
+            dist = (close - ma20) / ma20 if ma20 > 0 else 0.0
 
             # ── 排除條件 ──────────────────────────────────────────────
             if vol_k > 0 and vol_k < EXC_AVG_VOL_MIN_K:

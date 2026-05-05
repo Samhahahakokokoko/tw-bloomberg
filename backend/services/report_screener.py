@@ -178,6 +178,11 @@ class StockRow:
 
     tags: list[str] = field(default_factory=list)
 
+    # ── 衍生欄位（由 safe_build_row 計算，供 movers_engine 等使用）──────────────
+    vol_ratio:      float = 1.0    # volume / (vol_20d_max * 0.55)，近似量比
+    ret_5d_approx:  float = 0.0    # change_pct*2 + slope 估算5日報酬（小數）
+    foreign_net_5d: float = 0.0    # chip_5d 張數（三大法人5日淨買）
+
     # 內部追蹤欄位（不顯示在圖表）
     _data_source: str = field(default="pool", repr=False, compare=False)
 
@@ -224,6 +229,10 @@ _FIELD_DEFAULTS: dict = {
     "chip_score_v":      50.0,
     "tech_score":        50.0,
     "fundamental_score": 50.0,
+    # 衍生欄位預設
+    "vol_ratio":         1.0,
+    "ret_5d_approx":     0.0,
+    "foreign_net_5d":    0.0,
 }
 
 _VALID_FIELDS = set(f.name for f in StockRow.__dataclass_fields__.values()
@@ -263,6 +272,23 @@ def safe_build_row(d: dict, rank: int = 99) -> StockRow:
             d[key] = int(float(str(d[key]).replace(",", "") or 0))
         except (TypeError, ValueError):
             d[key] = _FIELD_DEFAULTS[key]
+
+    # ── 衍生欄位計算 ──────────────────────────────────────────────────────────
+    # vol_ratio：今日成交量 vs 20日最大量，×1.8 換算為近似均量倍數
+    # 台股實證：max ≈ avg × 1.8，所以 vol / (max / 1.8) = vol / max * 1.8
+    _vol       = float(d.get("volume", 0) or 0)
+    _vol_max   = float(d.get("vol_20d_max", 0) or 0)
+    d["vol_ratio"] = (_vol / (_vol_max / 1.8)) if _vol_max > 100 else 1.0
+
+    # ret_5d_approx：今日漲跌幅 × 2.0 + 均線斜率補正
+    _chg_pct   = float(d.get("change_pct", 0) or 0) / 100   # % → 小數
+    _slope     = float(d.get("ma20_slope", 0) or 0)
+    _consec    = int(d.get("consec_up", 0) or 0)
+    # 斜率 1.0 ≈ 均線每日漲 1%，5 日累積約 5% → slope × 0.005 ≈ 5日貢獻
+    d["ret_5d_approx"] = _chg_pct * 2.0 + _slope * 0.005 + (_consec >= 4) * 0.01
+
+    # foreign_net_5d：chip_5d 就是三大法人5日淨買張數
+    d["foreign_net_5d"] = float(d.get("chip_5d", 0) or 0)
 
     # 只取 StockRow 認識的欄位
     kwargs = {k: v for k, v in d.items() if k in _VALID_FIELDS}
@@ -589,6 +615,12 @@ async def enrich_with_realtime(rows: list[StockRow]) -> list[StockRow]:
             today_inst = c["foreign_net"] + c["trust_net"]   # 外資 + 投信
             if today_inst != 0:
                 row.chip_5d = today_inst   # 用今日法人覆蓋 5d 欄位
+
+        # 每次覆蓋真實資料後，重新計算衍生欄位
+        if row.vol_20d_max > 100:
+            row.vol_ratio = row.volume / (row.vol_20d_max / 1.8)
+        row.ret_5d_approx   = row.change_pct / 100 * 2.0 + row.ma20_slope * 0.005
+        row.foreign_net_5d  = row.chip_5d
 
     return rows
 

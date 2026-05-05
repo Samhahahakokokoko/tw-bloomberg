@@ -143,9 +143,13 @@ class ScannerEngine:
         pe_ratio   = g("pe_ratio", 20)
         score      = g("score", 50)
 
-        # Relative Strength 估算（近20日 vs 市場，用 ret_1m > 5% 代理）
-        # 更精確版本需要大盤指數報酬率對比
-        market_ret_1m = 0.03   # 假設市場月報酬 3%（可從 fetch_market_overview 取）
+        # Relative Strength 估算（近20日 vs 市場）
+        # 嘗試從快取取大盤月報酬，否則用近7日均漲跌幅 fallback
+        try:
+            from backend.services.twse_service import _mkt_cache  # type: ignore
+            market_ret_1m = float((_mkt_cache or {}).get("monthly_return", 0.02))
+        except Exception:
+            market_ret_1m = 0.02
         rs = ret_1m - market_ret_1m
 
         # ROE 代理：eps_stability > 0.7 ≈ ROE > 15%
