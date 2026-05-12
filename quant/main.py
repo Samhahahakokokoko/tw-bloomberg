@@ -93,15 +93,18 @@ async def _fetch_kline(stock_code: str, start_date: Optional[str] = None) -> pd.
         from backend.services.twse_service import fetch_kline
         kline = await fetch_kline(stock_code, start_date)
         if not kline:
-            raise ValueError("empty kline")
+            raise ValueError(f"TWSE K線資料為空，股票代碼：{stock_code}")
         df = pd.DataFrame(kline)
         for col in ["open", "high", "low", "close", "volume"]:
             if col in df.columns:
                 df[col] = pd.to_numeric(df[col], errors="coerce")
         return df
     except Exception as e:
-        logger.warning(f"[quant] fetch_kline({stock_code}) 失敗，改用 mock ({e})")
-        return _mock_kline(stock_code)
+        logger.error(f"[quant] fetch_kline({stock_code}) 失敗：{e}")
+        raise HTTPException(
+            status_code=503,
+            detail=f"無法取得 {stock_code} 的真實 K 線資料：{e}。請稍後再試。",
+        )
 
 
 def _mock_kline(stock_code: str, n: int = 300) -> pd.DataFrame:

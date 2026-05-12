@@ -1011,9 +1011,9 @@ class BacktestIntegrityLog(Base):
     created_at              = Column(DateTime, default=datetime.utcnow, index=True)
 
 
-class SystemHealthLog(Base):
-    """系統健康狀態記錄（每次 collect_health 寫入）"""
-    __tablename__ = "system_health_log"
+class SystemHealthSnapshot(Base):
+    """系統健康快照（每次 collect_health 寫入，由 quant.system_health_dashboard 使用）"""
+    __tablename__ = "system_health_snapshot"
 
     id                   = Column(Integer, primary_key=True, index=True)
     overall_status       = Column(String(10))    # green/yellow/red

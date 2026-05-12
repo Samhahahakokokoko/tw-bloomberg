@@ -229,7 +229,7 @@ def _normalize_twse_quote(item: dict) -> dict:
         "open": float(item.get("OpeningPrice", 0) or 0),
         "high": float(item.get("HighestPrice", 0) or 0),
         "low": float(item.get("LowestPrice", 0) or 0),
-        "volume": _parse_int(item.get("TradeVolume")),
+        "volume": _parse_int(item.get("TradeVolume")) // 1000,  # 股 → 張
         "change": float(item.get("Change", 0) or 0),
         "change_pct": _calc_pct(item.get("ClosingPrice"), item.get("Change")),
         "timestamp": datetime.now().isoformat(),
@@ -249,7 +249,7 @@ def _normalize_tpex_quote(item: dict) -> dict:
         "open": _f(item.get("Open")),
         "high": _f(item.get("High")),
         "low": _f(item.get("Low")),
-        "volume": _parse_int(item.get("TradingShares")),
+        "volume": _parse_int(item.get("TradingShares")) // 1000,  # 股 → 張
         "change": _f(item.get("Change")),
         "change_pct": _calc_pct(item.get("Close"), item.get("Change")),
         "timestamp": datetime.now().isoformat(),

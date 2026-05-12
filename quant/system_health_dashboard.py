@@ -216,10 +216,10 @@ async def collect_health() -> SystemHealth:
     # 寫 DB 日誌
     try:
         from backend.models.database import AsyncSessionLocal
-        from backend.models.models import SystemHealthLog
+        from backend.models.models import SystemHealthSnapshot
         import json
         async with AsyncSessionLocal() as db:
-            db.add(SystemHealthLog(
+            db.add(SystemHealthSnapshot(
                 overall_status      = health.overall_status,
                 modules_json        = json.dumps([m.to_dict() for m in modules], ensure_ascii=False),
                 global_data_quality = health.global_data_quality,

@@ -124,7 +124,7 @@ async def check_watchlist_triggers():
     若觸及停損或目標價，推送 LINE 通知。
     """
     from ..models.models import Watchlist
-    from .morning_report import _push_to_users
+    from ..services.morning_report import _push_to_users
 
     async with AsyncSessionLocal() as db:
         result = await db.execute(

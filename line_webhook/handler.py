@@ -1918,8 +1918,6 @@ async def _cmd_movers(uid: str) -> list:
         from quant.movers_engine import MoversEngine
         engine  = MoversEngine()
         results = await engine.scan()
-        if not results:
-            results = engine.scan_mock()
         report = engine.format_report(results)
         return [_text(report, qr_items(
             ("📋 決策報告", "/daily"),
@@ -2640,22 +2638,25 @@ async def _report_bg(
 ) -> None:
     """背景：篩選 → real-time 補充 → 分頁 → 產生圖 + 文字列表 → 推送"""
     import httpx
-    from backend.services.report_screener import run_screener, paginate, get_label, enrich_with_realtime
+    from backend.services.report_screener import async_run_screener, paginate, get_label
     from backend.services.generate_report_image import generate_report_image
     from backend.services.report_tracker import batch_record
 
     try:
         if cached_rows is None:
-            rows = run_screener(screen_type, sector=sector)
+            rows = await async_run_screener(screen_type, sector=sector)
             logger.info(f"[report_bg] screener={screen_type} rows={len(rows)}")
             if rows:
                 r0 = rows[0]
-                logger.info(f"[report_bg] row0: {r0.stock_id} {r0.name} close={r0.close} chg={r0.change_pct} vol={r0.volume}")
-            try:
-                rows = await enrich_with_realtime(rows)
-                logger.info(f"[report_bg] after enrich: rows={len(rows)} close0={rows[0].close if rows else 'N/A'}")
-            except Exception as e:
-                logger.warning(f"[report_bg] enrich failed (using pool data): {e}")
+                logger.info(f"[report_bg] row0: {r0.stock_id} {r0.name} close={r0.close} chg={r0.change_pct} vol={r0.volume} src={getattr(r0, '_data_source', '?')}")
+            if not rows:
+                # TWSE 資料無法取得（非交易時間或 API 異常）
+                async with httpx.AsyncClient(timeout=10) as c:
+                    await c.post("https://api.line.me/v2/bot/message/push",
+                                 json={"to": uid, "messages": [{"type": "text",
+                                       "text": "⚠️ 目前無法取得 TWSE 即時資料（非交易時間或 API 異常），請稍後再試。"}]},
+                                 headers={"Authorization": f"Bearer {settings.line_channel_access_token}"})
+                return
         else:
             rows = cached_rows
 

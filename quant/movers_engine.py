@@ -181,14 +181,14 @@ class MoversEngine:
             name     = gs("name", stock_id)
             sector   = gs("sector", "其他")
             close    = g("close", 100)
-            vol_k    = g("volume", 0) / 1000   # volume in shares（張）
+            vol_k    = g("volume", 0)   # StockRow.volume 已是「張」，不再 ÷1000
 
             # ── 量比：優先讀 StockRow 衍生欄位 vol_ratio ──────────────────────
             vol_r = g("vol_ratio", g("volume_ratio", 0.0))
             if vol_r == 0.0:
-                # fallback：用 volume / vol_20d_max × 1.8 自行計算
+                # fallback：vol_k 和 vol_20d_max 都是「張」
                 vol_max = g("vol_20d_max", 0)
-                vol_r = (vol_k / (vol_max / 1000 / 1.8)) if vol_max > 100 else 1.0
+                vol_r = (vol_k * 1.8 / vol_max) if vol_max > 100 else 1.0
 
             # ── 外資/法人淨買：優先 foreign_net_5d（chip_5d 別名）──────────────
             f_days   = int(g("foreign_buy_days", 0))
@@ -280,27 +280,29 @@ class MoversEngine:
 
 
 # ── 共用 Mock 股票池 ──────────────────────────────────────────────────────────
+# ⚠️ MOCK_UNIVERSE 只在測試或 API 完全失敗時使用，正常路徑不應觸及。
+# 此處 close=0 表示「待 API 填入」，防止假股價顯示給用戶。
 _MOCK_UNIVERSE = [
-    {"stock_id": "3105", "name": "穩懋",   "sector": "半導體",    "close": 320.0},
-    {"stock_id": "6669", "name": "緯穎",   "sector": "AI Server", "close": 1250.0},
-    {"stock_id": "2379", "name": "瑞昱",   "sector": "半導體",    "close": 620.0},
-    {"stock_id": "2330", "name": "台積電", "sector": "半導體",    "close": 870.0},
-    {"stock_id": "2454", "name": "聯發科", "sector": "IC設計",    "close": 1020.0},
-    {"stock_id": "6415", "name": "矽力-KY","sector": "半導體",    "close": 2800.0},
-    {"stock_id": "3231", "name": "緯創",   "sector": "AI Server", "close": 102.0},
-    {"stock_id": "2317", "name": "鴻海",   "sector": "電子製造",  "close": 178.0},
-    {"stock_id": "5347", "name": "世界先進","sector":"半導體",     "close": 95.0},
-    {"stock_id": "4938", "name": "和碩",   "sector": "電子製造",  "close": 78.0},
-    {"stock_id": "2382", "name": "廣達",   "sector": "AI Server", "close": 280.0},
-    {"stock_id": "3034", "name": "聯詠",   "sector": "IC設計",    "close": 415.0},
-    {"stock_id": "2308", "name": "台達電", "sector": "電源零組件","close": 330.0},
-    {"stock_id": "6271", "name": "同欣電", "sector": "半導體",    "close": 310.0},
-    {"stock_id": "2303", "name": "聯電",   "sector": "半導體",    "close": 52.0},
-    {"stock_id": "2357", "name": "華碩",   "sector": "電腦週邊",  "close": 540.0},
-    {"stock_id": "2412", "name": "中華電", "sector": "電信",      "close": 125.0},
-    {"stock_id": "2882", "name": "國泰金", "sector": "金融",      "close": 55.0},
-    {"stock_id": "2603", "name": "長榮",   "sector": "航運",      "close": 168.0},
-    {"stock_id": "2609", "name": "陽明",   "sector": "航運",      "close": 82.0},
+    {"stock_id": "3105", "name": "穩懋",    "sector": "半導體",    "close": 0},
+    {"stock_id": "6669", "name": "緯穎",    "sector": "AI Server", "close": 0},
+    {"stock_id": "2379", "name": "瑞昱",    "sector": "半導體",    "close": 0},
+    {"stock_id": "2330", "name": "台積電",  "sector": "半導體",    "close": 0},
+    {"stock_id": "2454", "name": "聯發科",  "sector": "IC設計",    "close": 0},
+    {"stock_id": "6415", "name": "矽力-KY", "sector": "半導體",    "close": 0},
+    {"stock_id": "3231", "name": "緯創",    "sector": "AI Server", "close": 0},
+    {"stock_id": "2317", "name": "鴻海",    "sector": "電子製造",  "close": 0},
+    {"stock_id": "5347", "name": "世界先進","sector": "半導體",    "close": 0},
+    {"stock_id": "4938", "name": "和碩",    "sector": "電子製造",  "close": 0},
+    {"stock_id": "2382", "name": "廣達",    "sector": "AI Server", "close": 0},
+    {"stock_id": "3034", "name": "聯詠",    "sector": "IC設計",    "close": 0},
+    {"stock_id": "2308", "name": "台達電",  "sector": "電源零組件","close": 0},
+    {"stock_id": "6271", "name": "同欣電",  "sector": "半導體",    "close": 0},
+    {"stock_id": "2303", "name": "聯電",    "sector": "半導體",    "close": 0},
+    {"stock_id": "2357", "name": "華碩",    "sector": "電腦週邊",  "close": 0},
+    {"stock_id": "2412", "name": "中華電",  "sector": "電信",      "close": 0},
+    {"stock_id": "2882", "name": "國泰金",  "sector": "金融",      "close": 0},
+    {"stock_id": "2603", "name": "長榮",    "sector": "航運",      "close": 0},
+    {"stock_id": "2609", "name": "陽明",    "sector": "航運",      "close": 0},
 ]
 
 

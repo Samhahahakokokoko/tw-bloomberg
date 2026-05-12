@@ -44,12 +44,12 @@ INDUSTRY_STOCKS: dict[str, list[str]] = {
 async def analyze_industry(industry: str, news_days: int = 3) -> dict:
     """分析特定產業的近 N 日新聞情緒"""
     keywords = INDUSTRY_KEYWORDS.get(industry, [industry])
-    cutoff = (date.today() - timedelta(days=news_days)).strftime("%Y-%m-%d")
+    cutoff_dt = datetime.combine(date.today() - timedelta(days=news_days), datetime.min.time())
 
     async with AsyncSessionLocal() as db:
         r = await db.execute(
             select(NewsArticle)
-            .where(NewsArticle.published_at >= cutoff)
+            .where(NewsArticle.published_at >= cutoff_dt)
             .order_by(NewsArticle.published_at.desc())
             .limit(200)
         )

@@ -344,229 +344,232 @@ def compute_labels(row: StockRow) -> list[str]:
 
 # ── MASTER_POOL（基本面/技術面範本，收盤/量/法人由 real-time 覆蓋）──────────
 
+# ⚠️ 以下為離線 fallback 用的基本面參考資料。
+# close/change_pct/volume 在執行期間會被 enrich_with_realtime() / async_all_screener()
+# 覆蓋為 TWSE 當日真實收盤。請勿將此處的 close 視為即時股價。
 _POOL_RAW: list[dict] = [
     dict(stock_id="2330", name="台積電",   sector="半導體",
-         close=850,  change_pct=+2.3, volume=35000, chip_5d=+8500, chip_20d=+32000, foreign_buy_days=8,
+         close=0,    change_pct=0, volume=0, chip_5d=+8500, chip_20d=+32000, foreign_buy_days=8,
          rev_yoy=28.5,  rev_mom=5.2,  eps_growth=32.1, dividend_yield=2.5, pe_ratio=22,  eps_stability=0.92,
          kd_weekly=72, ma20_slope=1.2, consec_up=6, vol_20d_max=34000, intraday_range=2.8, group_avg_change=3.5,
-         breakout_pct=2.1, target_price=880,
+         breakout_pct=2.1, target_price=0,
          model_score=88, confidence=87, momentum_score=85, value_score=42, chip_score_v=82, tech_score=78, fundamental_score=86),
     dict(stock_id="2454", name="聯發科",   sector="IC設計",
-         close=1180, change_pct=+3.1, volume=18000, chip_5d=+3200, chip_20d=+15000, foreign_buy_days=6,
+         close=0,    change_pct=0, volume=0, chip_5d=+3200, chip_20d=+15000, foreign_buy_days=6,
          rev_yoy=22.0,  rev_mom=8.1,  eps_growth=25.0, dividend_yield=3.5, pe_ratio=18,  eps_stability=0.78,
          kd_weekly=68, ma20_slope=0.9, consec_up=3, vol_20d_max=20000, intraday_range=3.8, group_avg_change=3.5,
-         breakout_pct=3.5, target_price=1150,
+         breakout_pct=3.5, target_price=0,
          model_score=85, confidence=83, momentum_score=88, value_score=55, chip_score_v=75, tech_score=82, fundamental_score=78),
     dict(stock_id="2303", name="聯電",     sector="半導體",
-         close=46.5, change_pct=-0.5, volume=28000, chip_5d=-800,  chip_20d=+2000,  foreign_buy_days=-2,
+         close=0,    change_pct=0, volume=0, chip_5d=-800,  chip_20d=+2000,  foreign_buy_days=-2,
          rev_yoy=8.0,   rev_mom=-1.5, eps_growth=5.0,  dividend_yield=5.5, pe_ratio=14,  eps_stability=0.72,
          kd_weekly=55, ma20_slope=0.1, consec_up=2, vol_20d_max=27000, intraday_range=1.8, group_avg_change=3.5,
-         breakout_pct=0.0, target_price=48,
+         breakout_pct=0.0, target_price=0,
          model_score=62, confidence=60, momentum_score=52, value_score=68, chip_score_v=48, tech_score=55, fundamental_score=65),
     dict(stock_id="3711", name="日月光投", sector="封裝測試",
-         close=152,  change_pct=+1.2, volume=9500,  chip_5d=+550,  chip_20d=+3200,  foreign_buy_days=4,
+         close=0,    change_pct=0, volume=0, chip_5d=+550,  chip_20d=+3200,  foreign_buy_days=4,
          rev_yoy=12.0,  rev_mom=2.8,  eps_growth=14.2, dividend_yield=4.2, pe_ratio=16,  eps_stability=0.80,
          kd_weekly=64, ma20_slope=0.7, consec_up=4, vol_20d_max=9000, intraday_range=1.5, group_avg_change=3.5,
-         breakout_pct=1.2, target_price=155,
+         breakout_pct=1.2, target_price=0,
          model_score=71, confidence=70, momentum_score=65, value_score=62, chip_score_v=60, tech_score=68, fundamental_score=70),
     dict(stock_id="6770", name="力積電",   sector="半導體",
-         close=52.8, change_pct=+1.8, volume=22000, chip_5d=+1200, chip_20d=+4500,  foreign_buy_days=3,
+         close=0,    change_pct=0, volume=0, chip_5d=+1200, chip_20d=+4500,  foreign_buy_days=3,
          rev_yoy=15.2,  rev_mom=3.0,  eps_growth=18.5, dividend_yield=3.8, pe_ratio=17,  eps_stability=0.70,
          kd_weekly=61, ma20_slope=0.5, consec_up=5, vol_20d_max=21000, intraday_range=2.2, group_avg_change=3.5,
-         breakout_pct=1.8, target_price=50,
+         breakout_pct=1.8, target_price=0,
          model_score=74, confidence=72, momentum_score=72, value_score=58, chip_score_v=65, tech_score=70, fundamental_score=68),
     dict(stock_id="6415", name="矽力-KY",  sector="散熱/電源",
-         close=1350, change_pct=+4.2, volume=5200,  chip_5d=+2100, chip_20d=+8500,  foreign_buy_days=7,
+         close=0,    change_pct=0, volume=0, chip_5d=+2100, chip_20d=+8500,  foreign_buy_days=7,
          rev_yoy=35.0,  rev_mom=9.5,  eps_growth=40.0, dividend_yield=1.8, pe_ratio=28,  eps_stability=0.88,
          kd_weekly=78, ma20_slope=1.5, consec_up=7, vol_20d_max=5100, intraday_range=4.5, group_avg_change=4.2,
-         breakout_pct=4.2, target_price=1300,
+         breakout_pct=4.2, target_price=0,
          model_score=92, confidence=91, momentum_score=92, value_score=35, chip_score_v=88, tech_score=90, fundamental_score=90),
     dict(stock_id="3552", name="同亨",     sector="散熱/電源",
-         close=285,  change_pct=+3.8, volume=3200,  chip_5d=+800,  chip_20d=+3000,  foreign_buy_days=5,
+         close=0,    change_pct=0, volume=0, chip_5d=+800,  chip_20d=+3000,  foreign_buy_days=5,
          rev_yoy=28.0,  rev_mom=6.0,  eps_growth=33.0, dividend_yield=2.2, pe_ratio=24,  eps_stability=0.82,
          kd_weekly=73, ma20_slope=1.1, consec_up=6, vol_20d_max=3100, intraday_range=3.2, group_avg_change=4.2,
-         breakout_pct=3.8, target_price=280,
+         breakout_pct=3.8, target_price=0,
          model_score=87, confidence=85, momentum_score=88, value_score=38, chip_score_v=80, tech_score=85, fundamental_score=84),
     dict(stock_id="3450", name="聯鈞",     sector="散熱/電源",
-         close=95.5, change_pct=+2.5, volume=4800,  chip_5d=+400,  chip_20d=+1800,  foreign_buy_days=3,
+         close=0,    change_pct=0, volume=0, chip_5d=+400,  chip_20d=+1800,  foreign_buy_days=3,
          rev_yoy=18.5,  rev_mom=4.0,  eps_growth=22.0, dividend_yield=3.5, pe_ratio=20,  eps_stability=0.75,
          kd_weekly=65, ma20_slope=0.8, consec_up=5, vol_20d_max=4700, intraday_range=2.8, group_avg_change=4.2,
-         breakout_pct=2.5, target_price=95,
+         breakout_pct=2.5, target_price=0,
          model_score=78, confidence=76, momentum_score=76, value_score=52, chip_score_v=65, tech_score=72, fundamental_score=74),
     dict(stock_id="3231", name="緯創",     sector="伺服器",
-         close=102,  change_pct=+5.1, volume=25000, chip_5d=+3500, chip_20d=+12000, foreign_buy_days=9,
+         close=0,    change_pct=0, volume=0, chip_5d=+3500, chip_20d=+12000, foreign_buy_days=9,
          rev_yoy=42.0,  rev_mom=12.0, eps_growth=55.0, dividend_yield=2.8, pe_ratio=20,  eps_stability=0.82,
          kd_weekly=80, ma20_slope=2.0, consec_up=8, vol_20d_max=24000, intraday_range=5.1, group_avg_change=5.0,
-         breakout_pct=5.1, target_price=95,
+         breakout_pct=5.1, target_price=0,
          model_score=95, confidence=93, momentum_score=96, value_score=45, chip_score_v=92, tech_score=94, fundamental_score=92),
     dict(stock_id="2382", name="廣達",     sector="伺服器",
-         close=285,  change_pct=+3.5, volume=32000, chip_5d=+5500, chip_20d=+22000, foreign_buy_days=10,
+         close=0,    change_pct=0, volume=0, chip_5d=+5500, chip_20d=+22000, foreign_buy_days=10,
          rev_yoy=38.5,  rev_mom=10.5, eps_growth=48.0, dividend_yield=3.2, pe_ratio=22,  eps_stability=0.85,
          kd_weekly=76, ma20_slope=1.8, consec_up=7, vol_20d_max=31000, intraday_range=4.0, group_avg_change=5.0,
-         breakout_pct=4.2, target_price=270,
+         breakout_pct=4.2, target_price=0,
          model_score=93, confidence=91, momentum_score=94, value_score=48, chip_score_v=90, tech_score=92, fundamental_score=90),
     dict(stock_id="6669", name="緯穎",     sector="伺服器",
-         close=2050, change_pct=+6.2, volume=8500,  chip_5d=+4800, chip_20d=+18000, foreign_buy_days=12,
+         close=0,    change_pct=0, volume=0, chip_5d=+4800, chip_20d=+18000, foreign_buy_days=12,
          rev_yoy=55.0,  rev_mom=15.0, eps_growth=70.0, dividend_yield=1.5, pe_ratio=32,  eps_stability=0.78,
          kd_weekly=82, ma20_slope=2.5, consec_up=9, vol_20d_max=8200, intraday_range=6.2, group_avg_change=5.0,
-         breakout_pct=6.2, target_price=1900,
+         breakout_pct=6.2, target_price=0,
          model_score=96, confidence=94, momentum_score=98, value_score=28, chip_score_v=95, tech_score=96, fundamental_score=94),
     dict(stock_id="0056", name="元大高股息", sector="ETF",
-         close=36.5, change_pct=+0.3, volume=85000, chip_5d=+2000, chip_20d=+8000,  foreign_buy_days=2,
+         close=0,    change_pct=0, volume=0, chip_5d=+2000, chip_20d=+8000,  foreign_buy_days=2,
          rev_yoy=8.5,   rev_mom=1.0,  eps_growth=6.0,  dividend_yield=7.5, pe_ratio=13,  eps_stability=0.92,
          kd_weekly=58, ma20_slope=0.2, consec_up=3, vol_20d_max=85000, intraday_range=0.5, group_avg_change=1.5,
-         breakout_pct=0.3, target_price=37,
+         breakout_pct=0.3, target_price=0,
          model_score=68, confidence=72, momentum_score=35, value_score=95, chip_score_v=55, tech_score=50, fundamental_score=88),
     dict(stock_id="2412", name="中華電",   sector="電信",
-         close=118,  change_pct=-0.2, volume=5200,  chip_5d=-100,  chip_20d=+500,   foreign_buy_days=-1,
+         close=0,    change_pct=0, volume=0, chip_5d=-100,  chip_20d=+500,   foreign_buy_days=-1,
          rev_yoy=3.5,   rev_mom=0.5,  eps_growth=2.0,  dividend_yield=6.2, pe_ratio=22,  eps_stability=0.95,
          kd_weekly=52, ma20_slope=0.0, consec_up=1, vol_20d_max=5400, intraday_range=0.4, group_avg_change=0.8,
-         breakout_pct=0.0, target_price=120,
+         breakout_pct=0.0, target_price=0,
          model_score=55, confidence=60, momentum_score=28, value_score=88, chip_score_v=42, tech_score=45, fundamental_score=82),
     dict(stock_id="2317", name="鴻海",     sector="電子製造",
-         close=118.5,change_pct=+1.2, volume=55000, chip_5d=+2500, chip_20d=+9500,  foreign_buy_days=4,
+         close=0,    change_pct=0, volume=0, chip_5d=+2500, chip_20d=+9500,  foreign_buy_days=4,
          rev_yoy=12.0,  rev_mom=3.5,  eps_growth=15.0, dividend_yield=4.8, pe_ratio=11,  eps_stability=0.75,
          kd_weekly=62, ma20_slope=0.6, consec_up=4, vol_20d_max=54000, intraday_range=1.8, group_avg_change=2.5,
-         breakout_pct=1.2, target_price=120,
+         breakout_pct=1.2, target_price=0,
          model_score=72, confidence=70, momentum_score=65, value_score=78, chip_score_v=68, tech_score=65, fundamental_score=72),
     dict(stock_id="2884", name="玉山金",   sector="金融",
-         close=29.8, change_pct=+0.5, volume=18000, chip_5d=+350,  chip_20d=+1200,  foreign_buy_days=1,
+         close=0,    change_pct=0, volume=0, chip_5d=+350,  chip_20d=+1200,  foreign_buy_days=1,
          rev_yoy=5.0,   rev_mom=1.2,  eps_growth=4.5,  dividend_yield=5.8, pe_ratio=12,  eps_stability=0.88,
          kd_weekly=54, ma20_slope=0.1, consec_up=2, vol_20d_max=17500, intraday_range=0.6, group_avg_change=1.2,
-         breakout_pct=0.5, target_price=30,
+         breakout_pct=0.5, target_price=0,
          model_score=60, confidence=62, momentum_score=38, value_score=85, chip_score_v=48, tech_score=50, fundamental_score=80),
     dict(stock_id="8299", name="群聯",     sector="IC設計",
-         close=535,  change_pct=+4.8, volume=8500,  chip_5d=+1500, chip_20d=+5500,  foreign_buy_days=6,
+         close=0,    change_pct=0, volume=0, chip_5d=+1500, chip_20d=+5500,  foreign_buy_days=6,
          rev_yoy=32.0,  rev_mom=8.5,  eps_growth=38.0, dividend_yield=4.0, pe_ratio=19,  eps_stability=0.80,
          kd_weekly=74, ma20_slope=1.4, consec_up=5, vol_20d_max=8000, intraday_range=4.8, group_avg_change=4.5,
-         breakout_pct=4.8, target_price=500,
+         breakout_pct=4.8, target_price=0,
          model_score=84, confidence=82, momentum_score=86, value_score=58, chip_score_v=78, tech_score=88, fundamental_score=82),
     dict(stock_id="6269", name="台郡",     sector="電子零件",
-         close=128,  change_pct=+3.2, volume=9200,  chip_5d=+620,  chip_20d=+2500,  foreign_buy_days=5,
+         close=0,    change_pct=0, volume=0, chip_5d=+620,  chip_20d=+2500,  foreign_buy_days=5,
          rev_yoy=20.0,  rev_mom=5.5,  eps_growth=24.0, dividend_yield=3.2, pe_ratio=18,  eps_stability=0.76,
          kd_weekly=70, ma20_slope=1.0, consec_up=5, vol_20d_max=9000, intraday_range=3.2, group_avg_change=3.8,
-         breakout_pct=3.2, target_price=122,
+         breakout_pct=3.2, target_price=0,
          model_score=79, confidence=77, momentum_score=80, value_score=52, chip_score_v=70, tech_score=82, fundamental_score=76),
     dict(stock_id="3529", name="力旺",     sector="IC設計",
-         close=1280, change_pct=+5.5, volume=3800,  chip_5d=+1800, chip_20d=+7200,  foreign_buy_days=7,
+         close=0,    change_pct=0, volume=0, chip_5d=+1800, chip_20d=+7200,  foreign_buy_days=7,
          rev_yoy=45.0,  rev_mom=12.0, eps_growth=52.0, dividend_yield=2.0, pe_ratio=35,  eps_stability=0.72,
          kd_weekly=76, ma20_slope=1.6, consec_up=6, vol_20d_max=3700, intraday_range=5.5, group_avg_change=5.2,
-         breakout_pct=5.5, target_price=1200,
+         breakout_pct=5.5, target_price=0,
          model_score=89, confidence=87, momentum_score=92, value_score=30, chip_score_v=85, tech_score=90, fundamental_score=88),
     dict(stock_id="6488", name="環球晶",   sector="半導體材料",
-         close=380,  change_pct=+2.8, volume=12000, chip_5d=+2200, chip_20d=+8800,  foreign_buy_days=5,
+         close=0,    change_pct=0, volume=0, chip_5d=+2200, chip_20d=+8800,  foreign_buy_days=5,
          rev_yoy=18.0,  rev_mom=4.5,  eps_growth=22.0, dividend_yield=2.8, pe_ratio=20,  eps_stability=0.82,
          kd_weekly=66, ma20_slope=0.9, consec_up=4, vol_20d_max=11800, intraday_range=2.8, group_avg_change=3.2,
-         breakout_pct=2.8, target_price=365,
+         breakout_pct=2.8, target_price=0,
          model_score=80, confidence=78, momentum_score=78, value_score=50, chip_score_v=75, tech_score=76, fundamental_score=78),
     dict(stock_id="2308", name="台達電",   sector="電源/散熱",
-         close=358,  change_pct=+2.5, volume=15000, chip_5d=+1800, chip_20d=+7500,  foreign_buy_days=4,
+         close=0,    change_pct=0, volume=0, chip_5d=+1800, chip_20d=+7500,  foreign_buy_days=4,
          rev_yoy=15.0,  rev_mom=3.8,  eps_growth=18.0, dividend_yield=3.5, pe_ratio=21,  eps_stability=0.85,
          kd_weekly=67, ma20_slope=0.8, consec_up=4, vol_20d_max=14500, intraday_range=2.5, group_avg_change=4.2,
-         breakout_pct=2.5, target_price=345,
+         breakout_pct=2.5, target_price=0,
          model_score=78, confidence=76, momentum_score=76, value_score=58, chip_score_v=72, tech_score=74, fundamental_score=78),
     dict(stock_id="2379", name="瑞昱",     sector="IC設計",
-         close=565,  change_pct=+3.8, volume=9800,  chip_5d=+1200, chip_20d=+4800,  foreign_buy_days=5,
+         close=0,    change_pct=0, volume=0, chip_5d=+1200, chip_20d=+4800,  foreign_buy_days=5,
          rev_yoy=25.0,  rev_mom=7.0,  eps_growth=30.0, dividend_yield=3.8, pe_ratio=17,  eps_stability=0.80,
          kd_weekly=70, ma20_slope=1.1, consec_up=5, vol_20d_max=9500, intraday_range=3.8, group_avg_change=4.5,
-         breakout_pct=3.8, target_price=535,
+         breakout_pct=3.8, target_price=0,
          model_score=83, confidence=81, momentum_score=84, value_score=60, chip_score_v=76, tech_score=82, fundamental_score=80),
     dict(stock_id="1301", name="台塑",     sector="石化",
-         close=68.5, change_pct=-0.8, volume=8200,  chip_5d=-500,  chip_20d=-1200,  foreign_buy_days=-3,
+         close=0,    change_pct=0, volume=0, chip_5d=-500,  chip_20d=-1200,  foreign_buy_days=-3,
          rev_yoy=-5.0,  rev_mom=-2.0, eps_growth=-8.0, dividend_yield=6.5, pe_ratio=18,  eps_stability=0.65,
          kd_weekly=38, ma20_slope=-0.5, consec_up=0, vol_20d_max=8500, intraday_range=1.2, group_avg_change=-1.2,
-         breakout_pct=0.0, target_price=72,
+         breakout_pct=0.0, target_price=0,
          model_score=38, confidence=40, momentum_score=22, value_score=72, chip_score_v=28, tech_score=30, fundamental_score=45),
     dict(stock_id="2002", name="中鋼",     sector="鋼鐵",
-         close=24.8, change_pct=-0.5, volume=32000, chip_5d=-800,  chip_20d=-2500,  foreign_buy_days=-2,
+         close=0,    change_pct=0, volume=0, chip_5d=-800,  chip_20d=-2500,  foreign_buy_days=-2,
          rev_yoy=-3.0,  rev_mom=-1.0, eps_growth=-5.0, dividend_yield=5.8, pe_ratio=16,  eps_stability=0.60,
          kd_weekly=42, ma20_slope=-0.3, consec_up=0, vol_20d_max=33000, intraday_range=1.0, group_avg_change=-0.8,
-         breakout_pct=0.0, target_price=26,
+         breakout_pct=0.0, target_price=0,
          model_score=42, confidence=44, momentum_score=25, value_score=70, chip_score_v=30, tech_score=35, fundamental_score=48),
     dict(stock_id="2409", name="友達",     sector="面板",
-         close=14.8, change_pct=+0.7, volume=45000, chip_5d=+200,  chip_20d=+800,   foreign_buy_days=1,
+         close=0,    change_pct=0, volume=0, chip_5d=+200,  chip_20d=+800,   foreign_buy_days=1,
          rev_yoy=2.0,   rev_mom=0.5,  eps_growth=1.5,  dividend_yield=4.2, pe_ratio=15,  eps_stability=0.55,
          kd_weekly=50, ma20_slope=0.1, consec_up=2, vol_20d_max=44000, intraday_range=1.0, group_avg_change=1.0,
-         breakout_pct=0.7, target_price=15,
+         breakout_pct=0.7, target_price=0,
          model_score=50, confidence=52, momentum_score=40, value_score=60, chip_score_v=42, tech_score=48, fundamental_score=50),
     # ── 擴充：AI/機器人/其他主流族群 ──────────────────────────────────────────
     dict(stock_id="3661", name="世芯-KY",  sector="IC設計",
-         close=2200, change_pct=+5.0, volume=6000,  chip_5d=+3200, chip_20d=+12000, foreign_buy_days=10,
+         close=0,    change_pct=0, volume=0, chip_5d=+3200, chip_20d=+12000, foreign_buy_days=10,
          rev_yoy=62.0,  rev_mom=16.0, eps_growth=75.0, dividend_yield=0.5, pe_ratio=45,  eps_stability=0.70,
          kd_weekly=81, ma20_slope=2.2, consec_up=8, vol_20d_max=5800, intraday_range=6.0, group_avg_change=5.5,
-         breakout_pct=6.0, target_price=2000,
+         breakout_pct=6.0, target_price=0,
          model_score=94, confidence=92, momentum_score=97, value_score=22, chip_score_v=93, tech_score=95, fundamental_score=92),
     dict(stock_id="6547", name="南電",     sector="PCB",
-         close=380,  change_pct=+3.5, volume=7200,  chip_5d=+1500, chip_20d=+6000,  foreign_buy_days=6,
+         close=0,    change_pct=0, volume=0, chip_5d=+1500, chip_20d=+6000,  foreign_buy_days=6,
          rev_yoy=28.0,  rev_mom=7.0,  eps_growth=35.0, dividend_yield=1.8, pe_ratio=28,  eps_stability=0.78,
          kd_weekly=72, ma20_slope=1.2, consec_up=5, vol_20d_max=7000, intraday_range=3.8, group_avg_change=3.5,
-         breakout_pct=3.5, target_price=360,
+         breakout_pct=3.5, target_price=0,
          model_score=83, confidence=81, momentum_score=85, value_score=40, chip_score_v=80, tech_score=82, fundamental_score=82),
     dict(stock_id="2049", name="上銀",     sector="機器人",
-         close=285,  change_pct=+4.2, volume=8500,  chip_5d=+2200, chip_20d=+8500,  foreign_buy_days=7,
+         close=0,    change_pct=0, volume=0, chip_5d=+2200, chip_20d=+8500,  foreign_buy_days=7,
          rev_yoy=22.0,  rev_mom=6.5,  eps_growth=28.0, dividend_yield=2.5, pe_ratio=30,  eps_stability=0.75,
          kd_weekly=74, ma20_slope=1.4, consec_up=6, vol_20d_max=8200, intraday_range=4.5, group_avg_change=4.5,
-         breakout_pct=4.2, target_price=270,
+         breakout_pct=4.2, target_price=0,
          model_score=82, confidence=80, momentum_score=84, value_score=45, chip_score_v=78, tech_score=80, fundamental_score=80),
     dict(stock_id="1590", name="亞德客-KY",sector="機器人",
-         close=825,  change_pct=+3.8, volume=5200,  chip_5d=+1800, chip_20d=+7200,  foreign_buy_days=5,
+         close=0,    change_pct=0, volume=0, chip_5d=+1800, chip_20d=+7200,  foreign_buy_days=5,
          rev_yoy=18.0,  rev_mom=5.0,  eps_growth=22.0, dividend_yield=2.8, pe_ratio=26,  eps_stability=0.82,
          kd_weekly=70, ma20_slope=1.0, consec_up=4, vol_20d_max=5000, intraday_range=4.0, group_avg_change=4.5,
-         breakout_pct=3.8, target_price=790,
+         breakout_pct=3.8, target_price=0,
          model_score=79, confidence=77, momentum_score=80, value_score=50, chip_score_v=74, tech_score=78, fundamental_score=78),
     dict(stock_id="2356", name="英業達",   sector="伺服器",
-         close=42.5, change_pct=+2.8, volume=28000, chip_5d=+3500, chip_20d=+14000, foreign_buy_days=8,
+         close=0,    change_pct=0, volume=0, chip_5d=+3500, chip_20d=+14000, foreign_buy_days=8,
          rev_yoy=32.0,  rev_mom=8.5,  eps_growth=38.0, dividend_yield=4.5, pe_ratio=12,  eps_stability=0.80,
          kd_weekly=73, ma20_slope=1.1, consec_up=5, vol_20d_max=27000, intraday_range=3.0, group_avg_change=5.0,
-         breakout_pct=2.8, target_price=40,
+         breakout_pct=2.8, target_price=0,
          model_score=80, confidence=78, momentum_score=82, value_score=70, chip_score_v=78, tech_score=76, fundamental_score=80),
     dict(stock_id="3443", name="創意電子", sector="IC設計",
-         close=880,  change_pct=+4.5, volume=4500,  chip_5d=+2000, chip_20d=+8000,  foreign_buy_days=7,
+         close=0,    change_pct=0, volume=0, chip_5d=+2000, chip_20d=+8000,  foreign_buy_days=7,
          rev_yoy=38.0,  rev_mom=9.0,  eps_growth=45.0, dividend_yield=1.5, pe_ratio=35,  eps_stability=0.72,
          kd_weekly=76, ma20_slope=1.6, consec_up=6, vol_20d_max=4300, intraday_range=4.8, group_avg_change=5.5,
-         breakout_pct=4.5, target_price=840,
+         breakout_pct=4.5, target_price=0,
          model_score=86, confidence=84, momentum_score=88, value_score=32, chip_score_v=82, tech_score=86, fundamental_score=85),
     dict(stock_id="6230", name="超眾",     sector="散熱/電源",
-         close=620,  change_pct=+5.2, volume=3800,  chip_5d=+1200, chip_20d=+4800,  foreign_buy_days=5,
+         close=0,    change_pct=0, volume=0, chip_5d=+1200, chip_20d=+4800,  foreign_buy_days=5,
          rev_yoy=42.0,  rev_mom=12.0, eps_growth=50.0, dividend_yield=1.2, pe_ratio=32,  eps_stability=0.75,
          kd_weekly=78, ma20_slope=1.8, consec_up=7, vol_20d_max=3600, intraday_range=5.5, group_avg_change=4.2,
-         breakout_pct=5.2, target_price=580,
+         breakout_pct=5.2, target_price=0,
          model_score=88, confidence=86, momentum_score=90, value_score=28, chip_score_v=82, tech_score=88, fundamental_score=86),
     dict(stock_id="2357", name="華碩",     sector="電子製造",
-         close=445,  change_pct=+1.8, volume=9500,  chip_5d=+900,  chip_20d=+3500,  foreign_buy_days=3,
+         close=0,    change_pct=0, volume=0, chip_5d=+900,  chip_20d=+3500,  foreign_buy_days=3,
          rev_yoy=12.0,  rev_mom=3.0,  eps_growth=15.0, dividend_yield=4.5, pe_ratio=14,  eps_stability=0.78,
          kd_weekly=62, ma20_slope=0.6, consec_up=3, vol_20d_max=9200, intraday_range=2.0, group_avg_change=2.5,
-         breakout_pct=1.8, target_price=430,
+         breakout_pct=1.8, target_price=0,
          model_score=70, confidence=68, momentum_score=65, value_score=72, chip_score_v=60, tech_score=65, fundamental_score=72),
     dict(stock_id="2395", name="研華",     sector="工業電腦",
-         close=395,  change_pct=+2.2, volume=4800,  chip_5d=+800,  chip_20d=+3200,  foreign_buy_days=4,
+         close=0,    change_pct=0, volume=0, chip_5d=+800,  chip_20d=+3200,  foreign_buy_days=4,
          rev_yoy=15.0,  rev_mom=4.0,  eps_growth=18.0, dividend_yield=3.5, pe_ratio=22,  eps_stability=0.85,
          kd_weekly=65, ma20_slope=0.8, consec_up=4, vol_20d_max=4600, intraday_range=2.5, group_avg_change=3.0,
-         breakout_pct=2.2, target_price=378,
+         breakout_pct=2.2, target_price=0,
          model_score=74, confidence=72, momentum_score=72, value_score=62, chip_score_v=65, tech_score=70, fundamental_score=75),
     dict(stock_id="2882", name="國泰金",   sector="金融",
-         close=62.5, change_pct=+0.8, volume=22000, chip_5d=+500,  chip_20d=+2000,  foreign_buy_days=2,
+         close=0,    change_pct=0, volume=0, chip_5d=+500,  chip_20d=+2000,  foreign_buy_days=2,
          rev_yoy=8.0,   rev_mom=1.5,  eps_growth=6.0,  dividend_yield=5.5, pe_ratio=13,  eps_stability=0.88,
          kd_weekly=55, ma20_slope=0.2, consec_up=2, vol_20d_max=21000, intraday_range=1.0, group_avg_change=1.2,
-         breakout_pct=0.8, target_price=63,
+         breakout_pct=0.8, target_price=0,
          model_score=62, confidence=64, momentum_score=42, value_score=82, chip_score_v=50, tech_score=55, fundamental_score=80),
     dict(stock_id="4904", name="遠傳",     sector="電信",
-         close=82.5, change_pct=+0.5, volume=6200,  chip_5d=+200,  chip_20d=+800,   foreign_buy_days=1,
+         close=0,    change_pct=0, volume=0, chip_5d=+200,  chip_20d=+800,   foreign_buy_days=1,
          rev_yoy=5.0,   rev_mom=1.0,  eps_growth=4.0,  dividend_yield=5.8, pe_ratio=18,  eps_stability=0.90,
          kd_weekly=52, ma20_slope=0.1, consec_up=1, vol_20d_max=6000, intraday_range=0.6, group_avg_change=0.8,
-         breakout_pct=0.5, target_price=83,
+         breakout_pct=0.5, target_price=0,
          model_score=58, confidence=60, momentum_score=35, value_score=85, chip_score_v=45, tech_score=48, fundamental_score=82),
     dict(stock_id="00878", name="國泰永續高股息", sector="ETF",
-         close=21.8, change_pct=+0.3, volume=120000, chip_5d=+5000, chip_20d=+20000, foreign_buy_days=5,
+         close=0,    change_pct=0, volume=0, chip_5d=+5000, chip_20d=+20000, foreign_buy_days=5,
          rev_yoy=9.0,   rev_mom=1.0,  eps_growth=7.0,  dividend_yield=7.2, pe_ratio=12,  eps_stability=0.95,
          kd_weekly=56, ma20_slope=0.1, consec_up=3, vol_20d_max=115000, intraday_range=0.4, group_avg_change=1.5,
-         breakout_pct=0.3, target_price=22,
+         breakout_pct=0.3, target_price=0,
          model_score=65, confidence=68, momentum_score=30, value_score=95, chip_score_v=60, tech_score=50, fundamental_score=90),
     dict(stock_id="0050", name="元大台灣50", sector="ETF",
-         close=188,  change_pct=+1.2, volume=35000, chip_5d=+8000, chip_20d=+32000, foreign_buy_days=4,
+         close=0,    change_pct=0, volume=0, chip_5d=+8000, chip_20d=+32000, foreign_buy_days=4,
          rev_yoy=10.0,  rev_mom=2.0,  eps_growth=8.0,  dividend_yield=3.5, pe_ratio=15,  eps_stability=0.98,
          kd_weekly=60, ma20_slope=0.5, consec_up=3, vol_20d_max=33000, intraday_range=1.5, group_avg_change=2.0,
-         breakout_pct=1.2, target_price=190,
+         breakout_pct=1.2, target_price=0,
          model_score=72, confidence=74, momentum_score=55, value_score=75, chip_score_v=65, tech_score=62, fundamental_score=85),
 ]
 
@@ -621,7 +624,7 @@ async def _fetch_rt_cache() -> dict:
                         prices[code] = {
                             "close":      close,
                             "change_pct": pct,
-                            "volume":     vol / 1000,   # 股 → 張
+                            "volume":     vol // 1000,   # 股 → 張（整數）
                             "name":       str(item.get("Name", "") or ""),
                         }
                         _valid_ticker_cache.add(code)
@@ -631,29 +634,41 @@ async def _fetch_rt_cache() -> dict:
             except Exception as e:
                 _log.warning("[RT] STOCK_DAY_ALL failed: %s", e)
 
-            # ── 法人買賣 ──────────────────────────────────────────────────
-            try:
-                r = await client.get(
-                    "https://openapi.twse.com.tw/v1/fund/TWT38U"
-                )
-                r.raise_for_status()
-                for item in r.json():
-                    code = unify_ticker_format(item.get("Code", ""))
-                    if not code:
+            # ── 法人買賣（TWT38U 已停用，嘗試備用端點）────────────────────
+            _inst_urls = [
+                "https://openapi.twse.com.tw/v1/fund/TWT38U",
+                "https://openapi.twse.com.tw/v1/exchangeReport/TWT38U",
+            ]
+            def _pi(v) -> int:
+                return int(str(v or "0").replace(",", ""))
+
+            for _inst_url in _inst_urls:
+                try:
+                    r = await client.get(_inst_url, follow_redirects=False)
+                    if r.status_code != 200:
                         continue
-                    try:
-                        def _pi(v) -> int:
-                            return int(str(v or "0").replace(",", ""))
-                        chips[code] = {
-                            "foreign_net": _pi(item.get("Foreign_Investor_Diff")),
-                            "trust_net":   _pi(item.get("Investment_Trust_Diff")),
-                            "dealer_net":  _pi(item.get("Dealer_Diff")),
-                        }
-                    except Exception:
-                        pass
-                _log.info("[RT] TWT38U loaded %d stocks", len(chips))
-            except Exception as e:
-                _log.warning("[RT] TWT38U failed: %s", e)
+                    ct = r.headers.get("content-type", "")
+                    if "json" not in ct:
+                        _log.warning("[RT] %s returned non-JSON (%s), skipping", _inst_url, ct[:30])
+                        continue
+                    for item in r.json():
+                        code = unify_ticker_format(item.get("Code", ""))
+                        if not code:
+                            continue
+                        try:
+                            chips[code] = {
+                                "foreign_net": _pi(item.get("Foreign_Investor_Diff")),
+                                "trust_net":   _pi(item.get("Investment_Trust_Diff")),
+                                "dealer_net":  _pi(item.get("Dealer_Diff")),
+                            }
+                        except Exception:
+                            pass
+                    _log.info("[RT] %s loaded %d stocks", _inst_url, len(chips))
+                    break  # 成功就不再嘗試備用
+                except Exception as e:
+                    _log.warning("[RT] %s failed: %s", _inst_url, e)
+            if not chips:
+                _log.warning("[RT] 三大法人資料無法取得，chip_5d 將為 0")
 
     except Exception as e:
         _log.error("[RT] httpx session failed: %s", e)
@@ -844,27 +859,9 @@ def all_screener(limit: int = 50) -> list[StockRow]:
             _log.debug("[all_screener] dynamic universe=%d returning top %d", len(rows), min(limit, len(rows)))
             return rows[:limit]
 
-    # ── 快取未暖：靜態 MASTER_POOL ────────────────────────────────────────────
-    _log.debug("[all_screener] cache cold, using static MASTER_POOL (%d stocks)", len(_POOL_RAW))
-    pool = sorted(
-        _POOL_RAW,
-        key=lambda d: (
-            d["momentum_score"]    * 0.25 +
-            d["value_score"]       * 0.15 +
-            d["chip_score_v"]      * 0.25 +
-            d["tech_score"]        * 0.20 +
-            d["fundamental_score"] * 0.15
-        ),
-        reverse=True,
-    )
-    result = _build_rows(pool[:limit])
-    for row in result:
-        row.model_score = round(
-            row.momentum_score * 0.25 + row.value_score * 0.15 +
-            row.chip_score_v   * 0.25 + row.tech_score  * 0.20 +
-            row.fundamental_score * 0.15, 1
-        )
-    return result
+    # ── 快取未暖：TWSE 資料尚未載入，回傳空清單（不回傳假股價）────────────────
+    _log.warning("[all_screener] cache cold — TWSE data not loaded yet, returning empty list")
+    return []
 
 
 def favorites_screener(stock_ids: list[str]) -> list[StockRow]:
@@ -1023,6 +1020,76 @@ async def custom_screener(conditions: str, api_key: str = "") -> list[StockRow]:
 
 # ── 篩選器統一入口 ────────────────────────────────────────────────────────────
 
+async def async_run_screener(
+    screen_type: str,
+    sector: str = "",
+    stock_ids: list[str] = None,
+    limit: int = 50,
+) -> list[StockRow]:
+    """
+    非同步篩選入口 — 永遠使用 TWSE 即時全市場池。
+
+    所有篩選類型都先呼叫 async_all_screener() 取得含真實收盤價的完整市場池，
+    再依篩選類型套用排序 / 過濾，確保回傳的股價絕對是當日真實收盤。
+    """
+    t = screen_type.lower().strip()
+
+    if t == "favorites":
+        rows = favorites_screener(stock_ids or [])
+        rows = await enrich_with_realtime(rows)
+        ScreenerLogger.log_call(t, "", rows)
+        return rows
+
+    # 所有其他類型：拉取完整即時市場池（最多 500 支）
+    all_rows = await async_all_screener(limit=max(500, limit * 10))
+
+    if t == "momentum":
+        all_rows.sort(
+            key=lambda r: r.momentum_score * 0.6 + max(0, r.change_pct) * 2.0,
+            reverse=True,
+        )
+    elif t == "value":
+        all_rows.sort(
+            key=lambda r: r.dividend_yield * 0.5 + r.eps_stability * 40 + r.value_score * 0.3,
+            reverse=True,
+        )
+    elif t == "chip":
+        all_rows.sort(
+            key=lambda r: r.chip_score_v * 0.5 + r.foreign_buy_days * 2.5 + r.chip_5d / 500,
+            reverse=True,
+        )
+    elif t == "breakout":
+        all_rows.sort(
+            key=lambda r: r.breakout_pct * 3.0 + r.kd_weekly * 0.3 + r.tech_score * 0.3,
+            reverse=True,
+        )
+    elif t in ("ai", "ai族群"):
+        ai_sectors = {"伺服器", "IC設計", "散熱/電源", "電源/散熱", "半導體", "AI", "機器人"}
+        ai_rows = [r for r in all_rows if r.sector in ai_sectors]
+        if ai_rows:
+            ai_rows.sort(
+                key=lambda r: r.model_score * 0.6 + r.momentum_score * 0.4,
+                reverse=True,
+            )
+            ScreenerLogger.log_call(t, "", ai_rows)
+            return ai_rows[:limit]
+        # AI 族群在全市場池中無符合 → 回退 model_score 排序
+        all_rows.sort(key=lambda r: r.model_score, reverse=True)
+    elif t == "sector":
+        sec = (sector or "半導體").strip().lower()
+        sec_rows = [r for r in all_rows if sec in r.sector.lower() or r.sector.lower() in sec]
+        if sec_rows:
+            sec_rows.sort(key=lambda r: r.model_score, reverse=True)
+            ScreenerLogger.log_call(t, sector, sec_rows)
+            return sec_rows[:limit]
+        all_rows.sort(key=lambda r: r.model_score, reverse=True)
+    else:
+        pass  # "all" — async_all_screener 已按 model_score 排序
+
+    ScreenerLogger.log_call(t, sector, all_rows[:5])
+    return all_rows[:limit]
+
+
 def run_screener(
     screen_type: str,
     sector: str = "",
@@ -1032,6 +1099,7 @@ def run_screener(
     """
     同步篩選入口（使用 MASTER_POOL 靜態資料）。
     呼叫方若需真實資料，再呼叫 await enrich_with_realtime(rows)。
+    新程式請改用 await async_run_screener() 以確保股價正確。
     """
     t = screen_type.lower().strip()
     rows: list[StockRow]
@@ -1141,8 +1209,8 @@ async def async_all_screener(limit: int = 300) -> list[StockRow]:
     chips  = cache.get("chips",  {})
 
     if not prices:
-        _log.warning("[async_screener] TWSE cache empty, fallback to static pool")
-        return all_screener(limit)
+        _log.warning("[async_screener] TWSE cache empty — no live prices available, returning empty")
+        return []
 
     rows: list[StockRow] = []
 

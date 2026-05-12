@@ -120,7 +120,7 @@ def flex_quote(q: dict) -> dict:
                 _separator(),
                 _row_4cols("開盤", f"{open_p}", "最高", f"{high}",
                            C_WHITE, C_GREEN),
-                _row_4cols("成交量", f"{volume:,}", "最低", f"{low}",
+                _row_4cols("成交量", f"{volume:,}張", "最低", f"{low}",
                            C_WHITE, C_RED),
                 _separator(),
             ],

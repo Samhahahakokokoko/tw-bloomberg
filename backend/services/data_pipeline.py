@@ -29,6 +29,12 @@ from .twse_service import fetch_stock_list
 TOP_STOCKS_PER_RUN = 100   # 每次最多更新 100 檔（免費版限額）
 PRIORITY_CODES: list[str] = []  # 動態填入優先股票
 
+# ETF 代碼格式：台灣 ETF 以 "00" 開頭（0050, 0056, 00878…）
+# FinMind TaiwanFinancialStatements / TaiwanStockMonthRevenue 不收錄 ETF，
+# 送出這些代碼會得到 422，必須跳過。
+def _is_etf(code: str) -> bool:
+    return code.startswith("00") and len(code) <= 6
+
 
 async def _get_priority_codes() -> list[str]:
     """取得優先更新的股票代碼：庫存 + 自選股 + 前次高分"""
@@ -135,7 +141,11 @@ async def update_single_stock(stock_code: str, force: bool = False) -> bool:
     """
     更新單一股票的所有 FinMind 資料。
     force=True 則忽略上次更新時間，強制重抓。
+    ETF（以 "00" 開頭）跳過財務報表 / 月營收 API — FinMind 不收錄此類資料。
     """
+    if _is_etf(stock_code):
+        return True   # ETF 無需抓財務，直接視為成功
+
     today = date.today().strftime("%Y-%m-%d")
 
     # 檢查是否需要更新（今日已更新過則跳過）
@@ -189,7 +199,10 @@ async def run_daily_pipeline(trigger_scoring: bool = True):
     if len(priority) < TOP_STOCKS_PER_RUN:
         try:
             twse_list = await fetch_stock_list()
-            all_codes = [s["code"] for s in twse_list if s.get("code", "").isdigit()]
+            all_codes = [
+                s["code"] for s in twse_list
+                if s.get("code", "").isdigit() and not _is_etf(s["code"])
+            ]
             for code in all_codes:
                 if code not in priority and len(priority) < TOP_STOCKS_PER_RUN:
                     priority.append(code)

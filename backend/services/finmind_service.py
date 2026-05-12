@@ -61,12 +61,12 @@ async def _get(dataset: str, stock_id: str, start_date: str, end_date: str = "")
 
 async def fetch_adj_price(stock_code: str, start_date: str = "", days: int = 120) -> list[dict]:
     """
-    TaiwanStockPriceAdj — 還原除權息後的歷史股價
+    TaiwanStockPrice — 歷史股價（免費版用一般股價代替調整後股價）
     回傳欄位：date, open, max(high), min(low), close, Trading_Volume
     """
     if not start_date:
         start_date = (date.today() - timedelta(days=days)).strftime("%Y-%m-%d")
-    raw = await _get("TaiwanStockPriceAdj", stock_code, start_date)
+    raw = await _get("TaiwanStockPrice", stock_code, start_date)
     out = []
     for r in raw:
         try:
@@ -122,7 +122,7 @@ async def fetch_financials(stock_code: str, start_date: str = "") -> list[dict]:
     """
     if not start_date:
         start_date = (date.today() - timedelta(days=730)).strftime("%Y-%m-%d")
-    raw = await _get("TaiwanFinancialStatements", stock_code, start_date)
+    raw = await _get("TaiwanStockFinancialStatements", stock_code, start_date)
 
     # 依日期分組
     by_date: dict[str, dict] = {}
@@ -168,34 +168,34 @@ async def fetch_financials(stock_code: str, start_date: str = "") -> list[dict]:
 
 async def fetch_institutional_detail(stock_code: str, start_date: str = "") -> list[dict]:
     """
-    TaiwanStockInstitutionalInvestors
-    name: 外陸資、外陸資(不含外資自營商)、投信、自營商
-    回傳每日外資/投信/自營商的 buy/sell/diff（張）
+    TaiwanStockInstitutionalInvestorsBuySell
+    name: Foreign_Investor, Investment_Trust, Dealer
+    buy/sell 單位：股，轉換為張（÷1000）
     """
     if not start_date:
         start_date = (date.today() - timedelta(days=60)).strftime("%Y-%m-%d")
-    raw = await _get("TaiwanStockInstitutionalInvestors", stock_code, start_date)
+    raw = await _get("TaiwanStockInstitutionalInvestorsBuySell", stock_code, start_date)
 
     by_date: dict[str, dict] = {}
     for r in raw:
         d    = r.get("date", "")
         name = r.get("name", "")
-        buy  = int(float(r.get("buy", 0) or 0))
-        sell = int(float(r.get("sell", 0) or 0))
-        diff = int(float(r.get("diff", 0) or 0))
+        buy  = int(float(r.get("buy",  0) or 0)) // 1000  # 股 → 張
+        sell = int(float(r.get("sell", 0) or 0)) // 1000
+        diff = buy - sell
         if d not in by_date:
             by_date[d] = {"date": d, "foreign_buy": 0, "foreign_sell": 0, "foreign_net": 0,
                           "trust_buy": 0, "trust_sell": 0, "trust_net": 0,
                           "dealer_buy": 0, "dealer_sell": 0, "dealer_net": 0}
-        if "外陸資" in name and "自營" not in name:
+        if name == "Foreign_Investor":
             by_date[d]["foreign_buy"]  += buy
             by_date[d]["foreign_sell"] += sell
             by_date[d]["foreign_net"]  += diff
-        elif name == "投信":
+        elif name == "Investment_Trust":
             by_date[d]["trust_buy"]  = buy
             by_date[d]["trust_sell"] = sell
             by_date[d]["trust_net"]  = diff
-        elif "自營商" in name:
+        elif name == "Dealer":
             by_date[d]["dealer_buy"]  += buy
             by_date[d]["dealer_sell"] += sell
             by_date[d]["dealer_net"]  += diff

@@ -32,15 +32,31 @@ async def generate_daily_trading_advice() -> str:
     regime      = regime_info.get("current", "unknown")
     regime_label= {"bull": "多頭 📈", "bear": "空頭 📉", "sideways": "盤整 ↔️"}.get(regime, "未知")
 
-    # 2. 取今日高分股
-    top = await get_top_scores(limit=20)
-    buy_candidates = top[:3] if top else []
+    # 2. 取今日高分股 — 優先從 stock_scores DB（已有 pipeline 資料時）
+    #    DB 空時 fallback 到即時 TWSE 動能池（async_run_screener）
+    top_db = await get_top_scores(limit=20)
+    if top_db:
+        buy_candidates = top_db[:3]
+        avoid_candidates_pool = [r for r in top_db if r.get("total_score", 50) < 30][:3]
+    else:
+        # DB 空，改用即時市場資料
+        from .report_screener import async_run_screener
+        live_rows = await async_run_screener("momentum", limit=20)
+        buy_candidates = [
+            {
+                "stock_code":       r.stock_id,
+                "stock_name":       r.name,
+                "total_score":      r.model_score,
+                "foreign_consec_buy": r.foreign_buy_days,
+                "three_margins_up": False,
+                "ma_aligned":       r.ma20_slope > 0,
+                "kd_golden_cross":  False,
+            }
+            for r in live_rows[:3]
+        ]
+        avoid_candidates_pool = []
 
-    # 3. 取弱勢股（低分）for 避免清單
-    avoid_results = await run_screener(ScreenerFilter(
-        total_score_min=0, sort_by="total_score", limit=5
-    ))
-    avoid_candidates = [r for r in avoid_results if r["total_score"] < 30]
+    avoid_candidates = avoid_candidates_pool if top_db else []
 
     lines = [
         f"📊 今日操作建議 {date.today().strftime('%m/%d')}",
@@ -70,7 +86,7 @@ async def generate_daily_trading_advice() -> str:
     lines.append("")
 
     # 觀察清單（中等評分）
-    observe = [s for s in top if 50 <= s["total_score"] < 70][:3]
+    observe = [s for s in top_db if 50 <= s.get("total_score", 0) < 70][:3] if top_db else []
     if observe:
         lines.append("🟡 觀察清單：")
         for s in observe:
