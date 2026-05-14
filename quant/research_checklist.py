@@ -209,7 +209,7 @@ class ResearchChecklist:
         trust    = float(data.get("trust_net", 0))
         pe       = float(data.get("pe_ratio", 20))
         vol      = float(data.get("volume", 0))
-        close    = float(data.get("close", 100))
+        close    = float(data.get("close", 0) or 0)
         ma5      = float(data.get("ma5",  close * 0.99))
         ma20     = float(data.get("ma20", close * 0.97))
         ma60     = float(data.get("ma60", close * 0.94))

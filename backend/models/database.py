@@ -29,6 +29,26 @@ class Settings(BaseSettings):
 
 settings = Settings()
 
+# ── 啟動時檢查必要 env vars（缺少時警告，不中斷服務但功能會降級）──────────────────
+def _check_env():
+    missing = []
+    if not settings.line_channel_access_token:
+        missing.append("LINE_CHANNEL_ACCESS_TOKEN")
+    if not settings.line_channel_secret:
+        missing.append("LINE_CHANNEL_SECRET")
+    if not settings.anthropic_api_key:
+        missing.append("ANTHROPIC_API_KEY")
+    if missing:
+        logger.warning(
+            "⚠️  以下 env vars 未設定，相關功能將停用：%s  "
+            "（請在 .env 或部署環境設定）",
+            ", ".join(missing),
+        )
+    else:
+        logger.info("✅ 所有必要 env vars 已設定")
+
+_check_env()
+
 _db_url = settings.async_database_url
 _is_sqlite = "sqlite" in _db_url
 engine = create_async_engine(

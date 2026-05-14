@@ -849,7 +849,7 @@ async def run_full_pipeline(req: PipelineRequest):
         "trust_net":        0.0,
         "dealer_net":       0.0,
         "chip_concentration": 50.0,
-        "close":            float(last.get("close", 100)),
+        "close":            float(last.get("close", 0) or 0),
         "ma20":             float(last.get("ma20", 0) or 0),
         "ma60":             float(last.get("ma60", 0) or 0),
         "k":                float(last.get("k", 50) or 50),
@@ -861,8 +861,11 @@ async def run_full_pipeline(req: PipelineRequest):
 
     # ── 6. Risk check ─────────────────────────────────────────────────
     from .risk_engine import PositionSizerV2, PortfolioSnapshot, DynamicStopLoss
+    _last_close = float(last.get("close", 0) or 0)
+    if _last_close <= 0:
+        raise HTTPException(422, f"無法取得 {req.stock_code} 有效收盤價")
     stop_result = DynamicStopLoss(atr_mult=2.0, fixed_pct=0.08).calc(
-        entry=float(last.get("close", 100)),
+        entry=_last_close,
         atr=float(last.get("atr14", 0) or 0),
     )
 

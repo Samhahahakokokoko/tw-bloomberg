@@ -91,7 +91,16 @@ async def calculate_rebalance(uid: str) -> RebalanceReport:
             name    = h.get("stock_name", code)
             val     = h.get("market_value", 0) or 0
             curr_pct = val / total_val * 100
-            price   = h.get("current_price", h.get("cost_price", 100)) or 100
+            price   = float(h.get("current_price") or h.get("cost_price") or 0)
+            if price <= 0:
+                try:
+                    from .report_screener import _rt_cache
+                    _p = _rt_cache.get("prices", {}).get(code, {})
+                    price = float(_p.get("close", 0) or 0)
+                except Exception:
+                    pass
+            if price <= 0:
+                continue   # 無法取得股價，跳過此持股的再平衡計算
             row     = score_map.get(code)
             score   = row.confidence if row else 50
 

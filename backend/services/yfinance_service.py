@@ -78,7 +78,8 @@ def _sync_fetch(code: str, start: str, end: Optional[str] = None) -> list[dict]:
         logger.error("[yf] yfinance 未安裝，請執行: pip install 'yfinance>=0.2.40'")
         return []
 
-    kw: dict = dict(interval="1d", auto_adjust=True, progress=False)
+    # yfinance 1.x 移除了 progress 參數；1.x 和 0.2.x 都支援 auto_adjust
+    kw: dict = dict(interval="1d", auto_adjust=True)
     if end:
         kw["end"] = end
 
