@@ -94,7 +94,41 @@ def _sync_fetch(code: str, start: str, end: Optional[str] = None) -> list[dict]:
         except Exception as e:
             logger.debug("[yf] %s failed: %s", ticker_str, e)
 
-    logger.warning("[yf] %s：.TW / .TWO 均無資料 (start=%s)", code, start)
+    logger.warning("[yf] %s：.TW / .TWO 均無資料，嘗試 FinMind fallback (start=%s)", code, start)
+
+    # ── 最終 fallback：FinMind TaiwanStockPrice（上市 + 上櫃均支援）────────────
+    try:
+        import asyncio as _asyncio
+        import httpx as _httpx
+        params = {"dataset": "TaiwanStockPrice", "data_id": code, "start_date": start}
+        resp = _httpx.get("https://api.finmindtrade.com/api/v4/data",
+                          params=params, timeout=20)
+        if resp.status_code == 200:
+            payload = resp.json()
+            if payload.get("status") == 200:
+                raw = payload.get("data", [])
+                out = []
+                for r in raw:
+                    try:
+                        c = float(r.get("close", 0) or 0)
+                        if c <= 0:
+                            continue
+                        out.append({
+                            "date":   r.get("date", ""),
+                            "open":   float(r.get("open",   c) or c),
+                            "high":   float(r.get("max",    c) or c),
+                            "low":    float(r.get("min",    c) or c),
+                            "close":  c,
+                            "volume": int(float(r.get("Trading_Volume", 0) or 0)),
+                        })
+                    except (ValueError, TypeError):
+                        pass
+                if out:
+                    logger.info("[yf/finmind] %s → %d records", code, len(out))
+                    return sorted(out, key=lambda x: x["date"])
+    except Exception as fm_err:
+        logger.debug("[yf/finmind] %s fallback failed: %s", code, fm_err)
+
     return []
 
 

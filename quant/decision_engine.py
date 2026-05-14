@@ -294,15 +294,23 @@ class DecisionEngine:
         # ── 若無任何決策，填入觀察 ─────────────────────────────────────────────
         if not decisions and movers:
             for m in movers[:2]:
-                close = m.close
-                # 確保 close 為今日最新價（TWSE 即時快取補充）
-                if close <= 0:
-                    try:
-                        from backend.services.report_screener import _rt_cache
-                        p = _rt_cache.get("prices", {}).get(m.stock_id, {})
-                        close = float(p.get("close", 0) or 0)
-                    except Exception:
-                        pass
+                # 同樣統一從 rt_cache 取今日收盤（watch 也必須用真實價格）
+                close        = 0.0
+                watch_source = "none"
+                try:
+                    from backend.services.report_screener import _rt_cache
+                    p = _rt_cache.get("prices", {}).get(m.stock_id, {})
+                    if p.get("close", 0) > 0:
+                        close        = float(p["close"])
+                        watch_source = "rt_cache(TWSE)"
+                except Exception:
+                    pass
+                if close <= 0 and m.close > 0:
+                    close        = m.close
+                    watch_source = "mover"
+                logger.info("[WATCH] %s 收盤價=%.1f 來源=%s", m.stock_id, close, watch_source)
+                if m.stock_id == "2330":
+                    print(f"2330 使用的收盤價: {close}  (來源: {watch_source})")
                 decisions.append(Decision(
                     action="watch",
                     stock_code=m.stock_id, stock_name=m.name,
@@ -385,21 +393,33 @@ class DecisionEngine:
         if confidence < BUY_MIN_CONFIDENCE:
             return None
 
-        # 從 movers 取今日 TWSE 收盤價
-        close = 0.0
-        for m in movers:
-            if m.stock_id == stock_id:
-                close = m.close
-                break
+        # ── 統一從 TWSE rt_cache 取今日收盤（主要路徑）─────────────────────────
+        # rt_cache 由 _fetch_rt_cache() 每 5 分鐘自 TWSE STOCK_DAY_ALL 更新，
+        # 是整個 pipeline 的唯一真實股價來源，不依賴 movers 或 mock 數據。
+        close       = 0.0
+        price_source = "none"
+        try:
+            from backend.services.report_screener import _rt_cache
+            p = _rt_cache.get("prices", {}).get(stock_id, {})
+            if p.get("close", 0) > 0:
+                close        = float(p["close"])
+                price_source = "rt_cache(TWSE)"
+        except Exception:
+            pass
 
-        # 若 movers 中找不到或收盤為 0，從 TWSE 即時快取補充（確保今日最新價）
+        # rt_cache 無此股（上櫃延遲或停牌）→ fallback 到 movers
         if close <= 0:
-            try:
-                from backend.services.report_screener import _rt_cache
-                p = _rt_cache.get("prices", {}).get(stock_id, {})
-                close = float(p.get("close", 0) or 0)
-            except Exception:
-                pass
+            for m in movers:
+                if m.stock_id == stock_id:
+                    if m.close > 0:
+                        close        = m.close
+                        price_source = "mover"
+                    break
+
+        # Debug：每支進入 _make_buy 的股票都印出收盤價來源
+        logger.info("[BUY] %s 收盤價=%.1f 來源=%s", stock_id, close, price_source)
+        if stock_id == "2330":
+            print(f"2330 使用的收盤價: {close}  (來源: {price_source})")
 
         pos = {"core": 0.15, "medium": 0.10, "satellite": 0.05}.get(layer, 0.08)
         pos = min(pos, max_pos, MAX_POSITION_PCT)

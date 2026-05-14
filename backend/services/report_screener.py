@@ -679,6 +679,45 @@ async def _fetch_rt_cache() -> dict:
             if not chips:
                 _log.warning("[RT] 三大法人資料無法取得，chip_5d 將為 0")
 
+            # ── TPEX 上櫃股收盤（補充上市以外的股票）─────────────────────────
+            try:
+                r = await client.get(
+                    "https://www.tpex.org.tw/openapi/v1/tpex_mainboard_daily_close_quotes",
+                    follow_redirects=True,
+                )
+                if r.status_code == 200 and "json" in r.headers.get("content-type", ""):
+                    tpex_before = len(prices)
+                    for item in r.json():
+                        code = unify_ticker_format(item.get("SecuritiesCompanyCode", ""))
+                        if not code or code in prices:   # 已有 TWSE 資料的不覆蓋
+                            continue
+                        try:
+                            def _sf_tpex(v, default=0.0):
+                                try:
+                                    return float(str(v or "").replace(",", ""))
+                                except (ValueError, TypeError):
+                                    return default
+                            close  = _sf_tpex(item.get("Close"))
+                            change = _sf_tpex(item.get("Change"))
+                            vol_s  = str(item.get("TradingShares", "") or "").replace(",", "")
+                            vol    = int(vol_s) if vol_s.isdigit() else 0
+                            if close <= 0:
+                                continue
+                            prev = close - change
+                            pct  = round(change / prev * 100, 2) if prev and prev != 0 else 0.0
+                            prices[code] = {
+                                "close":      close,
+                                "change_pct": pct,
+                                "volume":     vol // 1000,   # 股 → 張
+                                "name":       str(item.get("CompanyName", "") or ""),
+                            }
+                            _valid_ticker_cache.add(code)
+                        except Exception:
+                            pass
+                    _log.info("[RT] TPEX added %d OTC stocks", len(prices) - tpex_before)
+            except Exception as e:
+                _log.warning("[RT] TPEX mainboard failed: %s", e)
+
     except Exception as e:
         _log.error("[RT] httpx session failed: %s", e)
 

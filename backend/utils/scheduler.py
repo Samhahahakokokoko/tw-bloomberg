@@ -5,6 +5,48 @@ from loguru import logger
 from ..models.database import AsyncSessionLocal
 
 
+async def _push_failure_alert(task_name: str, error: str) -> None:
+    """關鍵任務失敗時推播 LINE 警告給所有訂閱者"""
+    try:
+        import httpx
+        from ..models.database import settings, AsyncSessionLocal
+        from ..models.models import Subscriber
+        from sqlalchemy import select
+
+        token = settings.line_channel_access_token
+        if not token:
+            logger.warning("[Scheduler] LINE token 未設定，無法推送失敗通知")
+            return
+
+        text = (
+            f"⚠️ 系統警告：{task_name} 失敗\n\n"
+            f"錯誤：{str(error)[:200]}\n\n"
+            f"請檢查伺服器日誌"
+        )
+        headers = {"Authorization": f"Bearer {token}"}
+
+        async with AsyncSessionLocal() as db:
+            r = await db.execute(select(Subscriber))
+            subs = r.scalars().all()
+
+        async with httpx.AsyncClient(timeout=15) as c:
+            for sub in subs:
+                uid = getattr(sub, "line_user_id", None)
+                if not uid:
+                    continue
+                try:
+                    await c.post(
+                        "https://api.line.me/v2/bot/message/push",
+                        json={"to": uid, "messages": [{"type": "text", "text": text}]},
+                        headers=headers,
+                    )
+                except Exception:
+                    pass
+        logger.info("[Scheduler] 失敗通知已推送：%s", task_name)
+    except Exception as e:
+        logger.error("[Scheduler] 推送失敗通知時出錯：%s", e)
+
+
 def start_scheduler() -> AsyncIOScheduler:
     scheduler = AsyncIOScheduler(timezone="Asia/Taipei")
 
@@ -429,6 +471,7 @@ async def _run_morning_report():
         await push_morning_report()
     except Exception as e:
         logger.error(f"Morning report job failed: {e}")
+        await _push_failure_alert("早報推送 (morning_report)", e)
 
 
 async def _run_weekly_report():
@@ -520,6 +563,7 @@ async def _run_agent_a():
         await run_daily_pipeline(trigger_scoring=False)
     except Exception as e:
         logger.error(f"Agent A (pipeline) failed: {e}")
+        await _push_failure_alert("資料管線 Agent A (data_pipeline)", e)
 
 
 async def _run_agent_b():
@@ -730,6 +774,7 @@ async def _push_daily_decision():
         logger.info(f"[DecisionEngine] pushed to {n} subscribers")
     except Exception as e:
         logger.error(f"Daily decision job failed: {e}")
+        await _push_failure_alert("每日決策報告 (decision_engine)", e)
 
 
 # ── Alpha Pipeline 四段排程 ───────────────────────────────────────────────────
