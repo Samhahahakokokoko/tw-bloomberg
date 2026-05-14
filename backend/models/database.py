@@ -10,7 +10,8 @@ class Settings(BaseSettings):
     anthropic_api_key: str = ""
     line_channel_access_token: str = ""
     line_channel_secret: str = ""
-    finmind_token: str = ""   # FinMind API token（免費版可留空）
+    finmind_token: str = ""       # FinMind API token（免費版可留空）
+    youtube_api_key: str = ""     # YouTube Data API v3（分析師系統）
 
     class Config:
         env_file = ".env"

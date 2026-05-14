@@ -126,10 +126,21 @@ async def fetch_kline(stock_code: str, date: Optional[str] = None) -> list[dict]
     歷史 K 線資料。
 
     資料來源優先順序：
-      1. Yahoo Finance (yfinance) — 6 個月、已還原除權息、無 rate limit
-      2. TWSE STOCK_DAY API (備援) — 3 個月、逐月請求
+      1. TradingView (tvDatafeed) — 最多 5000 根、日/週/月線、含技術面
+      2. Yahoo Finance (yfinance)  — 6 個月、已還原除權息
+      3. TWSE STOCK_DAY API (備援) — 3 個月、逐月請求
     """
-    # ── 主要：Yahoo Finance ────────────────────────────────────────────────────
+    # ── 1. TradingView (tvDatafeed) ──────────────────────────────────────────
+    try:
+        from .tvdatafeed_service import fetch_kline_tv
+        records = await fetch_kline_tv(stock_code, interval="daily", n_bars=180)
+        if records:
+            return records
+        logger.warning(f"[kline] tvdatafeed 無資料 ({stock_code})，嘗試 yfinance")
+    except Exception as e:
+        logger.warning(f"[kline] tvdatafeed 失敗 ({stock_code}): {e}，嘗試 yfinance")
+
+    # ── 2. Yahoo Finance (yfinance) ───────────────────────────────────────────
     try:
         from .yfinance_service import fetch_kline_yf
         records = await fetch_kline_yf(stock_code, months=6)
@@ -139,7 +150,7 @@ async def fetch_kline(stock_code: str, date: Optional[str] = None) -> list[dict]
     except Exception as e:
         logger.warning(f"[kline] yfinance 失敗 ({stock_code}): {e}，改用 TWSE API")
 
-    # ── 備援：TWSE STOCK_DAY 月別 API ─────────────────────────────────────────
+    # ── 3. TWSE STOCK_DAY 月別 API ────────────────────────────────────────────
     return await _fetch_kline_twse(stock_code)
 
 

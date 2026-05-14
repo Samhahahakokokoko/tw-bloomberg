@@ -43,3 +43,7 @@ pillow>=10.0.0
 
 # Stock price — Yahoo Finance (歷史K線 / 調整後股價)
 yfinance>=0.2.40
+
+# Stock price — TradingView (歷史K線 + 技術指標，tvDatafeed 免登入版)
+# pip install git+https://github.com/rongardF/tvdatafeed
+websocket-client>=1.6.0
