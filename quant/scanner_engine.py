@@ -127,7 +127,7 @@ class ScannerEngine:
         stock_id   = gs("stock_id", gs("code", ""))
         name       = gs("name", stock_id)
         sector     = gs("sector", "其他")
-        close      = g("close", 100)
+        close      = g("close", 0.0)
         ma20       = g("ma20", close * 0.97)
         ma60       = g("ma60", close * 0.94)
         ma5        = g("ma5",  close * 0.99)

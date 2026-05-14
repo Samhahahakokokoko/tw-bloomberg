@@ -2989,7 +2989,24 @@ async def _cmd_recommend(regime: str = "unknown") -> list:
             data = resp.json()
     except Exception:
         from quant.strategy_engine import StrategyEngine, MOCK_STOCKS
-        sigs = StrategyEngine().batch_evaluate(MOCK_STOCKS, regime=regime, min_confidence=60)
+        # 用 TWSE 即時收盤覆蓋 MOCK_STOCKS 硬編碼舊價格
+        try:
+            from backend.services.report_screener import _rt_cache, _fetch_rt_cache
+            if not _rt_cache.get("prices"):
+                await _fetch_rt_cache()
+            cached_prices = _rt_cache.get("prices", {})
+            enriched = []
+            for s in MOCK_STOCKS:
+                d = dict(s)
+                p = cached_prices.get(s.get("stock_id", ""), {})
+                if p.get("close", 0) > 0:
+                    c = p["close"]
+                    d["close"] = c
+                    d["atr14"] = round(c * 0.02, 1)
+                enriched.append(d)
+        except Exception:
+            enriched = MOCK_STOCKS
+        sigs = StrategyEngine().batch_evaluate(enriched, regime=regime, min_confidence=60)
         data = {"regime": regime, "signals": [s.to_dict() for s in sigs[:5]]}
 
     regime_label = {

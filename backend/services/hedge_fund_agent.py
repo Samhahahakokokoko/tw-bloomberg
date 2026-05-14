@@ -162,8 +162,11 @@ async def run_agent_pipeline(uid: str = "system") -> AgentReport:
     # Step 8: 信心計算
     decisions: list[AgentDecision] = []
     try:
-        from .report_screener import all_screener
-        screener_rows = all_screener(200)
+        from .report_screener import async_all_screener, _rt_cache, _fetch_rt_cache
+        # 確保 TWSE 即時快取已暖（sync all_screener 在快取冷時回空）
+        if not _rt_cache.get("prices"):
+            await _fetch_rt_cache()
+        screener_rows = await async_all_screener(300)
         score_map = {r.stock_id: r for r in screener_rows}
 
         for rec in passed[:6]:
@@ -172,7 +175,12 @@ async def run_agent_pipeline(uid: str = "system") -> AgentReport:
             layer = rec.layer if hasattr(rec, "layer") else "medium"
             row   = score_map.get(sid)
             conf  = row.confidence if row else 60
-            price = row.close if row else 100
+            if row and row.close > 0:
+                price = row.close
+            else:
+                # fallback: TWSE 即時快取（避免用 100 假價格算目標/停損）
+                _p = _rt_cache.get("prices", {}).get(sid, {})
+                price = float(_p.get("close", 0) or 0) or 0
 
             if conf < 55:
                 continue
@@ -219,7 +227,11 @@ async def run_agent_pipeline(uid: str = "system") -> AgentReport:
         # 加入減碼建議
         for sig in advice.reduce_list[:2]:
             row = score_map.get(sig.stock_id) if 'score_map' in dir() else None
-            price = row.close if row else 100
+            if row and row.close > 0:
+                price = row.close
+            else:
+                _p = _rt_cache.get("prices", {}).get(sig.stock_id, {}) if '_rt_cache' in dir() else {}
+                price = float(_p.get("close", 0) or 0) or 0
             decisions.append(AgentDecision(
                 action="reduce", stock_id=sig.stock_id, stock_name=sig.stock_name,
                 confidence=40, layer="--", position_pct=sig.target_pct,

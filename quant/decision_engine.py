@@ -461,6 +461,15 @@ def _mock_data_for(rec) -> dict:
         return d
 
     score = g("score", 0.5)
+    # close：優先讀 rec 本身，再查 TWSE 即時快取，最後用 0（不用假值 100）
+    close = g("close", 0.0)
+    if close <= 0:
+        try:
+            from backend.services.report_screener import _rt_cache
+            _p = _rt_cache.get("prices", {}).get(gs("stock_id"), {})
+            close = float(_p.get("close", 0) or 0)
+        except Exception:
+            close = 0.0
     return {
         "name":            gs("name"),
         "rev_yoy":         g("rev_yoy",    score * 0.3),
@@ -469,7 +478,7 @@ def _mock_data_for(rec) -> dict:
         "foreign_buy_days":g("foreign_days", 3),
         "trust_net":       g("trust_net",  200),
         "volume":          5_000_000,
-        "close":           100.0,
+        "close":           close,
         "volatility":      0.02,
         "sector":          gs("sector"),
     }
