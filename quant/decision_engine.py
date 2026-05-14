@@ -138,13 +138,19 @@ class DecisionEngine:
         filtered_count = 0
         notes: list[str] = []
 
-        # ── 前置：確保 TWSE 即時快取已暖（所有後續股價計算的唯一真實來源）────────
+        # ── 前置：無條件呼叫 _fetch_rt_cache()，TTL 由其內部處理 ─────────────────
+        # 不可用 `if not prices:` 判斷，否則快取有資料時會跳過 TTL 檢查，
+        # 導致舊收盤價（如 mock 870）被永久使用。
+        # _fetch_rt_cache 內部：< 5 分鐘 → 直接回傳；> 5 分鐘 → 重抓 TWSE
         try:
             from backend.services.report_screener import _rt_cache, _fetch_rt_cache
-            if not _rt_cache.get("prices"):
-                await _fetch_rt_cache()
+            await _fetch_rt_cache()
+            prices_ok = bool(_rt_cache.get("prices"))
+            if not prices_ok:
+                logger.warning("[Decision] TWSE rt_cache 仍為空，決策將使用 mock 結構（無硬編碼股價）")
         except Exception as _cache_err:
             logger.warning("[Decision] rt_cache warm failed: %s", _cache_err)
+            prices_ok = False
 
         # ── 前置檢查：Kill Switch ────────────────────────────────────────────
         if not is_trading_enabled():

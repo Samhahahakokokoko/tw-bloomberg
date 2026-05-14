@@ -721,7 +721,15 @@ async def _fetch_rt_cache() -> dict:
     except Exception as e:
         _log.error("[RT] httpx session failed: %s", e)
 
-    _rt_cache.update({"ts": now, "prices": prices, "chips": chips})
+    if prices:
+        # 成功取得資料 → 更新快取（含 ts，5分鐘內不重抓）
+        _rt_cache.update({"ts": now, "prices": prices, "chips": chips})
+        _log.info("[RT] cache updated: %d stocks total", len(prices))
+    else:
+        # TWSE 抓取失敗 → 保留舊快取，不更新 ts，下次呼叫立刻重試
+        _log.warning("[RT] TWSE 抓取失敗（prices 為空），保留舊快取，ts 不更新")
+        if chips and not _rt_cache.get("chips"):
+            _rt_cache["chips"] = chips
     return _rt_cache
 
 
