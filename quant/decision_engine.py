@@ -138,6 +138,14 @@ class DecisionEngine:
         filtered_count = 0
         notes: list[str] = []
 
+        # ── 前置：確保 TWSE 即時快取已暖（所有後續股價計算的唯一真實來源）────────
+        try:
+            from backend.services.report_screener import _rt_cache, _fetch_rt_cache
+            if not _rt_cache.get("prices"):
+                await _fetch_rt_cache()
+        except Exception as _cache_err:
+            logger.warning("[Decision] rt_cache warm failed: %s", _cache_err)
+
         # ── 前置檢查：Kill Switch ────────────────────────────────────────────
         if not is_trading_enabled():
             ks = status_dict()
@@ -158,6 +166,7 @@ class DecisionEngine:
                 movers = engine.scan_mock(15)
                 for m in movers:
                     m.is_mock = True
+                _enrich_mock_close(movers)   # mock close=0 或硬編碼舊價 → TWSE 即時覆蓋
             movers_count = len(movers)
         except Exception as e:
             logger.warning("[Decision] movers failed: %s", e)
@@ -166,6 +175,7 @@ class DecisionEngine:
                 movers = MoversEngine().scan_mock(10)
                 for m in movers:
                     m.is_mock = True
+                _enrich_mock_close(movers)
                 movers_count = len(movers)
             except Exception:
                 pass
@@ -482,6 +492,24 @@ def _mock_data_for(rec) -> dict:
         "volatility":      0.02,
         "sector":          gs("sector"),
     }
+
+
+def _enrich_mock_close(movers: list) -> None:
+    """
+    Mock movers 可能含有硬編碼舊收盤（如 _MOCK_UNIVERSE close=870）或 close=0。
+    用 TWSE 即時快取（_rt_cache）覆蓋，確保目標/停損計算使用今日真實股價。
+    """
+    try:
+        from backend.services.report_screener import _rt_cache
+        prices = _rt_cache.get("prices", {})
+        if not prices:
+            return
+        for m in movers:
+            p = prices.get(m.stock_id, {})
+            if p.get("close", 0) > 0:
+                m.close = p["close"]
+    except Exception:
+        pass
 
 
 _global_decision: Optional[DecisionEngine] = None

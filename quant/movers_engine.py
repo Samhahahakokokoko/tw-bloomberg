@@ -133,18 +133,21 @@ class MoversEngine:
         return mock
 
     def scan_mock(self, n: int = 20) -> list[MoverResult]:
-        """Mock 資料（測試 / API 失敗時）"""
+        """Mock 結構資料（測試 / API 失敗時）。
+        close 欄位來自 _MOCK_UNIVERSE（可能為 0），
+        呼叫方應在取得 rt_cache 後用 _enrich_mock_close() 填入今日真實收盤。
+        """
         universe = _MOCK_UNIVERSE[:n]
         results = []
         rng = np.random.default_rng(42)
         for s in universe:
-            close  = s["close"]
-            ma20   = close * rng.uniform(0.91, 0.99)
-            ma60   = ma20 * rng.uniform(0.92, 0.99)
+            close  = s["close"]   # 可能為 0，待 rt_cache 覆蓋
             ret5   = rng.uniform(0.03, 0.14)
             vol_r  = rng.uniform(1.3, 2.8)
             f_buy  = rng.uniform(200, 8000)
-            dist   = (close - ma20) / ma20
+            ma20   = close * rng.uniform(0.91, 0.99) if close > 0 else 0.0
+            ma60   = ma20  * rng.uniform(0.92, 0.99) if ma20  > 0 else 0.0
+            dist   = (close - ma20) / ma20 if ma20 > 0 else 0.0
             score  = self._calc_score(ret5, vol_r, f_buy, dist)
             stage  = ("early_breakout" if ret5 < 0.07 and dist < 0.05
                       else "trend_continuation")
