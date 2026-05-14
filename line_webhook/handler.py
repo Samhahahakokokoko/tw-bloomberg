@@ -3050,8 +3050,12 @@ async def _cmd_odd(budget_str: str, code: str | None, uid: str) -> list:
             except Exception:
                 p = 0.0
             if p <= 0:
-                m = next((x for x in MOCK_STOCKS if x["stock_id"] == sig.stock_id), None)
-                p = m.get("close", 100) if m else 100.0
+                try:
+                    from backend.services.report_screener import _rt_cache
+                    cached_p = _rt_cache.get("prices", {}).get(sig.stock_id, {})
+                    p = float(cached_p.get("close", 0) or 0)
+                except Exception:
+                    p = 0.0
             stocks.append({"stock_id": sig.stock_id, "name": sig.name,
                            "price": p, "confidence": sig.confidence})
         portfolio = engine.allocate(budget, stocks, strategy="signal")
@@ -3069,7 +3073,7 @@ async def _cmd_compare(code_a: str, code_b: str) -> list:
     def _data(code: str) -> dict:
         for s in MOCK_STOCKS:
             if s["stock_id"] == code:
-                return s
+                return dict(s)   # 複製，避免後續修改污染 MOCK_STOCKS
         seed = sum(ord(c) for c in code)
         rng  = np.random.default_rng(seed)
         return {
@@ -3090,7 +3094,26 @@ async def _cmd_compare(code_a: str, code_b: str) -> list:
             "atr14":              float(rng.uniform(0.5, 20)),
         }
 
-    result = StrategyEngine().compare(_data(code_a), _data(code_b))
+    async def _enrich_close(d: dict) -> dict:
+        """用 TWSE 即時收盤覆蓋 close/atr14，確保目標/停損基於今日真實股價"""
+        try:
+            from backend.services.report_screener import _rt_cache, _fetch_rt_cache
+            if not _rt_cache.get("prices"):
+                await _fetch_rt_cache()
+            p = _rt_cache.get("prices", {}).get(d.get("stock_id", ""), {})
+            if p and p.get("close", 0) > 0:
+                c = p["close"]
+                d["close"]  = c
+                d["atr14"]  = round(c * 0.02, 1)   # ATR ≈ 2% 估算
+                d.setdefault("ma20", round(c * 0.97, 1))
+                d.setdefault("ma60", round(c * 0.94, 1))
+        except Exception:
+            pass
+        return d
+
+    da_raw = await _enrich_close(_data(code_a))
+    db_raw = await _enrich_close(_data(code_b))
+    result = StrategyEngine().compare(da_raw, db_raw)
     cmp    = result["compare"]
     da     = result.get(code_a, {})
     db_    = result.get(code_b, {})
@@ -3126,7 +3149,9 @@ async def _cmd_strategy_analyze(code: str) -> list:
     from quant.strategy_engine import StrategyEngine, MOCK_STOCKS
 
     data = next((s for s in MOCK_STOCKS if s["stock_id"] == code), None)
-    if not data:
+    if data:
+        data = dict(data)   # 複製，避免修改污染 MOCK_STOCKS
+    else:
         seed = sum(ord(c) for c in code)
         rng  = np.random.default_rng(seed)
         data = {
@@ -3146,6 +3171,21 @@ async def _cmd_strategy_analyze(code: str) -> list:
             "close":              float(rng.uniform(50, 800)),
             "atr14":              float(rng.uniform(1, 15)),
         }
+
+    # 用 TWSE 即時收盤覆蓋 close/atr14，確保目標/停損基於今日真實股價
+    try:
+        from backend.services.report_screener import _rt_cache, _fetch_rt_cache
+        if not _rt_cache.get("prices"):
+            await _fetch_rt_cache()
+        p = _rt_cache.get("prices", {}).get(code, {})
+        if p and p.get("close", 0) > 0:
+            c = p["close"]
+            data["close"] = c
+            data["atr14"] = round(c * 0.02, 1)   # ATR ≈ 2% 估算
+            data.setdefault("ma20", round(c * 0.97, 1))
+            data.setdefault("ma60", round(c * 0.94, 1))
+    except Exception:
+        pass
 
     sig = StrategyEngine().evaluate(data, strategy="composite")
     sc  = sig.to_dict()["scores"]
