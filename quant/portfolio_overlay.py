@@ -114,8 +114,19 @@ class PortfolioOverlay:
 
                 current = cost
                 try:
-                    q = await fetch_realtime_quote(code)
-                    current = float(q.get("price", cost)) if q else cost
+                    # 優先使用 report_screener 的全市場快取（已批次從 TWSE 取得今日收盤）
+                    from backend.services.report_screener import _rt_cache, _fetch_rt_cache
+                    cached_prices = _rt_cache.get("prices", {})
+                    if not cached_prices:
+                        await _fetch_rt_cache()
+                        cached_prices = _rt_cache.get("prices", {})
+                    p = cached_prices.get(code, {})
+                    if p and p.get("close", 0) > 0:
+                        current = p["close"]
+                    else:
+                        # 快取無此代碼（可能上櫃），改用即時查詢
+                        q = await fetch_realtime_quote(code)
+                        current = float(q.get("price", cost)) if q else cost
                 except Exception:
                     pass
 
@@ -140,7 +151,8 @@ class PortfolioOverlay:
                 if rid == code:
                     vol_r = float(getattr(row, "volume_ratio", 1.0) or 1.0)
                     return {
-                        "ret_5d":       float(getattr(row, "change_pct",       0) or 0) / 100,
+                        # ret_5d_approx 是 safe_build_row 計算的5日估算報酬（小數形式）
+                        "ret_5d":       float(getattr(row, "ret_5d_approx",    0) or 0),
                         "foreign_days": int(getattr(row,   "foreign_buy_days", 0) or 0),
                         "trust_net":    float(getattr(row, "chip_5d",           0) or 0),
                         "model_score":  float(getattr(row, "model_score",      50) or 50),

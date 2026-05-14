@@ -222,15 +222,22 @@ async def fetch_stock_list() -> list[dict]:
 
 
 def _normalize_twse_quote(item: dict) -> dict:
+    def _sf(v, default=0.0):
+        """安全解析，處理 '--'、'X...' 等非數值格式"""
+        try:
+            return float(str(v or "").replace(",", ""))
+        except (ValueError, TypeError):
+            return default
+
     return {
         "code": item.get("Code", ""),
         "name": item.get("Name", ""),
-        "price": float(item.get("ClosingPrice", 0) or 0),
-        "open": float(item.get("OpeningPrice", 0) or 0),
-        "high": float(item.get("HighestPrice", 0) or 0),
-        "low": float(item.get("LowestPrice", 0) or 0),
+        "price": _sf(item.get("ClosingPrice")),
+        "open": _sf(item.get("OpeningPrice")),
+        "high": _sf(item.get("HighestPrice")),
+        "low": _sf(item.get("LowestPrice")),
         "volume": _parse_int(item.get("TradeVolume")) // 1000,  # 股 → 張
-        "change": float(item.get("Change", 0) or 0),
+        "change": _sf(item.get("Change")),
         "change_pct": _calc_pct(item.get("ClosingPrice"), item.get("Change")),
         "timestamp": datetime.now().isoformat(),
     }

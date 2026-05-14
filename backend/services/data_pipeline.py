@@ -33,7 +33,10 @@ PRIORITY_CODES: list[str] = []  # 動態填入優先股票
 # FinMind TaiwanFinancialStatements / TaiwanStockMonthRevenue 不收錄 ETF，
 # 送出這些代碼會得到 422，必須跳過。
 def _is_etf(code: str) -> bool:
-    return code.startswith("00") and len(code) <= 6
+    # 台股普通股固定 4 位數；ETF（0050, 00878…）或可轉換公司債（020xxx）均跳過
+    if len(code) != 4:
+        return True
+    return code.startswith("00")
 
 
 async def _get_priority_codes() -> list[str]:

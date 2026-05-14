@@ -180,8 +180,11 @@ class MoversEngine:
             stock_id = gs("stock_id", gs("code", ""))
             name     = gs("name", stock_id)
             sector   = gs("sector", "其他")
-            close    = g("close", 100)
+            close    = g("close", 0.0)
             vol_k    = g("volume", 0)   # StockRow.volume 已是「張」，不再 ÷1000
+
+            if close <= 0:
+                return None   # 無有效收盤價，不應進入決策
 
             # ── 量比：優先讀 StockRow 衍生欄位 vol_ratio ──────────────────────
             vol_r = g("vol_ratio", g("volume_ratio", 0.0))

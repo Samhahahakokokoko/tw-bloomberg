@@ -612,12 +612,21 @@ async def _fetch_rt_cache() -> dict:
                     if not code:
                         continue
                     try:
-                        close_str = str(item.get("ClosingPrice", "") or "").replace(",", "")
-                        change_str = str(item.get("Change", "") or "").replace(",", "")
-                        vol_str   = str(item.get("TradeVolume", "") or "").replace(",", "")
-                        close  = float(close_str)  if close_str  else 0.0
-                        change = float(change_str) if change_str else 0.0
-                        vol    = int(vol_str)      if vol_str    else 0
+                        def _sf(v, default=0.0):
+                            """安全解析 TWSE 欄位：處理 '--'、'X...' 等非數值格式"""
+                            try:
+                                return float(str(v or "").replace(",", ""))
+                            except (ValueError, TypeError):
+                                return default
+
+                        close  = _sf(item.get("ClosingPrice"))
+                        change = _sf(item.get("Change"))
+                        vol_str = str(item.get("TradeVolume", "") or "").replace(",", "")
+                        vol    = int(vol_str) if vol_str and vol_str.lstrip("-").isdigit() else 0
+
+                        if close <= 0:
+                            continue   # 無成交收盤，跳過
+
                         prev   = close - change
                         pct    = round(change / prev * 100, 2) if prev and prev != 0 else 0.0
                         # 台股成交量單位為「股」，轉換為「張（1000股）」
