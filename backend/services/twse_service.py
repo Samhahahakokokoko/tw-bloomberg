@@ -122,19 +122,42 @@ async def _fetch_twse_mi(stock_code: str) -> dict:
 
 
 async def fetch_kline(stock_code: str, date: Optional[str] = None) -> list[dict]:
-    """月K線資料（抓近 3 個月合併）"""
-    from datetime import date as date_cls
+    """
+    歷史 K 線資料。
+
+    資料來源優先順序：
+      1. Yahoo Finance (yfinance) — 6 個月、已還原除權息、無 rate limit
+      2. TWSE STOCK_DAY API (備援) — 3 個月、逐月請求
+    """
+    # ── 主要：Yahoo Finance ────────────────────────────────────────────────────
+    try:
+        from .yfinance_service import fetch_kline_yf
+        records = await fetch_kline_yf(stock_code, months=6)
+        if records:
+            return records
+        logger.warning(f"[kline] yfinance 無資料 ({stock_code})，改用 TWSE API")
+    except Exception as e:
+        logger.warning(f"[kline] yfinance 失敗 ({stock_code}): {e}，改用 TWSE API")
+
+    # ── 備援：TWSE STOCK_DAY 月別 API ─────────────────────────────────────────
+    return await _fetch_kline_twse(stock_code)
+
+
+async def _fetch_kline_twse(stock_code: str) -> list[dict]:
+    """TWSE STOCK_DAY 月別 API — fetch_kline 的備援來源，抓近 3 個月"""
     results: list[dict] = []
     today = datetime.now()
-    # 抓近 3 個月
     months = [
         (today.year, today.month),
-        (today.year if today.month > 1 else today.year - 1, today.month - 1 if today.month > 1 else 12),
-        (today.year if today.month > 2 else today.year - 1, today.month - 2 if today.month > 2 else today.month + 10),
+        (today.year if today.month > 1 else today.year - 1,
+         today.month - 1 if today.month > 1 else 12),
+        (today.year if today.month > 2 else today.year - 1,
+         today.month - 2 if today.month > 2 else today.month + 10),
     ]
     for y, m in months:
         date_str = f"{y}{m:02d}01"
-        url = f"https://www.twse.com.tw/exchangeReport/STOCK_DAY?response=json&date={date_str}&stockNo={stock_code}"
+        url = (f"https://www.twse.com.tw/exchangeReport/STOCK_DAY"
+               f"?response=json&date={date_str}&stockNo={stock_code}")
         try:
             async with httpx.AsyncClient(timeout=15) as client:
                 resp = await client.get(url)
@@ -145,10 +168,10 @@ async def fetch_kline(stock_code: str, date: Optional[str] = None) -> list[dict]
                     if parsed["date"]:
                         results.append(parsed)
         except Exception as e:
-            logger.error(f"K-line error {stock_code} {date_str}: {e}")
-    # 依日期排序、去重
-    seen = set()
-    unique = []
+            logger.error(f"[kline] TWSE error {stock_code} {date_str}: {e}")
+
+    seen: set = set()
+    unique: list[dict] = []
     for r in sorted(results, key=lambda x: x["date"]):
         if r["date"] not in seen:
             seen.add(r["date"])

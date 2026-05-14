@@ -285,6 +285,14 @@ class DecisionEngine:
         if not decisions and movers:
             for m in movers[:2]:
                 close = m.close
+                # 確保 close 為今日最新價（TWSE 即時快取補充）
+                if close <= 0:
+                    try:
+                        from backend.services.report_screener import _rt_cache
+                        p = _rt_cache.get("prices", {}).get(m.stock_id, {})
+                        close = float(p.get("close", 0) or 0)
+                    except Exception:
+                        pass
                 decisions.append(Decision(
                     action="watch",
                     stock_code=m.stock_id, stock_name=m.name,
@@ -367,12 +375,21 @@ class DecisionEngine:
         if confidence < BUY_MIN_CONFIDENCE:
             return None
 
-        # 從 movers 取收盤價
+        # 從 movers 取今日 TWSE 收盤價
         close = 0.0
         for m in movers:
             if m.stock_id == stock_id:
                 close = m.close
                 break
+
+        # 若 movers 中找不到或收盤為 0，從 TWSE 即時快取補充（確保今日最新價）
+        if close <= 0:
+            try:
+                from backend.services.report_screener import _rt_cache
+                p = _rt_cache.get("prices", {}).get(stock_id, {})
+                close = float(p.get("close", 0) or 0)
+            except Exception:
+                pass
 
         pos = {"core": 0.15, "medium": 0.10, "satellite": 0.05}.get(layer, 0.08)
         pos = min(pos, max_pos, MAX_POSITION_PCT)

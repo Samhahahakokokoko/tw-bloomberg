@@ -61,9 +61,32 @@ async def _get(dataset: str, stock_id: str, start_date: str, end_date: str = "")
 
 async def fetch_adj_price(stock_code: str, start_date: str = "", days: int = 120) -> list[dict]:
     """
-    TaiwanStockPrice — 歷史股價（免費版用一般股價代替調整後股價）
-    回傳欄位：date, open, max(high), min(low), close, Trading_Volume
+    調整後歷史股價。
+
+    資料來源優先順序：
+      1. Yahoo Finance (yfinance) — auto_adjust=True 精確還原除權息、無 rate limit
+      2. FinMind TaiwanStockPrice (備援) — 免費版為一般股價（未調整）
+
+    回傳欄位：date, open, high, low, close, volume
     """
+    # ── 主要：Yahoo Finance ────────────────────────────────────────────────────
+    try:
+        from .yfinance_service import fetch_price_history
+        records = await fetch_price_history(stock_code, start_date, days)
+        if records:
+            return records
+        logger.warning(f"[adj_price] yfinance 無資料 ({stock_code})，改用 FinMind")
+    except Exception as e:
+        logger.warning(f"[adj_price] yfinance 失敗 ({stock_code}): {e}，改用 FinMind")
+
+    # ── 備援：FinMind TaiwanStockPrice ────────────────────────────────────────
+    return await _fetch_adj_price_finmind(stock_code, start_date, days)
+
+
+async def _fetch_adj_price_finmind(
+    stock_code: str, start_date: str = "", days: int = 120
+) -> list[dict]:
+    """FinMind TaiwanStockPrice — fetch_adj_price 的備援來源"""
     if not start_date:
         start_date = (date.today() - timedelta(days=days)).strftime("%Y-%m-%d")
     raw = await _get("TaiwanStockPrice", stock_code, start_date)
