@@ -1022,19 +1022,35 @@ async def _cmd_weekly(uid: str) -> list:
 
 
 async def _cmd_rec_dispatch(uid: str) -> list:
-    """先回 ACK，然後背景跑分析再 push"""
+    """策略推薦：直接同步執行並 reply（不用 push）"""
+    import asyncio
+    from backend.services.strategy_recommender import recommend_for_portfolio
     async with AsyncSessionLocal() as db:
         holdings = await portfolio_service.get_portfolio(db, uid)
     if not holdings:
         return [_text("庫存為空，先 /buy 新增持股再取得推薦",
                       qr_items(("新增示範", "/buy 2330 1000 850")))]
-    import asyncio
-    asyncio.create_task(_cmd_rec_full(uid, ""))
-    return [_text(
-        f"正在分析 {len(holdings)} 檔持股，約需 10-20 秒…\n\n"
-        "分析完成後將自動推送策略推薦卡片",
-        qr_items(("💼 庫存", "/portfolio"), ("🤖 AI分析", "/ai_portfolio"))
-    )]
+    try:
+        recs = await asyncio.wait_for(recommend_for_portfolio(holdings), timeout=25)
+        if not recs:
+            return [_text("目前持股無明確策略推薦", qr_items(("💼 庫存", "/portfolio")))]
+        carousel    = flex_rec_carousel(recs)
+        total_mv    = sum(h["market_value"] for h in holdings)
+        top_weight  = max(h["market_value"] / total_mv * 100 for h in holdings) if total_mv else 0
+        risk_level  = "高" if top_weight > 50 else "中" if top_weight > 30 else "低"
+        summary     = (f"📊 個人化策略推薦\n持股 {len(holdings)} 檔｜"
+                       f"最大倉位 {top_weight:.1f}%｜集中度風險：{risk_level}")
+        return [
+            _text(summary),
+            {"type": "flex", "altText": "策略推薦", "contents": carousel},
+        ]
+    except asyncio.TimeoutError:
+        return [_text("⏱ 策略分析中，請稍後再試 /rec",
+                      qr_items(("💼 庫存", "/portfolio")))]
+    except Exception as e:
+        logger.error("[rec] %s", e, exc_info=True)
+        return [_text(f"❌ 策略推薦失敗：{type(e).__name__}",
+                      qr_items(("💼 庫存", "/portfolio")))]
 
 
 async def _cmd_rec_full(uid: str, reply_token: str):
@@ -1701,15 +1717,48 @@ def _flex(alt_text: str, container: dict, quick_reply: dict = None) -> FlexMessa
 # ═══════════════════════════════════════════════════════════════════
 
 async def _cmd_pipeline(code: str, uid: str) -> list:
-    """/pipeline [代碼] — 觸發完整量化分析流程"""
-    import asyncio
-    asyncio.create_task(_pipeline_bg(code, uid))
-    return [_text(
-        f"🔬 啟動 {code} 機構級量化分析...\n\n"
-        "流程：因子IC → 動態加權 → 盤態偵測 → Multi-Alpha → Walk-Forward\n"
-        "約需 15-30 秒，完成後自動推送報告",
-        qr_items(("📊 選股", "/screen"), ("💼 庫存", "/portfolio"))
-    )]
+    """/pipeline [代碼] — 直接執行量化分析並 reply"""
+    import asyncio, httpx as _httpx
+    try:
+        base = os.getenv("BASE_URL", f"http://localhost:{os.getenv('PORT', '8080')}")
+        async with _httpx.AsyncClient(timeout=25) as c:
+            r = await c.post(
+                f"{base}/api/quant/run_full_pipeline",
+                json={"stock_code": code, "train_days": 120, "test_days": 20},
+            )
+            data = r.json() if r.status_code == 200 else {}
+        if not data:
+            return [_text(f"❌ {code} 量化分析失敗（API 無回應）",
+                          qr_items(("📊 選股", "/screen")))]
+        regime  = data.get("regime", {})
+        alpha   = data.get("alpha_portfolio", {})
+        ic_info = data.get("factor_ic", {})
+        wf      = data.get("walk_forward", {})
+        stab    = wf.get("stability", {}) if isinstance(wf, dict) else {}
+        combined= wf.get("combined",  {}) if isinstance(wf, dict) else {}
+        stop    = data.get("risk_stop_loss", {})
+        lines   = [
+            f"🔬 {code} 量化完整分析報告", "─" * 24,
+            f"📍 盤態：{regime.get('regime','?')} ({regime.get('sub_label','?')})",
+            f"   信心：{regime.get('confidence',0)*100:.0f}%  倉位乘數：×{regime.get('position_scale',1):.2f}",
+            f"   {regime.get('note','')}",
+            f"🎯 Multi-Alpha 評分：{alpha.get('composite_score',0):.1f}/100",
+            f"   訊號：{alpha.get('signal','?')}  分歧度：{alpha.get('divergence',0):.3f}",
+            f"   {'⛔ '+alpha.get('no_trade_reason','') if alpha.get('no_trade') else '✅ 訊號一致'}",
+            f"⚡ 停損建議：{stop.get('stop_price',0):.1f}（{stop.get('method','?')} {stop.get('stop_pct',0)*100:.1f}%）",
+        ]
+        if combined:
+            lines += [
+                f"📈 Walk-Forward（{wf.get('n_segments',0)} 段）",
+                f"   夏普：{combined.get('sharpe',0):.3f}  報酬：{combined.get('return_pct',0):+.2f}%",
+                f"   最大回撤：{combined.get('max_dd_pct',0):.2f}%  結論：{stab.get('verdict','?')}",
+            ]
+        return [_text("\n".join(lines)[:4800], qr_items(("📊 選股", "/screen"), ("💼 庫存", "/portfolio")))]
+    except asyncio.TimeoutError:
+        return [_text(f"⏱ {code} 量化分析逾時，請稍後再試 /pipeline {code}")]
+    except Exception as e:
+        logger.error("[pipeline] %s", e)
+        return [_text(f"❌ 量化分析失敗：{type(e).__name__}")]
 
 
 async def _pipeline_bg(code: str, uid: str) -> None:
@@ -1884,15 +1933,20 @@ def _flex_more_menu() -> FlexMessage:
 # ── 投資決策框架指令 ─────────────────────────────────────────────────────────
 
 async def _cmd_daily(uid: str) -> list:
-    """/daily — 今日完整決策報告（0~5 個操作建議）"""
+    """/daily — 今日完整決策報告（reply 直接回覆，不用 push）"""
     import asyncio
-    asyncio.create_task(_daily_bg(uid))
-    return [_text(
-        "📋 今日決策報告產生中...\n\n"
-        "整合動能掃描 → 三層分類 → 垃圾清洗 → 研究清單 → 持倉健康\n"
-        "約需 5-15 秒，完成後自動推送",
-        qr_items(("🔍 動能股", "/movers"), ("🛡 持倉健康", "/overlay"), ("💼 庫存", "/p")),
-    )]
+    try:
+        from quant.decision_engine import DecisionEngine
+        daily = await asyncio.wait_for(DecisionEngine().run(uid), timeout=25)
+        return [_text(daily.format_line(),
+                      qr_items(("🔍 動能股", "/movers"), ("🛡 持倉健康", "/overlay"), ("💼 庫存", "/p")))]
+    except asyncio.TimeoutError:
+        return [_text("⏱ 決策引擎資料載入中，請 30 秒後再試 /daily",
+                      qr_items(("🔍 動能股", "/movers"), ("💼 庫存", "/p")))]
+    except Exception as e:
+        logger.error("[daily] %s", e, exc_info=True)
+        return [_text(f"❌ 決策報告失敗：{type(e).__name__}: {e}",
+                      qr_items(("💼 庫存", "/p")))]
 
 
 async def _daily_bg(uid: str) -> None:
@@ -2122,16 +2176,61 @@ async def _cmd_backtest_menu(uid: str) -> list:
 
 
 async def _cmd_backtest_run(strategy: str, uid: str) -> list:
-    """選擇策略 → ACK + 背景計算 + 推送結果"""
+    """選擇策略 → 同步執行回測並 reply（不用 push）"""
+    import asyncio
     if strategy not in _BACKTEST_LABELS:
         return [_text("❌ 未知策略", _BACKTEST_QR)]
     label = _BACKTEST_LABELS[strategy]
-    import asyncio
-    asyncio.create_task(_backtest_bg(strategy, label, uid))
-    return [_text(
-        f"📈 {label}回測計算中...\n\n期間：近3個月\n約需 5-10 秒，完成後自動推送結果",
-        _BACKTEST_QR,
-    )]
+    try:
+        result = await asyncio.wait_for(_run_backtest(strategy, label), timeout=25)
+        return result
+    except asyncio.TimeoutError:
+        return [_text(f"⏱ {label}回測計算逾時，請稍後再試", _BACKTEST_QR)]
+    except Exception as e:
+        logger.error("[backtest] %s", e)
+        return [_text(f"❌ 回測計算失敗：{type(e).__name__}", _BACKTEST_QR)]
+
+
+async def _run_backtest(strategy: str, label: str) -> list:
+    """回測邏輯（供 _cmd_backtest_run 同步呼叫）"""
+    from datetime import date, timedelta
+    stock_code = "2330"
+    start_date = (date.today() - timedelta(days=100)).strftime("%Y-%m-%d")
+    try:
+        from backend.services.twse_service import fetch_kline
+        kline = await fetch_kline(stock_code, start_date)
+        if kline and len(kline) >= 40:
+            import pandas as pd
+            df = pd.DataFrame(kline)
+            for c in ["open","high","low","close","volume"]:
+                if c in df.columns:
+                    df[c] = pd.to_numeric(df[c], errors="coerce")
+        else:
+            raise ValueError("kline too short")
+    except Exception:
+        df = _mock_kline_90d(stock_code)
+    try:
+        from quant.feature_engine import FeatureEngine
+        feat_df = FeatureEngine(df).compute_all()
+    except Exception:
+        feat_df = df
+    signals = _gen_strategy_signals(feat_df, strategy)
+    from quant.backtest_engine import BacktestEngine
+    report = BacktestEngine(initial_capital=1_000_000, commission_discount=0.6).run(
+        feat_df, signals, stop_loss_pct=0.08)
+    try:
+        d0 = str(feat_df.iloc[0].get("date",""))[:7].replace("-","/")
+        d1 = str(feat_df.iloc[-1].get("date",""))[:7].replace("-","/")
+    except Exception:
+        d0 = d1 = "近3個月"
+    detail_data = f"act=backtest_image&strategy={strategy}&stock={stock_code}"
+    flex_msg = _build_backtest_result_flex(
+        label=label, period=f"{d0} ~ {d1}",
+        total_return=report.total_return, win_rate=report.win_rate,
+        max_dd=report.max_drawdown, sharpe=report.sharpe_ratio,
+        n_trades=report.n_trades, detail_data=detail_data,
+    )
+    return [{"type": "flex", "altText": f"{label}回測結果", "contents": flex_msg}]
 
 
 async def _backtest_bg(strategy: str, label: str, uid: str) -> None:
@@ -2624,40 +2723,104 @@ async def _cmd_strategy_preset(preset: str, uid: str) -> list:
 
 
 async def _cmd_report(screen_type: str, uid: str, sector: str = "") -> list:
-    """/report [type] — 觸發後立即回 ACK，背景產生圖"""
-    import asyncio
-    from backend.services.report_screener import run_screener, paginate, get_label, ScreenerType
-
-    label = get_label(screen_type, sector)
-    asyncio.create_task(_report_bg(screen_type, sector, uid, page=1))
+    """/report [type] — 同步選股並 reply（不用 push）"""
+    import asyncio, os
+    from backend.services.report_screener import async_run_screener, paginate, get_label
+    from backend.services.generate_report_image import generate_report_image
+    from backend.services.report_tracker import batch_record
 
     qr = qr_items(
         ("動能", "/report momentum"), ("存股", "/report value"),
         ("籌碼", "/report chip"),     ("突破", "/report breakout"),
     )
-    return [_text(f"📊 正在產生「{label}」選股表…\n5秒後自動推送（共最多20檔）\n\n"
-                  f"/report next → 下一頁  /screen → 選單", qr)]
+    label = get_label(screen_type, sector)
+    try:
+        rows = await asyncio.wait_for(
+            async_run_screener(screen_type, sector=sector), timeout=22)
+    except asyncio.TimeoutError:
+        return [_text(f"⏱ 選股資料載入中，請稍後再試 /report {screen_type}", qr)]
+    except Exception as e:
+        logger.error("[report] %s", e)
+        return [_text(f"❌ 選股失敗：{type(e).__name__}", qr)]
+
+    if not rows:
+        return [_text("⚠️ 目前無法取得 TWSE 即時資料（非交易時間或 API 異常），請稍後再試。", qr)]
+
+    page_rows, total_pages = paginate(rows, 1)
+    _report_pages[uid] = {"rows": rows, "page": 1, "total_pages": total_pages,
+                          "screen_type": screen_type, "sector": sector}
+    try:
+        batch_record(page_rows, screen_type=screen_type)
+    except Exception:
+        pass
+
+    msgs = []
+    base_url = os.getenv("BASE_URL", "")
+    if base_url:
+        try:
+            path = generate_report_image(
+                stocks=page_rows, group=label,
+                market_state=os.getenv("MARKET_STATE", "unknown"),
+                page=1, total_pages=total_pages,
+            )
+            image_url = f"{base_url.rstrip('/')}/static/reports/{path.name}"
+            msgs.append({"type": "image",
+                         "originalContentUrl": image_url,
+                         "previewImageUrl":    image_url})
+        except Exception:
+            msgs.append(_build_text_fallback(page_rows, label, 1, total_pages))
+    else:
+        msgs.append(_build_text_fallback(page_rows, label, 1, total_pages))
+
+    msgs.append(_build_stock_list_msg(page_rows, label, 1, total_pages, screen_type))
+    return msgs[:5]
 
 
 async def _cmd_report_page(uid: str, delta: int = 0, go_to: int = 0) -> list:
-    """/report next 或 /report page N — 分頁翻頁"""
-    import asyncio
+    """/report next 或 /report page N — 分頁翻頁（同步 reply）"""
+    import os
+    from backend.services.report_screener import paginate, get_label
+    from backend.services.generate_report_image import generate_report_image
+
     cache = _report_pages.get(uid)
     if not cache:
         return [_text("沒有進行中的選股，請先輸入 /report [類型]",
                       qr_items(("選單", "/screen")))]
-    current  = cache["page"]
-    total_p  = cache["total_pages"]
-    next_p   = go_to if go_to > 0 else current + delta
-    next_p   = max(1, min(next_p, total_p))
+    current = cache["page"]
+    total_p = cache["total_pages"]
+    next_p  = go_to if go_to > 0 else current + delta
+    next_p  = max(1, min(next_p, total_p))
     if next_p == current and delta != 0:
         return [_text(f"已是最{'後' if delta > 0 else '前'}一頁（第 {current}/{total_p} 頁）",
                       qr_items(("重新選股", "/screen")))]
-    asyncio.create_task(_report_bg(
-        cache["screen_type"], cache.get("sector", ""),
-        uid, page=next_p, cached_rows=cache["rows"],
-    ))
-    return [_text(f"正在載入第 {next_p}/{total_p} 頁…")]
+
+    rows        = cache["rows"]
+    screen_type = cache["screen_type"]
+    sector      = cache.get("sector", "")
+    label       = get_label(screen_type, sector)
+    page_rows, _ = paginate(rows, next_p)
+    _report_pages[uid]["page"] = next_p
+
+    msgs = []
+    base_url = os.getenv("BASE_URL", "")
+    if base_url:
+        try:
+            path = generate_report_image(
+                stocks=page_rows, group=label,
+                market_state=os.getenv("MARKET_STATE","unknown"),
+                page=next_p, total_pages=total_p,
+            )
+            image_url = f"{base_url.rstrip('/')}/static/reports/{path.name}"
+            msgs.append({"type": "image",
+                         "originalContentUrl": image_url,
+                         "previewImageUrl":    image_url})
+        except Exception:
+            msgs.append(_build_text_fallback(page_rows, label, next_p, total_p))
+    else:
+        msgs.append(_build_text_fallback(page_rows, label, next_p, total_p))
+
+    msgs.append(_build_stock_list_msg(page_rows, label, next_p, total_p, screen_type))
+    return msgs[:5]
 
 
 async def _report_bg(
