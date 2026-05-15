@@ -58,6 +58,12 @@ class FilterEngine:
         rejected: list = []
         reason:   dict[str, list[str]] = {}
 
+        # 逐一過濾並統計各規則命中數
+        rule_hits: dict[str, int] = {
+            "流動性": 0, "營收": 0, "估值": 0,
+            "籌碼": 0, "炒作": 0, "循環": 0,
+        }
+
         for item in candidates:
             rec = self._check(item)
             if rec.passed:
@@ -65,6 +71,19 @@ class FilterEngine:
             else:
                 rejected.append(item)
                 reason[rec.stock_id] = rec.reasons
+                for r in rec.reasons:
+                    if "流動性" in r:   rule_hits["流動性"] += 1
+                    elif "營收" in r:   rule_hits["營收"]   += 1
+                    elif "估值" in r:   rule_hits["估值"]   += 1
+                    elif "籌碼" in r:   rule_hits["籌碼"]   += 1
+                    elif "炒作" in r:   rule_hits["炒作"]   += 1
+                    elif "循環" in r:   rule_hits["循環"]   += 1
+
+        n_in = len(candidates)
+        logger.info("[Filter] 輸入=%d → 通過=%d → 排除=%d", n_in, len(passed), len(rejected))
+        for rule, hits in rule_hits.items():
+            if hits > 0:
+                logger.info("[Filter] 過濾器[%s]：排除 %d 檔", rule, hits)
 
         return {"passed": passed, "rejected": rejected, "reason": reason}
 

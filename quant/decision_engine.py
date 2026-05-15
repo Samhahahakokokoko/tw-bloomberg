@@ -209,7 +209,11 @@ class DecisionEngine:
         except Exception as e:
             logger.warning("[Decision] scanner failed: %s", e)
 
-        logger.info("[Decision] Layer 2: 完成，scan_records=%d", len(scan_records))
+        core_n = sum(1 for r in scan_records if getattr(r,'layer','') == 'core')
+        med_n  = sum(1 for r in scan_records if getattr(r,'layer','') == 'medium')
+        sat_n  = sum(1 for r in scan_records if getattr(r,'layer','') == 'satellite')
+        logger.info("[Decision] Layer 2: 完成，scan_records=%d (Core=%d/Med=%d/Sat=%d)",
+                    len(scan_records), core_n, med_n, sat_n)
         # ── Layer 3: 六大過濾器 ───────────────────────────────────────────────
         logger.info("[Decision] Layer 3: 六大過濾器開始")
         filter_result: dict = {"passed": scan_records, "rejected": [], "reason": {}}
