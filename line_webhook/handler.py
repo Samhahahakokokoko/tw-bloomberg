@@ -1901,12 +1901,15 @@ async def _daily_bg(uid: str) -> None:
     headers = {"Authorization": f"Bearer {settings.line_channel_access_token}"}
 
     async def _push(text: str):
-        async with _httpx.AsyncClient(timeout=20) as c:
-            await c.post(
-                "https://api.line.me/v2/bot/message/push",
-                json={"to": uid, "messages": [{"type": "text", "text": text[:4800]}]},
-                headers=headers,
-            )
+        r = await _httpx.AsyncClient(timeout=20).post(
+            "https://api.line.me/v2/bot/message/push",
+            json={"to": uid, "messages": [{"type": "text", "text": text[:4800]}]},
+            headers=headers,
+        )
+        if r.status_code != 200:
+            logger.error("[daily_bg] LINE push failed: %s %s", r.status_code, r.text[:300])
+        else:
+            logger.info("[daily_bg] LINE push OK: uid=%s", uid)
 
     try:
         logger.info("[daily_bg] Step 1: 啟動 DecisionEngine uid=%s", uid)
@@ -1919,7 +1922,7 @@ async def _daily_bg(uid: str) -> None:
         logger.info("[daily_bg] Step 3: engine.run() 完成，共 %d 個決策", len(daily.decisions))
         report = daily.format_line()
 
-        logger.info("[daily_bg] Step 4: 推送 LINE 訊息")
+        logger.info("[daily_bg] Step 4: 推送 LINE 訊息 uid=%s", uid)
         await _push(report)
         logger.info("[daily_bg] Step 5: 推送完成")
 
