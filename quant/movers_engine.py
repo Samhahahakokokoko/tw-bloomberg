@@ -27,15 +27,15 @@ import pandas as pd
 
 logger = logging.getLogger(__name__)
 
-# ── 納入門檻（放寬以擴大掃描範圍到 50+ 檔）──────────────────────────────────
-INC_5D_RETURN_MIN   = 0.015  # 5日報酬 > 1.5%（原 3%，放寬避免平盤日全部落空）
-INC_VOL_RATIO_MIN   = 1.10   # 量比 > 1.1x（原 1.3x）
-INC_FOREIGN_BUY_MIN = 0      # 外資5日淨買 > 0（正值即可）
+# ── 納入門檻（寬鬆模式，目標至少 30-60 檔進入分類器）────────────────────────
+INC_5D_RETURN_MIN   = 0.0    # 5日報酬 >= 0（只要不是負報酬即可）
+INC_VOL_RATIO_MIN   = 0.7    # 量比 >= 0.7x（極寬，讓分類器決定品質）
+# 法人條件改為可選（移到評分加權，不強制排除）
 
 # ── 排除門檻 ──────────────────────────────────────────────────────────────────
-EXC_5D_RETURN_MAX   = 0.25   # 5日報酬 > 25% → 過熱
-EXC_MA20_DISTANCE   = 0.15   # 偏離MA20 > 15% → 乖離過大
-EXC_AVG_VOL_MIN_K   = 300    # 日均量 < 300 張 → 流動性差（原 500）
+EXC_5D_RETURN_MAX   = 0.30   # 5日報酬 > 30% → 過熱（放寬從 25%）
+EXC_MA20_DISTANCE   = 0.20   # 偏離MA20 > 20% → 乖離過大（放寬從 15%）
+EXC_AVG_VOL_MIN_K   = 100    # 日均量 < 100 張 → 流動性極差（放寬從 300）
 
 
 @dataclass
@@ -110,7 +110,10 @@ class MoversEngine:
                 raise ValueError("async_all_screener returned empty")
             results = [r for r in (self._eval(row) for row in rows) if r]
             results.sort(key=lambda r: r.score, reverse=True)
-            logger.info("[Movers] universe=%d → passed=%d", len(rows), len(results))
+            logger.info("[Movers] universe=%d → passed=%d → top%d returned",
+                        len(rows), len(results), min(self.top_n, len(results)))
+            if len(results) < 10:
+                logger.warning("[Movers] 只通過 %d 檔，過濾可能仍過嚴", len(results))
             return results[:self.top_n]
         except Exception as e:
             logger.warning("[Movers] async_all_screener failed (%s), trying static pool", e)
@@ -232,14 +235,12 @@ class MoversEngine:
             if dist > EXC_MA20_DISTANCE:
                 return None
 
-            # ── 納入條件 ──────────────────────────────────────────────
+            # ── 納入條件（寬鬆：讓 top_n 排序決定最終結果）──────────────
             if ret_5d < INC_5D_RETURN_MIN:
                 return None
             if vol_r < INC_VOL_RATIO_MIN:
                 return None
-            # 外資買超 OR 投信買超 擇一通過
-            if foreign5 <= INC_FOREIGN_BUY_MIN and f_days <= 0 and trust5 <= 0:
-                return None
+            # 法人條件改為可選：有法人買超加分，但不強制排除
 
             score = self._calc_score(ret_5d, vol_r, max(foreign5, f_days * 200), dist)
             stage = ("early_breakout" if ret_5d < 0.08 and dist < 0.06
@@ -309,10 +310,14 @@ class MoversEngine:
 
     @staticmethod
     def _calc_score(ret_5d, vol_r, foreign_buy, dist_ma20) -> float:
-        s  = min(ret_5d  / 0.12, 1.0) * 35
-        s += min(vol_r   / 2.5,  1.0) * 25
-        s += min(max(foreign_buy, 0) / 5000, 1.0) * 20
-        s += max(0, 1.0 - dist_ma20 / 0.10) * 10  # 靠近MA20加分
+        # 動能（30分）：任何正報酬都有基礎分，越強越高
+        s  = min(max(ret_5d, 0) / 0.10, 1.0) * 30
+        # 量能（20分）
+        s += min(vol_r / 2.0, 1.0) * 20
+        # 法人買超（25分，可選）：有買超加分，無則不扣
+        s += min(max(foreign_buy, 0) / 3000, 1.0) * 25
+        # 均線位置（15分）：靠近MA20但不過熱加分
+        s += max(0, 1.0 - abs(dist_ma20) / 0.12) * 15
         s += 10  # base
         return min(s, 100.0)
 
