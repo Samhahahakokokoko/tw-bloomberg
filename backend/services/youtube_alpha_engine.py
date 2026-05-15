@@ -199,6 +199,7 @@ async def save_analyst_calls(analyses: list[VideoAnalysis]):
     from ..models.database import AsyncSessionLocal
     from ..models.models import AnalystCall, Analyst
     from .twse_service import fetch_realtime_quote
+    from sqlalchemy import select
 
     today = datetime.now().strftime("%Y-%m-%d")
     async with AsyncSessionLocal() as db:
@@ -213,7 +214,6 @@ async def save_analyst_calls(analyses: list[VideoAnalysis]):
                     pass
 
                 # 避免重複
-                from sqlalchemy import select
                 r = await db.execute(
                     select(AnalystCall)
                     .where(AnalystCall.date == today)

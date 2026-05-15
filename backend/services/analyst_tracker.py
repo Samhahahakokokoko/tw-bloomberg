@@ -109,6 +109,7 @@ async def get_all_analysts(active_only: bool = True) -> list[dict]:
             "analyst_id":       a.analyst_id,
             "name":             a.name,
             "channel_url":      a.channel_url,
+            "channel_id":       a.channel_id,
             "specialty":        a.specialty,
             "total_calls":      a.total_calls,
             "win_rate":         a.win_rate,
