@@ -191,25 +191,34 @@ async def _fetch_kline_twse(stock_code: str) -> list[dict]:
 
 
 async def fetch_institutional(stock_code: str) -> dict:
-    """三大法人買賣超"""
-    url = f"{TWSE_BASE}/fund/TWT38U"
-    try:
-        async with httpx.AsyncClient(timeout=15) as client:
-            resp = await client.get(url)
-            resp.raise_for_status()
-            data = resp.json()
-            for item in data:
-                if item.get("Code") == stock_code:
-                    return {
-                        "code": stock_code,
-                        "foreign_net": _parse_int(item.get("Foreign_Investor_Diff")),
-                        "investment_trust_net": _parse_int(item.get("Investment_Trust_Diff")),
-                        "dealer_net": _parse_int(item.get("Dealer_Diff")),
-                        "total_net": _parse_int(item.get("Total_Diff")),
-                        "date": item.get("Date", ""),
-                    }
-    except Exception as e:
-        logger.error(f"Institutional error for {stock_code}: {e}")
+    """三大法人買賣超（T86 為現行有效端點）"""
+    _urls = [
+        f"{TWSE_BASE}/fund/T86",
+        f"{TWSE_BASE}/fund/TWT38U",
+        f"{TWSE_BASE}/exchangeReport/TWT38U",
+    ]
+    for url in _urls:
+        try:
+            async with httpx.AsyncClient(timeout=15) as client:
+                resp = await client.get(url, follow_redirects=True)
+                if resp.status_code != 200:
+                    continue
+                if "json" not in resp.headers.get("content-type", ""):
+                    continue
+                data = resp.json()
+                for item in data:
+                    if item.get("Code") == stock_code:
+                        return {
+                            "code": stock_code,
+                            "foreign_net": _parse_int(item.get("Foreign_Investor_Diff")),
+                            "investment_trust_net": _parse_int(item.get("Investment_Trust_Diff")),
+                            "dealer_net": _parse_int(item.get("Dealer_Diff")),
+                            "total_net": _parse_int(item.get("Total_Diff")),
+                            "date": item.get("Date", ""),
+                        }
+                break  # 端點有回應就不再試下一個
+        except Exception as e:
+            logger.error(f"Institutional error for {stock_code} ({url}): {e}")
     return {}
 
 

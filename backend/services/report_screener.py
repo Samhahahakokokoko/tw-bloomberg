@@ -643,9 +643,10 @@ async def _fetch_rt_cache() -> dict:
             except Exception as e:
                 _log.warning("[RT] STOCK_DAY_ALL failed: %s", e)
 
-            # ── 法人買賣（TWT38U 已停用，嘗試備用端點）────────────────────
+            # ── 法人買賣（依序嘗試，T86 為現行有效端點）──────────────────
             _inst_urls = [
-                "https://openapi.twse.com.tw/v1/fund/TWT38U",
+                "https://openapi.twse.com.tw/v1/fund/T86",             # 現行三大法人
+                "https://openapi.twse.com.tw/v1/fund/TWT38U",          # 舊端點（備用）
                 "https://openapi.twse.com.tw/v1/exchangeReport/TWT38U",
             ]
             def _pi(v) -> int:
@@ -653,13 +654,15 @@ async def _fetch_rt_cache() -> dict:
 
             for _inst_url in _inst_urls:
                 try:
-                    r = await client.get(_inst_url, follow_redirects=False)
+                    r = await client.get(_inst_url, follow_redirects=True, timeout=15)
                     if r.status_code != 200:
+                        _log.warning("[RT] %s → HTTP %s, trying next", _inst_url, r.status_code)
                         continue
                     ct = r.headers.get("content-type", "")
                     if "json" not in ct:
-                        _log.warning("[RT] %s returned non-JSON (%s), skipping", _inst_url, ct[:30])
+                        _log.warning("[RT] %s non-JSON (%s), trying next", _inst_url, ct[:30])
                         continue
+                    loaded = 0
                     for item in r.json():
                         code = unify_ticker_format(item.get("Code", ""))
                         if not code:
@@ -670,10 +673,12 @@ async def _fetch_rt_cache() -> dict:
                                 "trust_net":   _pi(item.get("Investment_Trust_Diff")),
                                 "dealer_net":  _pi(item.get("Dealer_Diff")),
                             }
+                            loaded += 1
                         except Exception:
                             pass
-                    _log.info("[RT] %s loaded %d stocks", _inst_url, len(chips))
-                    break  # 成功就不再嘗試備用
+                    _log.info("[RT] %s loaded %d stocks", _inst_url, loaded)
+                    if loaded > 0:
+                        break  # 成功就不再嘗試備用
                 except Exception as e:
                     _log.warning("[RT] %s failed: %s", _inst_url, e)
             if not chips:
@@ -856,7 +861,11 @@ def all_screener(limit: int = 50) -> list[StockRow]:
     if prices:
         # ── 快取已暖：動態建構全市場池 ─────────────────────────────────────
         rows: list[StockRow] = []
+        import re as _re
         for code, price_data in prices.items():
+            # 只保留台股普通股（4位數字，1-9開頭），排除權證(6位)、ETF(00開頭)、債券
+            if not _re.match(r'^[1-9]\d{3}$', code):
+                continue
             close      = float(price_data.get("close", 0) or 0)
             change_pct = float(price_data.get("change_pct", 0) or 0)
             volume     = float(price_data.get("volume", 0) or 0)
@@ -1270,7 +1279,11 @@ async def async_all_screener(limit: int = 300) -> list[StockRow]:
 
     rows: list[StockRow] = []
 
+    import re as _re
     for code, price_data in prices.items():
+        # 只保留台股普通股（4位數字，1-9開頭），排除權證(6位)、ETF(00開頭)、債券
+        if not _re.match(r'^[1-9]\d{3}$', code):
+            continue
         close      = float(price_data.get("close", 0) or 0)
         change_pct = float(price_data.get("change_pct", 0) or 0)
         volume     = float(price_data.get("volume", 0) or 0)    # 張
