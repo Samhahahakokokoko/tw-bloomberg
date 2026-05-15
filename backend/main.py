@@ -40,6 +40,11 @@ async def lifespan(app: FastAPI):
         logger.info(f"sys.path: {sys.path[:3]}")
         logger.info("Initialising database...")
         await asyncio.wait_for(init_db(), timeout=30)
+        try:
+            from .services.analyst_tracker import init_default_analysts
+            await init_default_analysts()
+        except Exception as _ae:
+            logger.warning(f"Analyst init skipped: {_ae}")
         logger.info("Starting background scheduler...")
         scheduler = start_scheduler()
         # 預熱 TWSE 即時快取（讓 all_screener 啟動後立即有全市場資料）

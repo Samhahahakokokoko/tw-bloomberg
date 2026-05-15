@@ -1041,3 +1041,55 @@ async def get_audit_log(limit: int = Query(50), stock_id: str = Query("")):
         }
         for r in rows
     ]
+
+
+# ── Analysts ───────────────────────────────────────────────────────────────────
+
+@router.get("/analysts")
+async def list_analysts(tier: str = Query(None), active_only: bool = Query(True)):
+    from ..services.analyst_tracker import get_all_analysts
+    analysts = await get_all_analysts(active_only=active_only)
+    if tier:
+        analysts = [a for a in analysts if a.get("tier") == tier]
+    return {"analysts": analysts, "total": len(analysts)}
+
+
+@router.get("/analysts/consensus")
+async def analyst_consensus(days: int = Query(7, ge=1, le=30), stock_code: str = Query(None)):
+    from ..services.analyst_consensus_engine import calculate_daily_consensus
+    from ..models.models import AnalystConsensusDaily
+    results = await calculate_daily_consensus(days=days)
+    if stock_code:
+        results = [r for r in results if r.stock_id == stock_code]
+    consensus = [
+        {
+            "stock":          r.stock_id,
+            "name":           r.stock_name,
+            "score":          round(r.consensus_score, 1),
+            "bullish":        r.bullish_count,
+            "bearish":        r.bearish_count,
+            "total_analysts": r.total_analysts,
+            "alpha":          r.consensus_score >= 60 and not r.is_divergent,
+            "divergent":      r.is_divergent,
+            "tier_str":       "S+A" if r.high_cred_count >= 2 else ("A" if r.high_cred_count >= 1 else "B"),
+        }
+        for r in sorted(results, key=lambda x: x.consensus_score, reverse=True)[:10]
+    ]
+    return {"consensus": consensus, "days": days}
+
+
+@router.post("/analysts/fetch-youtube")
+async def trigger_youtube_fetch():
+    import asyncio
+    from ..services.youtube_alpha_engine import run_daily_fetch
+    asyncio.create_task(run_daily_fetch())
+    return {"status": "started", "message": "YouTube 抓取已在背景啟動"}
+
+
+@router.get("/analysts/{analyst_id}")
+async def get_analyst(analyst_id: str):
+    from ..services.analyst_tracker import get_analyst_stats
+    data = await get_analyst_stats(analyst_id)
+    if not data:
+        raise HTTPException(404, f"Analyst {analyst_id} not found")
+    return data
