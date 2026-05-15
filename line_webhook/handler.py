@@ -745,7 +745,6 @@ async def _handle_text(text: str, uid: str) -> list:
         return await _cmd_nl_screener(t)
 
     # ── 句中包含 4 碼數字 → 嘗試查報價 ─────────────────────────────────────
-    import re
     codes = re.findall(r'\b\d{4,6}\b', t)
     if codes:
         return await _cmd_quote(codes[0])
