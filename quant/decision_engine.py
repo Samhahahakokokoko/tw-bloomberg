@@ -139,15 +139,15 @@ class DecisionEngine:
         notes: list[str] = []
 
         # ── 前置：無條件呼叫 _fetch_rt_cache()，TTL 由其內部處理 ─────────────────
-        # 不可用 `if not prices:` 判斷，否則快取有資料時會跳過 TTL 檢查，
-        # 導致舊收盤價（如 mock 870）被永久使用。
-        # _fetch_rt_cache 內部：< 5 分鐘 → 直接回傳；> 5 分鐘 → 重抓 TWSE
+        logger.info("[Decision] Layer 0: rt_cache 暖機開始")
         try:
             from backend.services.report_screener import _rt_cache, _fetch_rt_cache
             await _fetch_rt_cache()
             prices_ok = bool(_rt_cache.get("prices"))
             if not prices_ok:
                 logger.warning("[Decision] TWSE rt_cache 仍為空，決策將使用 mock 結構（無硬編碼股價）")
+            else:
+                logger.info("[Decision] Layer 0: rt_cache 暖機完成，%d 檔", len(_rt_cache.get("prices", {})))
         except Exception as _cache_err:
             logger.warning("[Decision] rt_cache warm failed: %s", _cache_err)
             prices_ok = False
@@ -163,6 +163,7 @@ class DecisionEngine:
             )
 
         # ── Layer 1: 動能啟動掃描 ────────────────────────────────────────────
+        logger.info("[Decision] Layer 1: 動能啟動掃描開始")
         movers = []
         try:
             from quant.movers_engine import MoversEngine
@@ -197,7 +198,9 @@ class DecisionEngine:
                 pipeline_note=f"⛔ Kill Switch 啟動：{ks['reason']}",
             )
 
+        logger.info("[Decision] Layer 1: 完成，movers=%d（mock=%d）", len(movers), sum(1 for m in movers if getattr(m, "is_mock", False)))
         # ── Layer 2: 三層分類 ─────────────────────────────────────────────────
+        logger.info("[Decision] Layer 2: 三層分類開始")
         scan_records: list = []
         try:
             from quant.scanner_engine import ScannerEngine
@@ -206,7 +209,9 @@ class DecisionEngine:
         except Exception as e:
             logger.warning("[Decision] scanner failed: %s", e)
 
+        logger.info("[Decision] Layer 2: 完成，scan_records=%d", len(scan_records))
         # ── Layer 3: 六大過濾器 ───────────────────────────────────────────────
+        logger.info("[Decision] Layer 3: 六大過濾器開始")
         filter_result: dict = {"passed": scan_records, "rejected": [], "reason": {}}
         try:
             from quant.filter_engine import FilterEngine
@@ -221,7 +226,9 @@ class DecisionEngine:
             for r in filter_result["passed"]
         }
 
+        logger.info("[Decision] Layer 3: 完成，passed=%d", len(filter_result.get("passed", [])))
         # ── Layer 4: Research 狀態（快速 sync 版）───────────────────────────
+        logger.info("[Decision] Layer 4: Research 狀態檢查開始")
         ready_codes: set[str] = set()
         try:
             from quant.research_checklist import ResearchChecklist
@@ -237,7 +244,9 @@ class DecisionEngine:
             logger.warning("[Decision] research failed: %s", e)
             ready_codes = passed_ids  # fallback：全通過
 
+        logger.info("[Decision] Layer 4: 完成，ready_codes=%d", len(ready_codes))
         # ── Layer 5: 持倉健康檢查（減碼/賣出訊號）────────────────────────────
+        logger.info("[Decision] Layer 5: 持倉健康檢查開始")
         holding_signals = []
         try:
             from quant.portfolio_overlay import PortfolioOverlay
@@ -245,6 +254,7 @@ class DecisionEngine:
         except Exception as e:
             logger.warning("[Decision] overlay failed: %s", e)
 
+        logger.info("[Decision] Layer 5: 完成，holding_signals=%d", len(holding_signals))
         # ── 產生「買進」建議 ──────────────────────────────────────────────────
         for rec in scan_records:
             if len(decisions) >= MAX_DECISIONS:
@@ -332,7 +342,12 @@ class DecisionEngine:
                     tier="watch",
                 ))
 
+        logger.info("[Decision] Layer 5→決策: buy/add=%d, reduce/sell=%d, watch=%d",
+                    sum(1 for d in decisions if d.action in ("buy","add")),
+                    sum(1 for d in decisions if d.action in ("reduce","sell")),
+                    sum(1 for d in decisions if d.action == "watch"))
         # ── Step 11: Analyst Consensus 驗證 ────────────────────────────────────
+        logger.info("[Decision] Layer 6: Analyst Consensus 驗證開始，%d 個 buy/add", sum(1 for d in decisions if d.action in ('buy','add')))
         try:
             from backend.services.analyst_consensus_engine import (
                 get_stock_consensus, get_consensus_boost
@@ -351,6 +366,7 @@ class DecisionEngine:
         except Exception as _e:
             logger.debug("[Decision] Step11 analyst consensus failed: %s", _e)
 
+        logger.info("[Decision] Layer 6: 完成")
         # ── Audit Log ──────────────────────────────────────────────────────────
         for d in decisions:
             audit.record_decision(

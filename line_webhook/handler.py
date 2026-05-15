@@ -1897,20 +1897,44 @@ async def _cmd_daily(uid: str) -> list:
 
 async def _daily_bg(uid: str) -> None:
     """背景執行決策引擎並推送"""
-    try:
-        from quant.decision_engine import DecisionEngine
-        engine = DecisionEngine()
-        daily  = await engine.run(uid)
-        report = daily.format_line()
-        headers = {"Authorization": f"Bearer {settings.line_channel_access_token}"}
-        async with __import__("httpx").AsyncClient(timeout=20) as c:
+    import asyncio, httpx as _httpx
+    headers = {"Authorization": f"Bearer {settings.line_channel_access_token}"}
+
+    async def _push(text: str):
+        async with _httpx.AsyncClient(timeout=20) as c:
             await c.post(
                 "https://api.line.me/v2/bot/message/push",
-                json={"to": uid, "messages": [{"type": "text", "text": report[:4800]}]},
+                json={"to": uid, "messages": [{"type": "text", "text": text[:4800]}]},
                 headers=headers,
             )
+
+    try:
+        logger.info("[daily_bg] Step 1: 啟動 DecisionEngine uid=%s", uid)
+        from quant.decision_engine import DecisionEngine
+        engine = DecisionEngine()
+
+        logger.info("[daily_bg] Step 2: 開始 engine.run()（timeout=150s）")
+        daily = await asyncio.wait_for(engine.run(uid), timeout=150)
+
+        logger.info("[daily_bg] Step 3: engine.run() 完成，共 %d 個決策", len(daily.decisions))
+        report = daily.format_line()
+
+        logger.info("[daily_bg] Step 4: 推送 LINE 訊息")
+        await _push(report)
+        logger.info("[daily_bg] Step 5: 推送完成")
+
+    except asyncio.TimeoutError:
+        logger.error("[daily_bg] Timeout：engine.run() 超過 150 秒")
+        try:
+            await _push("❌ 決策報告逾時（超過 150 秒），請稍後再試 /daily")
+        except Exception:
+            pass
     except Exception as e:
-        logger.error("[daily_bg] %s", e)
+        logger.error("[daily_bg] 失敗：%s", e, exc_info=True)
+        try:
+            await _push(f"❌ 決策報告失敗：{type(e).__name__}: {e}")
+        except Exception:
+            pass
 
 
 async def _cmd_movers(uid: str) -> list:
