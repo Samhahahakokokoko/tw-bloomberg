@@ -359,10 +359,16 @@ class DecisionEngine:
                 boost     = get_consensus_boost(consensus)
                 if boost != 0:
                     d.confidence = min(100, max(0, d.confidence + boost))
-                    if boost > 0:
-                        d.reasons.append(f"分析師共識支撐+{boost:.0f}%")
+                if consensus and consensus.total_analysts > 0:
+                    if consensus.bullish_count > 0 and boost >= 0:
+                        hi = f"（{consensus.high_cred_count}位高可信）" if consensus.high_cred_count else ""
+                        d.reasons.append(f"{consensus.bullish_count}位分析師看多{hi}")
                     elif boost < 0:
                         d.reasons.append("分析師高分歧，建議謹慎")
+                elif boost > 0:
+                    d.reasons.append(f"分析師共識支撐")
+                # 保留最多 4 個原因
+                d.reasons = d.reasons[:4]
         except Exception as _e:
             logger.debug("[Decision] Step11 analyst consensus failed: %s", _e)
 

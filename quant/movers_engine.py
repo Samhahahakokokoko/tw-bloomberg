@@ -27,15 +27,15 @@ import pandas as pd
 
 logger = logging.getLogger(__name__)
 
-# ── 納入門檻 ──────────────────────────────────────────────────────────────────
-INC_5D_RETURN_MIN   = 0.03   # 5日報酬 > 3%
-INC_VOL_RATIO_MIN   = 1.30   # 量比 > 1.3x
+# ── 納入門檻（放寬以擴大掃描範圍到 50+ 檔）──────────────────────────────────
+INC_5D_RETURN_MIN   = 0.015  # 5日報酬 > 1.5%（原 3%，放寬避免平盤日全部落空）
+INC_VOL_RATIO_MIN   = 1.10   # 量比 > 1.1x（原 1.3x）
 INC_FOREIGN_BUY_MIN = 0      # 外資5日淨買 > 0（正值即可）
 
 # ── 排除門檻 ──────────────────────────────────────────────────────────────────
 EXC_5D_RETURN_MAX   = 0.25   # 5日報酬 > 25% → 過熱
 EXC_MA20_DISTANCE   = 0.15   # 偏離MA20 > 15% → 乖離過大
-EXC_AVG_VOL_MIN_K   = 500    # 日均量 < 500 張 → 流動性差
+EXC_AVG_VOL_MIN_K   = 300    # 日均量 < 300 張 → 流動性差（原 500）
 
 
 @dataclass
@@ -96,7 +96,7 @@ class MoversEngine:
     to_dataframe() → 輸出 DataFrame（pipeline 用）
     """
 
-    def __init__(self, top_n: int = 30):
+    def __init__(self, top_n: int = 60):
         self.top_n = top_n
 
     # ── 主入口 ───────────────────────────────────────────────────────────────
@@ -204,8 +204,11 @@ class MoversEngine:
             # ── 5日報酬：優先 ret_5d_approx（screener 計算的估算值）────────────
             ret_5d = g("ret_5d", g("ret_5d_approx", 0.0))
             if ret_5d == 0.0:
-                # 最後備援：用今日漲幅 × 2 + 斜率補正
-                ret_5d = g("change_pct", 0) / 100 * 2.0 + g("ma20_slope", 0) * 0.005
+                chg = g("change_pct", 0) / 100
+                slope = g("ma20_slope", 0)
+                # 備援：今日漲幅×2 + 斜率補正；若 model_score 高也補一點動能
+                model_s = g("model_score", g("confidence", 0))
+                ret_5d = chg * 2.0 + slope * 0.005 + max(model_s - 60, 0) * 0.0002
 
             ret_1m  = ret_5d * 4
             ret_3m  = ret_5d * 10
@@ -234,17 +237,62 @@ class MoversEngine:
                 return None
             if vol_r < INC_VOL_RATIO_MIN:
                 return None
-            if foreign5 <= INC_FOREIGN_BUY_MIN and f_days <= 0:
+            # 外資買超 OR 投信買超 擇一通過
+            if foreign5 <= INC_FOREIGN_BUY_MIN and f_days <= 0 and trust5 <= 0:
                 return None
 
             score = self._calc_score(ret_5d, vol_r, max(foreign5, f_days * 200), dist)
             stage = ("early_breakout" if ret_5d < 0.08 and dist < 0.06
                      else "trend_continuation")
 
-            reasons = []
-            if ret_5d >= 0.03: reasons.append(f"5D+{ret_5d*100:.1f}%")
-            if vol_r >= 1.3:   reasons.append(f"量比{vol_r:.1f}x")
-            if foreign5 > 0:   reasons.append(f"外資+{foreign5:.0f}張")
+            # ── 多維度原因生成（最多取 3 個最強）────────────────────────
+            reason_pool: list[tuple[float, str]] = []  # (weight, text)
+
+            # 法人買超（優先顯示最具說服力的）
+            if f_days >= 5:
+                reason_pool.append((100, f"外資連買{f_days}日"))
+            elif f_days >= 2:
+                reason_pool.append((80, f"外資連買{f_days}日"))
+            elif foreign5 > 2000:
+                reason_pool.append((70, f"外資淨買{foreign5/1000:.1f}千張"))
+            elif foreign5 > 0:
+                reason_pool.append((50, f"外資+{foreign5:.0f}張"))
+
+            if trust5 > 1000:
+                reason_pool.append((85, f"投信大買{trust5/1000:.1f}千張"))
+            elif trust5 > 200:
+                reason_pool.append((60, f"投信買超{trust5:.0f}張"))
+
+            # 動能
+            if ret_5d >= 0.08:
+                reason_pool.append((75, f"5D+{ret_5d*100:.1f}%強勢"))
+            elif ret_5d >= 0.03:
+                reason_pool.append((55, f"5D+{ret_5d*100:.1f}%"))
+
+            # 量能
+            if vol_r >= 2.5:
+                reason_pool.append((80, f"爆量{vol_r:.1f}x"))
+            elif vol_r >= 1.5:
+                reason_pool.append((60, f"量比{vol_r:.1f}x"))
+            elif vol_r >= 1.1:
+                reason_pool.append((40, f"量比{vol_r:.1f}x"))
+
+            # 技術位置
+            if stage == "early_breakout" and dist < 0.03:
+                reason_pool.append((90, "突破起漲點"))
+            elif stage == "early_breakout":
+                reason_pool.append((70, "初段突破"))
+            elif dist > 0.05 and ret_5d > 0.05:
+                reason_pool.append((65, "趨勢延續強勢"))
+
+            # 均線多頭排列
+            if ma20 > 0 and ma60 > 0 and close > ma20 > ma60:
+                reason_pool.append((55, "均線多頭"))
+
+            reason_pool.sort(key=lambda x: -x[0])
+            reasons = [r for _, r in reason_pool[:3]]
+            if not reasons:
+                reasons = ["動能+籌碼啟動"]
 
             return MoverResult(
                 stock_id=stock_id, name=name, sector=sector, close=close,

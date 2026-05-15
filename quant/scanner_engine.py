@@ -213,11 +213,26 @@ class ScannerEngine:
 
         if (is_sat_chip and is_sat_vol and (is_sat_small or is_sat_growth)):
             risk = "小型高成長，高波動" if is_sat_small else "高成長Turnaround"
+            sat_reasons = []
+            if rev_yoy > 0.30:
+                sat_reasons.append(f"營收年增{rev_yoy*100:.0f}%")
+            if eps_growth > 0.20:
+                sat_reasons.append(f"EPS加速+{eps_growth*100:.0f}%")
+            if f_days > 0:
+                sat_reasons.append(f"外資連買{f_days}日")
+            elif trust_net > 0:
+                sat_reasons.append("投信買超")
+            if vol_r >= 1.5:
+                sat_reasons.append(f"量比{vol_r:.1f}x")
+            if is_sat_small:
+                sat_reasons.append("小型高成長")
+            if not sat_reasons:
+                sat_reasons = ["籌碼啟動", "高波動"]
             return ScanRecord(
                 stock_id=stock_id, name=name, sector=sector,
                 layer="satellite", score=0.30,
                 max_position=0.05,
-                reasons=["高波動", "籌碼跡象"],
+                reasons=sat_reasons[:3],
                 risk_note=risk,
             )
 
