@@ -91,7 +91,9 @@ async def webhook(request: Request):
                 logger.info(f"Ignored event type: {type(event).__name__}")
 
         except Exception as e:
-            logger.error(f"Event error: {e}", exc_info=True)
+            import traceback as _tb
+            tb_str = _tb.format_exc().replace('\n', ' | ')
+            logger.error(f"Event error: {e} || TRACE: {tb_str}")
             if reply_token:
                 try:
                     async with AsyncApiClient(configuration) as c:
