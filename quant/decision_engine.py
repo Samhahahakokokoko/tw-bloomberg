@@ -21,7 +21,7 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
-MAX_DECISIONS       = 5
+MAX_DECISIONS       = 8
 BUY_MIN_CONFIDENCE  = 65     # 買進最低信心
 ADD_MIN_CONFIDENCE  = 75     # 加碼最低信心
 MAX_POSITION_PCT    = 0.20   # 單股最大倉位
@@ -70,16 +70,35 @@ class Decision:
 
 @dataclass
 class DailyDecision:
-    decisions:      list[Decision]
-    generated_at:   str
-    movers_count:   int = 0
-    filtered_count: int = 0
-    pipeline_note:  str = ""
+    decisions:       list[Decision]
+    generated_at:    str
+    movers_count:    int = 0
+    filtered_count:  int = 0
+    pipeline_note:   str = ""
+    market_overview: dict = field(default_factory=dict)
 
     def format_line(self) -> str:
         now   = datetime.now().strftime("%m/%d %H:%M")
         n     = len(self.decisions)
-        lines = [
+        lines: list[str] = []
+
+        # ── 市場狀態區塊（最上方）──────────────────────────────────────────
+        ov = self.market_overview or {}
+        if ov:
+            cpct  = ov.get("change_pct", 0) or 0
+            chg   = ov.get("change",     0) or 0
+            val   = ov.get("value",      0) or 0
+            sign  = "▲" if chg >= 0 else "▼"
+            regime_zh = {"bull": "多頭", "bear": "空頭", "sideways": "盤整"}.get(
+                ov.get("regime", ""), "unknown"
+            )
+            lines += [
+                f"📊 市場狀態：{regime_zh}",
+                f"加權指數 {val:,.2f}  {sign}{abs(chg):.2f} ({cpct:+.2f}%)",
+                "─" * 22,
+            ]
+
+        lines += [
             f"📋 今日操作建議（共 {n} 個）  {now}",
             "─" * 22,
         ]
@@ -404,12 +423,25 @@ class DecisionEngine:
             mock_note = f"（⚠️ {mock_movers} 筆為示範資料）" if mock_movers else ""
             notes.append(f"掃描 {movers_count} 檔動能股，通過過濾 {filtered_count} 檔{mock_note}")
 
+        # ── 抓取大盤資料供報告標題使用 ─────────────────────────────────────
+        market_overview: dict = {}
+        try:
+            from backend.services.twse_service import fetch_market_overview
+            ov = await fetch_market_overview()
+            if ov:
+                cpct = ov.get("change_pct", 0) or 0
+                ov["regime"] = "bull" if cpct >= 0.5 else "bear" if cpct <= -0.5 else "sideways"
+                market_overview = ov
+        except Exception as _ov_err:
+            logger.warning("[Decision] market overview fetch failed: %s", _ov_err)
+
         return DailyDecision(
             decisions=decisions[:MAX_DECISIONS],
             generated_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             movers_count=movers_count,
             filtered_count=filtered_count,
             pipeline_note="  ".join(notes),
+            market_overview=market_overview,
         )
 
     def _make_buy(self, rec, movers: list) -> Optional[Decision]:
@@ -448,8 +480,9 @@ class DecisionEngine:
                         price_source = "mover"
                     break
 
-        # Debug：每支進入 _make_buy 的股票都印出收盤價來源
+        # Debug：每支進入 _make_buy 的股票都印出收盤價與原因
         logger.info("[BUY] %s 收盤價=%.1f 來源=%s", stock_id, close, price_source)
+        logger.info("[BUY] %s 原因列表: %s", stock_id, reasons)
         if stock_id == "2330":
             print(f"2330 使用的收盤價: {close}  (來源: {price_source})")
 
