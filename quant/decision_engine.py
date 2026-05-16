@@ -222,14 +222,22 @@ class DecisionEngine:
 
         logger.info("[Decision] Layer 1: 完成，movers=%d（mock=%d）", len(movers), sum(1 for m in movers if getattr(m, "is_mock", False)))
         # ── Layer 2: 三層分類 ─────────────────────────────────────────────────
-        logger.info("[Decision] Layer 2: 三層分類開始")
+        logger.info("[Decision] Layer 2: 三層分類開始，輸入 movers=%d", len(movers))
+        # 印出前 3 個 mover 的關鍵欄位，確認 foreign_buy_days/trust_net 有無正確值
+        for m in movers[:3]:
+            logger.info("[Layer2-sample] %s f_days=%d trust=%.0f ret5d=%.3f score=%.1f",
+                        getattr(m, "stock_id", "?"),
+                        getattr(m, "foreign_buy_days", -1),
+                        getattr(m, "trust_net", -1),
+                        getattr(m, "ret_5d", 0),
+                        getattr(m, "score", 0))
         scan_records: list = []
         try:
             from quant.scanner_engine import ScannerEngine
             scan_result  = ScannerEngine().classify(movers)
             scan_records = scan_result.core + scan_result.medium + scan_result.satellite
         except Exception as e:
-            logger.warning("[Decision] scanner failed: %s", e)
+            logger.warning("[Decision] scanner failed: %s", e, exc_info=True)
 
         core_n = sum(1 for r in scan_records if getattr(r,'layer','') == 'core')
         med_n  = sum(1 for r in scan_records if getattr(r,'layer','') == 'medium')

@@ -103,13 +103,33 @@ class ScannerEngine:
 
     def classify(self, candidates: list) -> ScanResult:
         result = ScanResult()
+
+        # 偵測法人 API 是否失效：若所有 movers 的 f_days=0 且 trust_net=0 → 切換純技術面模式
+        has_inst_data = any(
+            (int(getattr(item, "foreign_buy_days", 0) or
+                 (item.get("foreign_buy_days", 0) if isinstance(item, dict) else 0)) != 0)
+            or
+            (float(getattr(item, "trust_net", 0) or
+                   (item.get("trust_net", 0) if isinstance(item, dict) else 0)) != 0)
+            for item in candidates
+        )
+        if not has_inst_data and candidates:
+            logger.warning("[Layer2] 法人 API 失效（f_days=0, trust=0 全員），切換純技術面分類模式")
+
         for item in candidates:
-            rec = self._classify_one(item)
+            rec = self._classify_one(item, tech_only=not has_inst_data)
             if rec:
                 result.records[rec.stock_id] = rec
+
+        core_n = len(result.core)
+        med_n  = len(result.medium)
+        sat_n  = len(result.satellite)
+        logger.info("[Layer2] 分類結果：core=%d medium=%d satellite=%d (總=%d, 法人模式=%s)",
+                    core_n, med_n, sat_n, core_n + med_n + sat_n,
+                    "有" if has_inst_data else "純技術面")
         return result
 
-    def _classify_one(self, item) -> Optional[ScanRecord]:
+    def _classify_one(self, item, tech_only: bool = False) -> Optional[ScanRecord]:
         def g(attr, d=0.0):
             if hasattr(item, attr):
                 v = getattr(item, attr)
@@ -144,7 +164,6 @@ class ScannerEngine:
         score      = g("score", 50)
 
         # Relative Strength 估算（近20日 vs 市場）
-        # 嘗試從快取取大盤月報酬，否則用近7日均漲跌幅 fallback
         try:
             from backend.services.twse_service import _mkt_cache  # type: ignore
             market_ret_1m = float((_mkt_cache or {}).get("monthly_return", 0.02))
@@ -161,6 +180,64 @@ class ScannerEngine:
 
         # Trust 連買（trust_net > 0 代理投信買超）
         trust_buy_days = 3 if trust_net > 200 else (1 if trust_net > 0 else 0)
+
+        logger.debug("[Layer2] %s(%s) f_days=%d trust=%.0f rs=%.3f ret5d=%.3f ma5>ma20=%s score=%.1f",
+                     stock_id, name[:6], f_days, trust_net, rs, ret_5d, ma5_above_ma20, score)
+
+        # ══════════════════════════════════════════════════════════════════
+        # 純技術面模式（法人 API 失效時）：不依賴 f_days / trust_net
+        # ══════════════════════════════════════════════════════════════════
+        if tech_only:
+            # Core：RS > 10% + MA5>MA20（趨勢強，快速推進）
+            if rs > 0.10 and ma5_above_ma20:
+                core_reasons = [f"RS跑贏+{rs*100:.1f}%", "MA5>MA20"]
+                if is_core_sector := any(s in sector for s in CORE_SECTORS):
+                    core_reasons.append(f"{sector}核心產業")
+                core_score = 0.65 + min(score, 100) * 0.003
+                logger.info("[Layer2] %s → core(技術面) rs=%.3f", stock_id, rs)
+                return ScanRecord(
+                    stock_id=stock_id, name=name, sector=sector,
+                    layer="core", score=round(min(core_score, 1.0), 4),
+                    max_position=0.20, reasons=core_reasons[:3],
+                )
+
+            # Medium：RS > 5% + 正報酬
+            if rs > 0.05 and ret_5d > 0:
+                med_reasons = [f"RS跑贏+{rs*100:.1f}%", f"5D+{ret_5d*100:.1f}%"]
+                if ma5_above_ma20:
+                    med_reasons.append("MA5>MA20")
+                med_score = 0.55 + min(score, 100) * 0.002
+                logger.info("[Layer2] %s → medium(技術面) rs=%.3f ret5d=%.3f", stock_id, rs, ret_5d)
+                return ScanRecord(
+                    stock_id=stock_id, name=name, sector=sector,
+                    layer="medium", score=round(min(med_score, 0.75), 4),
+                    max_position=0.10, reasons=med_reasons[:3],
+                )
+
+            # Satellite：任何正報酬
+            if ret_5d > 0:
+                sat_reasons = [f"5D+{ret_5d*100:.1f}%", f"量比{vol_r:.1f}x"]
+                if ma5_above_ma20:
+                    sat_reasons.append("MA5>MA20")
+                sat_score = 0.30 + min(score, 100) * 0.002
+                return ScanRecord(
+                    stock_id=stock_id, name=name, sector=sector,
+                    layer="satellite", score=round(min(sat_score, 0.50), 4),
+                    max_position=0.05, reasons=sat_reasons[:3],
+                    risk_note="純技術面",
+                )
+
+            # 無正報酬 → 觀察
+            return ScanRecord(
+                stock_id=stock_id, name=name, sector=sector,
+                layer="satellite", score=0.20 + min(score, 100) * 0.001,
+                max_position=0.05, reasons=["動能觀察"],
+                risk_note="待觀察",
+            )
+
+        # ══════════════════════════════════════════════════════════════════
+        # 標準模式（含法人資料）
+        # ══════════════════════════════════════════════════════════════════
 
         # ── Core 條件（門檻降為 3/5）────────────────────────────────────
         is_core_sector   = any(s in sector for s in CORE_SECTORS)
@@ -180,6 +257,7 @@ class ScannerEngine:
             if is_core_roe:     reasons.append("ROE>15%")
             if not reasons:     reasons.append("動能+基本面")
             core_score = 0.55 + (core_count - 2) * 0.10 + min(score, 100) * 0.003
+            logger.info("[Layer2] %s → core(標準) count=%d", stock_id, core_count)
             return ScanRecord(
                 stock_id=stock_id, name=name, sector=sector,
                 layer="core", score=round(min(core_score, 1.0), 4),
@@ -189,7 +267,7 @@ class ScannerEngine:
         # ── Medium 條件（門檻降為 1/4）──────────────────────────────────
         is_med_eps   = eps_growth > 0.05 or (ret_1m > 0.06)
         is_med_trust = trust_buy_days >= 1 or trust_net > 100
-        is_med_rs    = rs > 0.02   # 跑贏大盤 2%（原 5%）
+        is_med_rs    = rs > 0.02
         is_med_ma    = ma5_above_ma20
 
         med_count = sum([is_med_eps, is_med_trust, is_med_rs, is_med_ma])
@@ -201,6 +279,7 @@ class ScannerEngine:
             if is_med_ma:    reasons.append("MA5>MA20")
             if not reasons:  reasons.append("技術動能")
             med_score = 0.35 + med_count * 0.07 + min(score, 100) * 0.002
+            logger.info("[Layer2] %s → medium(標準) count=%d", stock_id, med_count)
             return ScanRecord(
                 stock_id=stock_id, name=name, sector=sector,
                 layer="medium", score=round(min(med_score, 0.75), 4),
@@ -211,17 +290,17 @@ class ScannerEngine:
         is_sat_small  = vol_k > 0 and vol_k < 2000
         is_sat_growth = eps_growth > 0.10 or rev_yoy > 0.15
         is_sat_chip   = f_days > 0 or trust_net > 0
-        is_sat_vol    = vol_r >= 1.0   # 原 1.5，放寬
+        is_sat_vol    = vol_r >= 1.0
 
         if (is_sat_chip and is_sat_vol and (is_sat_small or is_sat_growth)):
             risk = "小型高成長，高波動" if is_sat_small else "高成長Turnaround"
             sat_reasons = []
-            if rev_yoy > 0.15:  sat_reasons.append(f"營收年增{rev_yoy*100:.0f}%")
+            if rev_yoy > 0.15:    sat_reasons.append(f"營收年增{rev_yoy*100:.0f}%")
             if eps_growth > 0.10: sat_reasons.append(f"EPS加速+{eps_growth*100:.0f}%")
-            if f_days > 0:      sat_reasons.append(f"外資連買{f_days}日")
-            elif trust_net > 0: sat_reasons.append("投信買超")
-            if vol_r >= 1.0:    sat_reasons.append(f"量比{vol_r:.1f}x")
-            if not sat_reasons: sat_reasons = ["動能啟動"]
+            if f_days > 0:        sat_reasons.append(f"外資連買{f_days}日")
+            elif trust_net > 0:   sat_reasons.append("投信買超")
+            if vol_r >= 1.0:      sat_reasons.append(f"量比{vol_r:.1f}x")
+            if not sat_reasons:   sat_reasons = ["動能啟動"]
             return ScanRecord(
                 stock_id=stock_id, name=name, sector=sector,
                 layer="satellite", score=0.30,
@@ -231,13 +310,12 @@ class ScannerEngine:
             )
 
         # ── Fallback Satellite：通過 Layer 1 但未達分類條件 ──────────────
-        # 任何進入分類器的 mover 都給 satellite，避免全部落空
         fb_reasons = []
-        if ret_1m > 0:    fb_reasons.append(f"月報酬+{ret_1m*100:.1f}%")
-        if vol_r >= 0.7:  fb_reasons.append(f"量比{vol_r:.1f}x")
-        if f_days > 0:    fb_reasons.append(f"外資+{f_days}日")
+        if ret_1m > 0:      fb_reasons.append(f"月報酬+{ret_1m*100:.1f}%")
+        if vol_r >= 0.7:    fb_reasons.append(f"量比{vol_r:.1f}x")
+        if f_days > 0:      fb_reasons.append(f"外資+{f_days}日")
         elif trust_net > 0: fb_reasons.append("投信買超")
-        if not fb_reasons: fb_reasons = ["動能觀察"]
+        if not fb_reasons:  fb_reasons = ["動能觀察"]
         return ScanRecord(
             stock_id=stock_id, name=name, sector=sector,
             layer="satellite", score=0.20 + min(score, 100) * 0.001,
