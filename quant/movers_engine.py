@@ -49,15 +49,17 @@ class MoverResult:
     ret_3m:         float
     volume_ratio:   float      # 近5日量 / 20日均量
     avg_volume_k:   float      # 日均量（張）
-    foreign_buy_5d: float      # 外資近5日淨買（張）
-    trust_buy_5d:   float
-    ma20:           float
-    ma60:           float
+    foreign_buy_5d:   float      # 外資近5日淨買（張）
+    trust_buy_5d:     float
+    ma20:             float
+    ma60:             float
     distance_from_ma20: float  # (close - MA20) / MA20
-    score:          float      # 0~100 動能啟動分
-    stage:          str        # early_breakout / trend_continuation / watch
-    include_reasons: list[str] = field(default_factory=list)
-    is_mock:        bool = False   # 標記是否為假資料（screener 失敗 fallback）
+    score:            float    # 0~100 動能啟動分
+    stage:            str      # early_breakout / trend_continuation / watch
+    include_reasons:  list[str] = field(default_factory=list)
+    foreign_buy_days: int   = 0    # 外資連買日數（供 scanner/filter 讀取）
+    trust_net:        float = 0.0  # 投信近5日淨買（張），供 scanner 讀取
+    is_mock:          bool  = False  # 標記是否為假資料（screener 失敗 fallback）
 
     def to_series(self) -> pd.Series:
         return pd.Series({
@@ -142,7 +144,8 @@ class MoversEngine:
         """
         universe = _MOCK_UNIVERSE[:n]
         results = []
-        rng = np.random.default_rng(42)
+        import time as _time
+        rng = np.random.default_rng(int(_time.time() // 3600))
         for s in universe:
             close  = s["close"]   # 可能為 0，待 rt_cache 覆蓋
             ret5   = rng.uniform(0.03, 0.14)
@@ -154,14 +157,17 @@ class MoversEngine:
             score  = self._calc_score(ret5, vol_r, f_buy, dist)
             stage  = ("early_breakout" if ret5 < 0.07 and dist < 0.05
                       else "trend_continuation")
+            trust_mock = round(rng.uniform(0, 500), 0)
             results.append(MoverResult(
                 stock_id=s["stock_id"], name=s["name"], sector=s["sector"],
                 close=close, ret_5d=ret5, ret_1m=ret5*3.2, ret_3m=ret5*7,
                 volume_ratio=round(vol_r, 2), avg_volume_k=rng.uniform(500, 8000),
-                foreign_buy_5d=round(f_buy, 0), trust_buy_5d=round(rng.uniform(0, 500), 0),
+                foreign_buy_5d=round(f_buy, 0), trust_buy_5d=trust_mock,
                 ma20=round(ma20, 2), ma60=round(ma60, 2),
                 distance_from_ma20=round(dist, 4), score=round(score, 1),
                 stage=stage, include_reasons=["5D>3%", "量比>1.3x", "外資買超"],
+                foreign_buy_days=int(f_buy // 300),
+                trust_net=trust_mock,
             ))
         results.sort(key=lambda r: r.score, reverse=True)
         return results
@@ -303,6 +309,8 @@ class MoversEngine:
                 ma20=round(ma20, 2), ma60=round(ma60, 2),
                 distance_from_ma20=round(dist, 4), score=round(score, 1),
                 stage=stage, include_reasons=reasons,
+                foreign_buy_days=f_days,
+                trust_net=round(trust5, 0),
             )
         except Exception as e:
             logger.debug("[Movers] eval error: %s", e)

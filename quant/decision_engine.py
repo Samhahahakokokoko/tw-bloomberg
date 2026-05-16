@@ -147,6 +147,9 @@ class DecisionEngine:
     """
 
     async def run(self, uid: str) -> DailyDecision:
+        import time
+        logger.info("決策引擎開始執行 timestamp=%.3f uid=%s", time.time(), uid)
+
         from quant.audit_log_engine import AuditLogger
         from quant.risk_kill_switch import is_trading_enabled, check_and_activate, status_dict
         from quant.mock_isolation import IS_PRODUCTION, assert_no_mock
