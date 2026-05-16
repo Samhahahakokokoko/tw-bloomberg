@@ -2897,12 +2897,12 @@ async def _report_bg(
         logger.error(f"[report_bg] {screen_type} uid={uid[:8]} err={e}", exc_info=True)
 
 
-def _build_text_fallback(rows, label: str, page: int, total: int) -> dict:
+def _build_text_fallback(rows, label: str, page: int, total: int) -> TextMessage:
     lines = [f"📊 {label} (第{page}/{total}頁)", "─" * 20]
     for r in rows[:10]:
         s = "+" if r.change_pct > 0 else ""
         lines.append(f"{r.stock_id} {r.name} {s}{r.change_pct:.2f}%  分:{r.model_score:.0f}")
-    return {"type": "text", "text": "\n".join(lines)[:4800]}
+    return TextMessage(text="\n".join(lines)[:4800])
 
 
 def _build_stock_list_msg(
@@ -2953,11 +2953,10 @@ def _build_stock_list_msg(
             },
         })
 
-    return {
-        "type": "text",
-        "text": "\n".join(lines)[:4800],
-        "quickReply": {"items": qr_list[:13]},
-    }
+    return TextMessage(
+        text="\n".join(lines)[:4800],
+        quick_reply=_make_qr({"items": qr_list[:13]}),
+    )
 
 
 async def _cmd_custom_screen(conditions: str, uid: str) -> list:

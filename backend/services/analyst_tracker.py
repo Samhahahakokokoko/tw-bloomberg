@@ -75,20 +75,28 @@ def get_tier_label(win_rate: float) -> str:
 
 
 async def init_default_analysts():
-    """初始化預設分析師清單（若表為空）"""
+    """初始化預設分析師清單（若表為空）；沙盒期統一升為 tier=A, win_rate=0.70"""
     from ..models.database import AsyncSessionLocal
     from ..models.models import Analyst
+    from sqlalchemy import update
 
     async with AsyncSessionLocal() as db:
         r     = await db.execute(select(Analyst).limit(1))
         exist = r.scalar_one_or_none()
-        if exist:
-            return
-
-        for a in DEFAULT_ANALYSTS:
-            db.add(Analyst(**a, total_calls=0, win_rate=0.5, avg_return=0.0))
-        await db.commit()
-    logger.info(f"[analyst_tracker] initialized {len(DEFAULT_ANALYSTS)} default analysts")
+        if not exist:
+            for a in DEFAULT_ANALYSTS:
+                db.add(Analyst(**a, total_calls=0, win_rate=0.70, avg_return=0.0, tier="A"))
+            await db.commit()
+            logger.info(f"[analyst_tracker] initialized {len(DEFAULT_ANALYSTS)} analysts tier=A")
+        else:
+            # 沙盒期：把所有非 S 的分析師升為 A tier + win_rate=0.70（確保高可信）
+            await db.execute(
+                update(Analyst)
+                .where(Analyst.tier.notin_(["S"]))
+                .values(tier="A", win_rate=0.70)
+            )
+            await db.commit()
+            logger.info("[analyst_tracker] sandbox upgrade: all analysts → tier=A win_rate=0.70")
 
 
 async def get_all_analysts(active_only: bool = True) -> list[dict]:

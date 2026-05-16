@@ -169,8 +169,15 @@ async def calculate_daily_consensus(days: int = 7) -> list[ConsensusResult]:
                 pass
         unique_thesis = list(dict.fromkeys(all_points))[:3]
 
-        # 取股票名稱
-        stock_name = stock_calls[0].stock_name if stock_calls[0].stock_name else stock_id
+        # 取股票名稱：優先 DB 記錄，若空或等於 stock_id 則從 rt_cache 查詢中文名
+        _raw_name = stock_calls[0].stock_name if stock_calls[0].stock_name else ""
+        if not _raw_name or _raw_name == stock_id:
+            try:
+                from backend.services.report_screener import _rt_cache
+                _raw_name = _rt_cache.get("prices", {}).get(stock_id, {}).get("name", "") or stock_id
+            except Exception:
+                _raw_name = stock_id
+        stock_name = _raw_name
 
         results.append(ConsensusResult(
             stock_id        = stock_id,

@@ -61,7 +61,7 @@ def quick_reply_after_alert(code: str) -> dict:
 
 def flex_quote(q: dict) -> dict:
     code    = q.get("code", "")
-    name    = q.get("name", code)
+    name    = q.get("name") or code   # 避免 empty string → LINE API 拒絕
     price   = q.get("price", 0)
     change  = q.get("change", 0)
     pct     = q.get("change_pct", 0)
