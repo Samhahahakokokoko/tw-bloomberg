@@ -206,8 +206,10 @@ class ScannerEngine:
                 med_reasons = [f"RS跑贏+{rs*100:.1f}%", f"5D+{ret_5d*100:.1f}%"]
                 if ma5_above_ma20:
                     med_reasons.append("MA5>MA20")
-                med_score = 0.55 + min(score, 100) * 0.002
-                logger.info("[Layer2] %s → medium(技術面) rs=%.3f ret5d=%.3f", stock_id, rs, ret_5d)
+                # floor=0.62 確保無 chip 時 confidence ≥ 62 > BUY_MIN_CONFIDENCE(60)
+                med_score = max(0.62, 0.55 + min(score, 100) * 0.002)
+                logger.info("[Layer2] %s → medium(技術面) rs=%.3f ret5d=%.3f score=%.4f",
+                            stock_id, rs, ret_5d, med_score)
                 return ScanRecord(
                     stock_id=stock_id, name=name, sector=sector,
                     layer="medium", score=round(min(med_score, 0.75), 4),

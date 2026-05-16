@@ -22,7 +22,7 @@ import httpx
 logger = logging.getLogger(__name__)
 
 MAX_DECISIONS       = 8
-BUY_MIN_CONFIDENCE  = 65     # 買進最低信心
+BUY_MIN_CONFIDENCE  = 60     # 買進最低信心（技術面模式無 chip 時 medium ≈ 62）
 ADD_MIN_CONFIDENCE  = 75     # 加碼最低信心
 MAX_POSITION_PCT    = 0.20   # 單股最大倉位
 
