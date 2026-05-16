@@ -276,24 +276,15 @@ class DecisionEngine:
 
         logger.info("[Decision] Layer 5: 完成，holding_signals=%d", len(holding_signals))
         # ── 產生「買進」建議 ──────────────────────────────────────────────────
-        logger.info("[Decision] buy迴圈開始 scan_records=%d passed=%d ready=%d",
-                    len(scan_records), len(passed_ids), len(ready_codes))
         for rec in scan_records:
             if len(decisions) >= MAX_DECISIONS:
                 break
             code = rec.stock_id if hasattr(rec, "stock_id") else rec.get("stock_id", "")
             if code not in passed_ids or code not in ready_codes:
-                logger.debug("[Decision] %s 跳過 in_passed=%s in_ready=%s",
-                             code, code in passed_ids, code in ready_codes)
                 continue
             d = self._make_buy(rec, movers)
             if d:
-                logger.info("[Decision] ✅ 買進決策 %s conf=%.1f", code, d.confidence)
                 decisions.append(d)
-            else:
-                logger.info("[Decision] ❌ %s _make_buy=None（信心不足）", code)
-
-        logger.info("[Decision] buy迴圈結束 decisions=%d", len(decisions))
 
         # ── 產生「加碼/減碼/賣出」建議（基於持倉健康）──────────────────────────
         for sig in holding_signals:
