@@ -306,12 +306,13 @@ class ResearchChecklist:
         )
 
     def _finalize(self, result: ResearchResult) -> None:
+        # 沒有人工研究系統：只以自動化指標決定
+        # auto_fail >= 2 → REJECTED（明確負訊號）
+        # 其他 → READY（不因「未研究」而擋下）
         if result.auto_fail >= 2:
             result.overall = "REJECTED"
-        elif result.auto_pass >= 5:
-            result.overall = "NEEDS_RESEARCH"  # 仍需人工確認5項
         else:
-            result.overall = "NEEDS_RESEARCH"
+            result.overall = "READY"
 
     # ── AI 輔助分析 ───────────────────────────────────────────────────────────
 

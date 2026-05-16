@@ -261,24 +261,30 @@ class DecisionEngine:
         }
 
         logger.info("[Decision] Layer 3: 完成，passed=%d", len(filter_result.get("passed", [])))
-        # ── Layer 4: Research 狀態（快速 sync 版）───────────────────────────
-        logger.info("[Decision] Layer 4: Research 狀態檢查開始")
+        # ── Layer 4: Research 狀態（自動化6項，無人工研究系統）──────────────
+        logger.info("[Decision] Layer 4: Research 狀態檢查開始，passed_ids=%d", len(passed_ids))
         ready_codes: set[str] = set()
+        rejected_count = 0
         try:
             from quant.research_checklist import ResearchChecklist
             checker = ResearchChecklist()
-            for rec in scan_records[:8]:
+            # 遍歷全部通過 Layer 3 的股票，不設上限
+            for rec in scan_records:
                 code = rec.stock_id if hasattr(rec, "stock_id") else rec.get("stock_id", "")
-                if code in passed_ids:
-                    # 使用有限 mock 數據做快速評估
-                    r = checker.check_sync(code, _mock_data_for(rec))
-                    if r.overall != "REJECTED":
-                        ready_codes.add(code)
+                if code not in passed_ids:
+                    continue
+                r = checker.check_sync(code, _mock_data_for(rec))
+                if r.overall == "REJECTED":
+                    rejected_count += 1
+                    logger.debug("[Layer4] %s REJECTED auto_fail=%d", code, r.auto_fail)
+                else:
+                    ready_codes.add(code)
         except Exception as e:
             logger.warning("[Decision] research failed: %s", e)
             ready_codes = passed_ids  # fallback：全通過
 
-        logger.info("[Decision] Layer 4: 完成，ready_codes=%d", len(ready_codes))
+        logger.info("[Decision] Layer 4: 完成，ready_codes=%d rejected=%d",
+                    len(ready_codes), rejected_count)
         # ── Layer 5: 持倉健康檢查（減碼/賣出訊號）────────────────────────────
         logger.info("[Decision] Layer 5: 持倉健康檢查開始")
         holding_signals = []
