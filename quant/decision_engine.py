@@ -262,11 +262,7 @@ class DecisionEngine:
 
         logger.info("[Decision] Layer 3: 完成，passed=%d", len(filter_result.get("passed", [])))
         # ── Layer 4: 無排除邏輯，所有 scan_records 股票都視為 ready ────────────
-        # 沒有人工研究系統，不以 research_checklist 排除任何股票
-        ready_codes: set[str] = {
-            (r.stock_id if hasattr(r, "stock_id") else r.get("stock_id", ""))
-            for r in scan_records
-        }
+        ready_codes = [r.stock_id for r in scan_records]
         logger.info("[Decision] Layer 4: ALL_PASS ready_codes=%d scan_records=%d",
                     len(ready_codes), len(scan_records))
         # ── Layer 5: 持倉健康檢查（減碼/賣出訊號）────────────────────────────
