@@ -787,6 +787,7 @@ async def _cmd_quote(code: str) -> list:
         price = quote.get("close", quote.get("price", 0))
         change = quote.get("change", 0)
         change_pct = quote.get("change_pct", 0)
+        print(f"[quote] code={code} price={price}")
         sign = "+" if change >= 0 else "-"
         text = f"📊 {code} {name}\n現價：{price}元\n漲跌：{sign}{abs(change_pct):.2f}%"
         return [TextMessage(text=text)]

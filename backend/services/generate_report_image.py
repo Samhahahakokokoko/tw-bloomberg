@@ -33,7 +33,13 @@ try:
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
     import matplotlib.patches as mpatches
+    import matplotlib.font_manager as fm
     from matplotlib.patches import FancyBboxPatch
+    font_path = "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"
+    if os.path.exists(font_path):
+        prop = fm.FontProperties(fname=font_path)
+        plt.rcParams["font.family"] = prop.get_name()
+        plt.rcParams["axes.unicode_minus"] = False
     _MPL_OK = True
 except ImportError:
     _MPL_OK = False
