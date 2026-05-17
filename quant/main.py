@@ -27,7 +27,7 @@ from typing import Optional
 
 import numpy as np
 import pandas as pd
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -1067,8 +1067,8 @@ async def get_regime_enhanced(req: RegimeEnhancedRequest):
 @router.get("/adaptive_weights", summary="30日 IC 動態因子權重")
 async def get_adaptive_weights(
     stock_code:   str = "2330",
-    forward_days: int = Field(5, ge=1, le=20),
-    ic_window:    int = Field(30, ge=10, le=90),
+    forward_days: int = Query(5, ge=1, le=20),
+    ic_window:    int = Query(30, ge=10, le=90),
 ):
     """
     計算最近 ic_window 日每個因子的 IC（Spearman 相關），

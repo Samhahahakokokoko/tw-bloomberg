@@ -7,24 +7,24 @@ venv/
 dist/
 *.pyc
 
-# 敏感資訊 — 絕對不能上傳
+# Environment and local data
 .env
 *.env
 data/bloomberg.db
 data/*.db
 
-# 前端
+# Frontend
 frontend/node_modules/
 frontend/dist/
 frontend/.vite/
 
-# Rich Menu 圖片（可重新生成）
+# Generated assets
 data/rich_menu.png
 
-# Claude Code 本地設定（含個人 allowlist，不納入版控）
+# Local tool settings
 .claude/settings.local.json
 
-# 系統
+# OS and logs
 .DS_Store
 Thumbs.db
 *.log

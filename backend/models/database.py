@@ -1,6 +1,6 @@
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
-from sqlalchemy import text
 from pydantic_settings import BaseSettings
 from loguru import logger
 
@@ -10,8 +10,8 @@ class Settings(BaseSettings):
     anthropic_api_key: str = ""
     line_channel_access_token: str = ""
     line_channel_secret: str = ""
-    finmind_token: str = ""       # FinMind API token（免費版可留空）
-    youtube_api_key: str = ""     # YouTube Data API v3（分析師系統）
+    finmind_token: str = ""
+    youtube_api_key: str = ""
 
     class Config:
         env_file = ".env"
@@ -19,7 +19,7 @@ class Settings(BaseSettings):
 
     @property
     def async_database_url(self) -> str:
-        """Railway 給的 postgresql:// 轉成 asyncpg 格式"""
+        """Convert platform PostgreSQL URLs to SQLAlchemy asyncpg URLs."""
         url = self.database_url
         if url.startswith("postgresql://"):
             url = url.replace("postgresql://", "postgresql+asyncpg://", 1)
@@ -30,7 +30,7 @@ class Settings(BaseSettings):
 
 settings = Settings()
 
-# ── 啟動時檢查必要 env vars（缺少時警告，不中斷服務但功能會降級）──────────────────
+
 def _check_env():
     missing = []
     if not settings.line_channel_access_token:
@@ -41,12 +41,12 @@ def _check_env():
         missing.append("ANTHROPIC_API_KEY")
     if missing:
         logger.warning(
-            "⚠️  以下 env vars 未設定，相關功能將停用：%s  "
-            "（請在 .env 或部署環境設定）",
+            "Missing optional env vars: %s. Some integrations may be disabled.",
             ", ".join(missing),
         )
     else:
-        logger.info("✅ 所有必要 env vars 已設定")
+        logger.info("Required integration env vars are configured.")
+
 
 _check_env()
 
@@ -70,7 +70,6 @@ async def get_db():
         yield session
 
 
-# ALTER TABLE 遷移 — 安全加欄位（已存在則忽略）
 _SQLITE_MIGRATIONS = [
     "ALTER TABLE portfolio  ADD COLUMN user_id VARCHAR(100) NOT NULL DEFAULT ''",
     "ALTER TABLE alerts     ADD COLUMN user_id VARCHAR(100) NOT NULL DEFAULT ''",

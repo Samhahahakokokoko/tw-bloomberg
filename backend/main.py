@@ -1,19 +1,23 @@
-import sys, os, traceback, asyncio
+import asyncio
+import os
+import sys
+import traceback
 from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from loguru import logger
 
-# ── sys.path setup ────────────────────────────────────────────────────────────
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 
-from .models.database import init_db
 from .api.routes import router
+from .models.database import init_db
 from .utils.scheduler import start_scheduler
+
 try:
     from backtest.api import router as backtest_router
 except Exception as _e:
@@ -42,14 +46,15 @@ async def lifespan(app: FastAPI):
         await asyncio.wait_for(init_db(), timeout=30)
         try:
             from .services.analyst_tracker import init_default_analysts
+
             await init_default_analysts()
         except Exception as _ae:
             logger.warning(f"Analyst init skipped: {_ae}")
         logger.info("Starting background scheduler...")
         scheduler = start_scheduler()
-        # 預熱 TWSE 即時快取（讓 all_screener 啟動後立即有全市場資料）
         try:
             from backend.services.report_screener import _fetch_rt_cache
+
             asyncio.create_task(_fetch_rt_cache())
             logger.info("TWSE cache warm-up scheduled")
         except Exception as _ce:
@@ -88,7 +93,6 @@ if backtest_router:
 if quant_router:
     app.include_router(quant_router, prefix="/api")
 
-# 靜態報告圖片（選股表圖片由此 URL 提供給 LINE Image Message）
 _STATIC_REPORTS = os.path.join(os.getcwd(), "static", "reports")
 os.makedirs(_STATIC_REPORTS, exist_ok=True)
 app.mount("/static/reports", StaticFiles(directory=_STATIC_REPORTS), name="reports")
@@ -109,15 +113,14 @@ async def health_detail():
     return {"status": "ok", "version": "1.0.0"}
 
 
-# ── 全域例外處理（讓錯誤可見，不只是 500）────────────────────────────────────
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
-    logger.error(f"Unhandled: {request.url} → {exc}\n{traceback.format_exc()}")
+    logger.error(f"Unhandled: {request.url} - {exc}\n{traceback.format_exc()}")
     return JSONResponse(status_code=500, content={"error": str(exc)})
 
 
-# ── WebSocket 即時市場資料推送 ───────────────────────────────────────────────
 _ws_clients: list[WebSocket] = []
+
 
 @app.websocket("/ws/market")
 async def ws_market(ws: WebSocket):
@@ -127,6 +130,7 @@ async def ws_market(ws: WebSocket):
         while True:
             try:
                 from .services.twse_service import fetch_market_overview
+
                 ov = await fetch_market_overview()
                 if ov:
                     await ws.send_json({"type": "market", "data": ov})
@@ -140,9 +144,9 @@ async def ws_market(ws: WebSocket):
             _ws_clients.remove(ws)
 
 
-# ── LINE Bot webhook（失敗不影響主 app）──────────────────────────────────────
 try:
     from line_webhook.handler import router as _webhook_router
+
     app.include_router(_webhook_router)
     logger.info("LINE Bot webhook mounted at /webhook")
 except Exception as e:

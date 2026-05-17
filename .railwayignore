@@ -1,0 +1,11 @@
+*.db
+*.sqlite
+quant_feedback.json
+update_channel_ids.py
+test_*.py
+check_deploy.py
+__pycache__/
+.pytest_cache/
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/

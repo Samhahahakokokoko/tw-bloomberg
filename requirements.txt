@@ -1,10 +1,11 @@
+# -*- coding: utf-8 -*-
 # Backend - FastAPI
 fastapi==0.115.0
 uvicorn[standard]==0.30.6
 pydantic==2.9.2
 pydantic-settings==2.5.2
 
-# Database — SQLite (dev) + PostgreSQL (prod)
+# Database - SQLite (dev) + PostgreSQL (prod)
 sqlalchemy==2.0.35
 aiosqlite==0.20.0
 asyncpg==0.30.0
@@ -39,11 +40,10 @@ loguru==0.7.2
 pytz==2024.2
 python-dateutil==2.9.0
 pillow>=10.0.0
-# PIL 字型：fonts-noto-cjk 太大，改用系統預設字型（有 fallback）
 
-# Stock price — Yahoo Finance (歷史K線 / 調整後股價)
+# Stock price - Yahoo Finance
 yfinance>=0.2.40
 
-# Stock price — TradingView (歷史K線 + 技術指標，tvDatafeed 免登入版)
-# pip install git+https://github.com/rongardF/tvdatafeed
+# Stock price - TradingView history data
+git+https://github.com/rongardF/tvdatafeed.git
 websocket-client>=1.6.0

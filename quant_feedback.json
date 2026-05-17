@@ -1,0 +1,401 @@
+{
+  "records": [
+    {
+      "record_id": "rule_based_2330_20260428060431",
+      "stock_code": "2330",
+      "strategy": "rule_based",
+      "regime": "volatile",
+      "created_at": "2026-04-28T06:04:31.914459",
+      "total_return": 0.0,
+      "annual_return": 0.0,
+      "sharpe_ratio": 0.0,
+      "max_drawdown": 0.0,
+      "win_rate": 0.0,
+      "profit_factor": Infinity,
+      "n_trades": 0,
+      "avg_holding_days": 0.0,
+      "cost_impact_pct": 0.0,
+      "params": {
+        "stop_loss": 0.08,
+        "take_profit": 0.2,
+        "position_size": 0.95
+      }
+    },
+    {
+      "record_id": "ma_cross_2330_20260428060433",
+      "stock_code": "2330",
+      "strategy": "ma_cross",
+      "regime": "volatile",
+      "created_at": "2026-04-28T06:04:33.772641",
+      "total_return": 0.0,
+      "annual_return": 0.0,
+      "sharpe_ratio": 0.0,
+      "max_drawdown": 0.0,
+      "win_rate": 0.0,
+      "profit_factor": Infinity,
+      "n_trades": 0,
+      "avg_holding_days": 0.0,
+      "cost_impact_pct": 0.0,
+      "params": {
+        "stop_loss": 0.08,
+        "take_profit": null,
+        "position_size": 0.95
+      }
+    },
+    {
+      "record_id": "rsi_2330_20260428060435",
+      "stock_code": "2330",
+      "strategy": "rsi",
+      "regime": "volatile",
+      "created_at": "2026-04-28T06:04:35.494387",
+      "total_return": 0.0,
+      "annual_return": 0.0,
+      "sharpe_ratio": 0.0,
+      "max_drawdown": 0.0,
+      "win_rate": 0.0,
+      "profit_factor": Infinity,
+      "n_trades": 0,
+      "avg_holding_days": 0.0,
+      "cost_impact_pct": 0.0,
+      "params": {
+        "stop_loss": 0.08,
+        "take_profit": null,
+        "position_size": 0.95
+      }
+    },
+    {
+      "record_id": "macd_2330_20260428060437",
+      "stock_code": "2330",
+      "strategy": "macd",
+      "regime": "volatile",
+      "created_at": "2026-04-28T06:04:37.225215",
+      "total_return": 0.0,
+      "annual_return": 0.0,
+      "sharpe_ratio": 0.0,
+      "max_drawdown": 0.0,
+      "win_rate": 0.0,
+      "profit_factor": Infinity,
+      "n_trades": 0,
+      "avg_holding_days": 0.0,
+      "cost_impact_pct": 0.0,
+      "params": {
+        "stop_loss": 0.08,
+        "take_profit": null,
+        "position_size": 0.95
+      }
+    },
+    {
+      "record_id": "momentum_2330_20260428060438",
+      "stock_code": "2330",
+      "strategy": "momentum",
+      "regime": "volatile",
+      "created_at": "2026-04-28T06:04:38.607698",
+      "total_return": 0.0,
+      "annual_return": 0.0,
+      "sharpe_ratio": 0.0,
+      "max_drawdown": 0.0,
+      "win_rate": 0.0,
+      "profit_factor": Infinity,
+      "n_trades": 0,
+      "avg_holding_days": 0.0,
+      "cost_impact_pct": 0.0,
+      "params": {
+        "stop_loss": 0.08,
+        "take_profit": null,
+        "position_size": 0.95
+      }
+    },
+    {
+      "record_id": "rule_based_2330_20260428060638",
+      "stock_code": "2330",
+      "strategy": "rule_based",
+      "regime": "volatile",
+      "created_at": "2026-04-28T06:06:38.644274",
+      "total_return": 0.0,
+      "annual_return": 0.0,
+      "sharpe_ratio": 0.0,
+      "max_drawdown": 0.0,
+      "win_rate": 0.0,
+      "profit_factor": Infinity,
+      "n_trades": 0,
+      "avg_holding_days": 0.0,
+      "cost_impact_pct": 0.0,
+      "params": {
+        "stop_loss": 0.08,
+        "take_profit": 0.2,
+        "position_size": 0.95
+      }
+    },
+    {
+      "record_id": "ma_cross_2330_20260428060640",
+      "stock_code": "2330",
+      "strategy": "ma_cross",
+      "regime": "volatile",
+      "created_at": "2026-04-28T06:06:40.428743",
+      "total_return": 0.0,
+      "annual_return": 0.0,
+      "sharpe_ratio": 0.0,
+      "max_drawdown": 0.0,
+      "win_rate": 0.0,
+      "profit_factor": Infinity,
+      "n_trades": 0,
+      "avg_holding_days": 0.0,
+      "cost_impact_pct": 0.0,
+      "params": {
+        "stop_loss": 0.08,
+        "take_profit": null,
+        "position_size": 0.95
+      }
+    },
+    {
+      "record_id": "rsi_2330_20260428060642",
+      "stock_code": "2330",
+      "strategy": "rsi",
+      "regime": "volatile",
+      "created_at": "2026-04-28T06:06:42.235346",
+      "total_return": 0.0,
+      "annual_return": 0.0,
+      "sharpe_ratio": 0.0,
+      "max_drawdown": 0.0,
+      "win_rate": 0.0,
+      "profit_factor": Infinity,
+      "n_trades": 0,
+      "avg_holding_days": 0.0,
+      "cost_impact_pct": 0.0,
+      "params": {
+        "stop_loss": 0.08,
+        "take_profit": null,
+        "position_size": 0.95
+      }
+    },
+    {
+      "record_id": "macd_2330_20260428060643",
+      "stock_code": "2330",
+      "strategy": "macd",
+      "regime": "volatile",
+      "created_at": "2026-04-28T06:06:43.956715",
+      "total_return": 0.0,
+      "annual_return": 0.0,
+      "sharpe_ratio": 0.0,
+      "max_drawdown": 0.0,
+      "win_rate": 0.0,
+      "profit_factor": Infinity,
+      "n_trades": 0,
+      "avg_holding_days": 0.0,
+      "cost_impact_pct": 0.0,
+      "params": {
+        "stop_loss": 0.08,
+        "take_profit": null,
+        "position_size": 0.95
+      }
+    },
+    {
+      "record_id": "momentum_2330_20260428060645",
+      "stock_code": "2330",
+      "strategy": "momentum",
+      "regime": "volatile",
+      "created_at": "2026-04-28T06:06:45.723442",
+      "total_return": 0.0,
+      "annual_return": 0.0,
+      "sharpe_ratio": 0.0,
+      "max_drawdown": 0.0,
+      "win_rate": 0.0,
+      "profit_factor": Infinity,
+      "n_trades": 0,
+      "avg_holding_days": 0.0,
+      "cost_impact_pct": 0.0,
+      "params": {
+        "stop_loss": 0.08,
+        "take_profit": null,
+        "position_size": 0.95
+      }
+    },
+    {
+      "record_id": "bollinger_2330_20260428060647",
+      "stock_code": "2330",
+      "strategy": "bollinger",
+      "regime": "volatile",
+      "created_at": "2026-04-28T06:06:47.397969",
+      "total_return": 0.0,
+      "annual_return": 0.0,
+      "sharpe_ratio": 0.0,
+      "max_drawdown": 0.0,
+      "win_rate": 0.0,
+      "profit_factor": Infinity,
+      "n_trades": 0,
+      "avg_holding_days": 0.0,
+      "cost_impact_pct": 0.0,
+      "params": {
+        "stop_loss": 0.08,
+        "take_profit": null,
+        "position_size": 0.95
+      }
+    },
+    {
+      "record_id": "rule_based_2330_20260428061155",
+      "stock_code": "2330",
+      "strategy": "rule_based",
+      "regime": "bear",
+      "created_at": "2026-04-28T06:11:55.848098",
+      "total_return": -0.0947,
+      "annual_return": -0.0802,
+      "sharpe_ratio": -1.9875,
+      "max_drawdown": 0.0947,
+      "win_rate": 0.0,
+      "profit_factor": 0.0,
+      "n_trades": 4,
+      "avg_holding_days": 5.5,
+      "cost_impact_pct": 0.0195,
+      "params": {
+        "stop_loss": 0.08,
+        "take_profit": 0.2,
+        "position_size": 0.95
+      }
+    },
+    {
+      "record_id": "bollinger_2330_20260428061400",
+      "stock_code": "2330",
+      "strategy": "bollinger",
+      "regime": "volatile",
+      "created_at": "2026-04-28T06:14:00.804311",
+      "total_return": 0.0,
+      "annual_return": 0.0,
+      "sharpe_ratio": 0.0,
+      "max_drawdown": 0.0,
+      "win_rate": 0.0,
+      "profit_factor": Infinity,
+      "n_trades": 0,
+      "avg_holding_days": 0.0,
+      "cost_impact_pct": 0.0,
+      "params": {
+        "stop_loss": 0.08,
+        "take_profit": null,
+        "position_size": 0.95
+      }
+    },
+    {
+      "record_id": "ma_cross_2330_20260428061938",
+      "stock_code": "2330",
+      "strategy": "ma_cross",
+      "regime": "bull",
+      "created_at": "2026-04-28T06:19:38.096597",
+      "total_return": -0.236,
+      "annual_return": -0.156,
+      "sharpe_ratio": -1.5936,
+      "max_drawdown": 0.2965,
+      "win_rate": 0.1765,
+      "profit_factor": 0.2006,
+      "n_trades": 17,
+      "avg_holding_days": 9.0,
+      "cost_impact_pct": 0.0717,
+      "params": {
+        "stop_loss": 0.08,
+        "take_profit": null,
+        "position_size": 0.95
+      }
+    },
+    {
+      "record_id": "rsi_2330_20260428061938",
+      "stock_code": "2330",
+      "strategy": "rsi",
+      "regime": "bull",
+      "created_at": "2026-04-28T06:19:38.097631",
+      "total_return": -0.2163,
+      "annual_return": -0.1437,
+      "sharpe_ratio": -1.3125,
+      "max_drawdown": 0.306,
+      "win_rate": 0.2,
+      "profit_factor": 0.1947,
+      "n_trades": 5,
+      "avg_holding_days": 32.6,
+      "cost_impact_pct": 0.0212,
+      "params": {
+        "stop_loss": 0.08,
+        "take_profit": null,
+        "position_size": 0.95
+      }
+    },
+    {
+      "record_id": "macd_2330_20260428061938",
+      "stock_code": "2330",
+      "strategy": "macd",
+      "regime": "bull",
+      "created_at": "2026-04-28T06:19:38.099623",
+      "total_return": -0.3684,
+      "annual_return": -0.2546,
+      "sharpe_ratio": -1.6071,
+      "max_drawdown": 0.4393,
+      "win_rate": 0.1111,
+      "profit_factor": 0.1313,
+      "n_trades": 9,
+      "avg_holding_days": 36.1,
+      "cost_impact_pct": 0.0347,
+      "params": {
+        "stop_loss": 0.08,
+        "take_profit": null,
+        "position_size": 0.95
+      }
+    },
+    {
+      "record_id": "momentum_2330_20260428061938",
+      "stock_code": "2330",
+      "strategy": "momentum",
+      "regime": "bull",
+      "created_at": "2026-04-28T06:19:38.101592",
+      "total_return": -0.1741,
+      "annual_return": -0.1136,
+      "sharpe_ratio": -1.1244,
+      "max_drawdown": 0.2507,
+      "win_rate": 0.1667,
+      "profit_factor": 0.3886,
+      "n_trades": 18,
+      "avg_holding_days": 8.8,
+      "cost_impact_pct": 0.0809,
+      "params": {
+        "stop_loss": 0.08,
+        "take_profit": null,
+        "position_size": 0.95
+      }
+    },
+    {
+      "record_id": "bollinger_2330_20260428061938",
+      "stock_code": "2330",
+      "strategy": "bollinger",
+      "regime": "bull",
+      "created_at": "2026-04-28T06:19:38.102615",
+      "total_return": -0.0575,
+      "annual_return": -0.0368,
+      "sharpe_ratio": -0.3796,
+      "max_drawdown": 0.2313,
+      "win_rate": 0.5556,
+      "profit_factor": 0.7671,
+      "n_trades": 9,
+      "avg_holding_days": 25.2,
+      "cost_impact_pct": 0.0454,
+      "params": {
+        "stop_loss": 0.08,
+        "take_profit": null,
+        "position_size": 0.95
+      }
+    }
+  ],
+  "strategy_weights": {
+    "ma_cross": 1.0,
+    "rsi": 1.0,
+    "macd": 1.0,
+    "kd": 1.0,
+    "bollinger": 1.0,
+    "pvd": 1.0,
+    "institutional": 1.0,
+    "momentum": 1.0,
+    "mean_reversion": 1.0,
+    "defensive": 1.0
+  },
+  "alpha_weights": {
+    "trend": 1.0,
+    "momentum": 1.0,
+    "volume": 1.0,
+    "chip": 1.0
+  },
+  "saved_at": "2026-04-28T06:19:38.103581"
+}
