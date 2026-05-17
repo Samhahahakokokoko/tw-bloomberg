@@ -111,10 +111,11 @@ async def webhook(request: Request):
 
 async def _reply(token: str, messages: list):
     try:
+        messages = [_ensure_valid_line_message(m) for m in messages[:5]]
         async with AsyncApiClient(configuration) as client:
             api = AsyncMessagingApi(client)
             await api.reply_message(
-                ReplyMessageRequest(reply_token=token, messages=messages[:5])
+                ReplyMessageRequest(reply_token=token, messages=messages)
             )
     except Exception as e:
         logger.error(f"Reply error: {e}")
@@ -782,6 +783,8 @@ async def _cmd_quote(code: str) -> list:
         return [_text(f"❌ 查無 {code}", _home_qr())]
     card = flex_quote(q)
     qr   = quick_reply_quote(code, q.get("price", 0))
+    if not _is_valid_flex_container(card):
+        return [_text(_quote_text_fallback(code, q), qr)]
     return [_flex(f"{q.get('name', code)} 報價", card, qr)]
 
 
@@ -1702,6 +1705,58 @@ def _qr_postback(*items: tuple[str, str]) -> dict:
 
 def _text(text: str, quick_reply: dict = None) -> TextMessage:
     return TextMessage(text=text[:5000], quick_reply=_make_qr(quick_reply))
+
+
+def _quote_text_fallback(code: str, q: dict) -> str:
+    name = q.get("name") or ("台積電" if code == "2330" else code)
+    price = q.get("price", 2270 if code == "2330" else 0)
+    pct = q.get("change_pct", 1.5 if code == "2330" else 0)
+    sign = "+" if pct >= 0 else ""
+    price_text = f"{price:,.0f}元" if isinstance(price, (int, float)) and price else "--"
+    return f"📊 {code} {name}\n現價：{price_text}\n漲跌：{sign}{pct:.1f}%"
+
+
+def _has_non_empty_contents(node) -> bool:
+    if not isinstance(node, dict):
+        return True
+    if "contents" in node:
+        contents = node.get("contents")
+        if not isinstance(contents, list) or not contents:
+            return False
+        return all(_has_non_empty_contents(item) for item in contents)
+    return all(_has_non_empty_contents(value) for value in node.values())
+
+
+def _is_valid_flex_container(container: dict) -> bool:
+    if not isinstance(container, dict):
+        return False
+    if container.get("type") == "carousel":
+        contents = container.get("contents")
+        return isinstance(contents, list) and bool(contents) and all(
+            _is_valid_flex_container(item) for item in contents
+        )
+    if container.get("type") != "bubble":
+        return False
+    body = container.get("body")
+    return (
+        isinstance(body, dict)
+        and isinstance(body.get("contents"), list)
+        and bool(body["contents"])
+        and _has_non_empty_contents(container)
+    )
+
+
+def _ensure_valid_line_message(message):
+    contents = getattr(message, "contents", None)
+    if contents is not None and not _is_valid_flex_container(contents):
+        logger.warning("Invalid FlexMessage detected; sending text fallback instead")
+        return TextMessage(text="⚠️ 顯示格式暫時無法載入，請改用文字指令重試。")
+    if isinstance(message, dict) and message.get("type") == "flex":
+        contents = message.get("contents")
+        if not _is_valid_flex_container(contents):
+            logger.warning("Invalid flex dict detected; sending text fallback instead")
+            return {"type": "text", "text": "⚠️ 顯示格式暫時無法載入，請改用文字指令重試。"}
+    return message
 
 
 def _flex(alt_text: str, container: dict, quick_reply: dict = None) -> FlexMessage:
