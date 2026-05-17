@@ -15,6 +15,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 # tvDatafeed 只在 GitHub（不在 PyPI），需單獨安裝
 RUN pip install --no-cache-dir "git+https://github.com/rongardF/tvdatafeed.git"
 
+ARG CACHEBUST=1
 COPY . .
 
 RUN mkdir -p data
