@@ -477,7 +477,7 @@ async def _handle_text(text: str, uid: str) -> list:
         if arg.isdigit() and 4 <= len(arg) <= 6:
             return await _cmd_ai_stock(arg)
         return [await _cmd_ai_ask(" ".join(parts[1:]), uid)]
-    if cmd in ("/news", "/news_guide"):         return [_news_guide()]
+    if cmd in ("/news", "/news_guide"):         return await _cmd_news_feed(uid)
     if cmd == "/n":                             return await _cmd_news_feed(uid)
     if cmd == "/p":                             return await _cmd_portfolio(uid)
     if cmd == "/r":                             return [_flex_screen_menu()]
@@ -791,11 +791,26 @@ async def _cmd_quote(code: str) -> list:
         text = f"📊 {code} {name}\n現價：{price}元\n漲跌：{sign}{abs(change_pct):.2f}%"
         return [TextMessage(text=text)]
     except Exception as e:
-        return [TextMessage(text=f"查詢失敗：{str(e)}")]
+        return [TextMessage(text="功能暫時無法使用，請稍後再試")]
 
 
 async def _cmd_market() -> list:
-    return await _cmd_market_card(None)
+    try:
+        ov = await fetch_market_overview()
+        if not ov:
+            return [TextMessage(text="功能暫時無法使用，請稍後再試")]
+        value = ov.get("value", ov.get("index", 0))
+        change = ov.get("change", 0)
+        pct = ov.get("change_pct", 0)
+        sign = "+" if change >= 0 else "-"
+        text = (
+            "📊 台股大盤行情\n"
+            f"加權指數：{value:,.2f}\n"
+            f"漲跌：{sign}{abs(change):.2f}點 ({sign}{abs(pct):.2f}%)"
+        )
+        return [TextMessage(text=text)]
+    except Exception:
+        return [TextMessage(text="功能暫時無法使用，請稍後再試")]
 
 
 async def _cmd_market_card(uid) -> list:
@@ -839,16 +854,24 @@ async def _cmd_market_card(uid) -> list:
 
 
 async def _cmd_portfolio(uid: str) -> list:
-    async with AsyncSessionLocal() as db:
-        holdings = await portfolio_service.get_portfolio(db, uid)
-    if not holdings:
-        return [_text(
-            "📂 庫存為空\n\n輸入 /buy 代碼 股數 成本 新增持股\n例：/buy 2330 1000 850",
-            qr_items(("➕ 新增示範", "/buy 2330 1000 850"), ("📊 大盤", "/market"))
-        )]
-    carousel = flex_portfolio_carousel(holdings)
-    qr       = quick_reply_portfolio()
-    return [_flex("我的庫存", carousel, qr)]
+    try:
+        async with AsyncSessionLocal() as db:
+            holdings = await portfolio_service.get_portfolio(db, uid)
+        if not holdings:
+            return [TextMessage(text="📂 庫存為空\n輸入 /buy 代碼 股數 成本 新增持股")]
+        total_mv = sum(h.get("market_value", 0) or 0 for h in holdings)
+        total_pnl = sum(h.get("pnl", 0) or 0 for h in holdings)
+        lines = [f"💼 我的庫存\n總市值：{total_mv:,.0f}元\n總損益：{total_pnl:+,.0f}元"]
+        for h in holdings[:10]:
+            lines.append(
+                f"\n{h.get('stock_code', '')} {h.get('stock_name', '')}\n"
+                f"股數：{h.get('shares', 0):,}\n"
+                f"現價：{h.get('current_price', 0):,.2f}\n"
+                f"損益：{h.get('pnl', 0):+,.0f} ({h.get('pnl_pct', 0):+.1f}%)"
+            )
+        return [TextMessage(text="\n".join(lines)[:5000])]
+    except Exception:
+        return [TextMessage(text="功能暫時無法使用，請稍後再試")]
 
 
 async def _cmd_buy(code: str, shares_str: str, cost_str: str, uid: str) -> list:
@@ -1106,14 +1129,14 @@ async def _cmd_rec_full(uid: str, reply_token: str):
 
 async def _cmd_ai_ask(question: str, uid: str = "") -> TextMessage:
     if not settings.anthropic_api_key:
-        return _text("❌ 未設定 API Key")
+        return TextMessage(text="功能暫時無法使用，請稍後再試")
     try:
         # 1. 找相似舊答案
         if uid:
             async with AsyncSessionLocal() as db:
                 cached = await find_similar_answer(db, uid, question)
             if cached:
-                return _text(f"（3天內的分析）\n{cached}\n\n輸入問題重新查詢可獲得最新分析", _home_qr())
+                return TextMessage(text=f"（3天內的分析）\n{cached}"[:5000])
 
         # 2. 帶入用戶背景
         user_context = ""
@@ -1140,9 +1163,9 @@ async def _cmd_ai_ask(question: str, uid: str = "") -> TextMessage:
             async with AsyncSessionLocal() as db:
                 await save_query(db, uid, question, answer)
 
-        return _text(answer, _home_qr())
+        return TextMessage(text=answer[:5000])
     except Exception as e:
-        return _text(f"❌ AI 錯誤：{e}")
+        return TextMessage(text="功能暫時無法使用，請稍後再試")
 
 
 async def _cmd_ai_portfolio(uid: str) -> TextMessage:
@@ -1228,13 +1251,9 @@ async def _cmd_ai_stock(stock_code: str) -> list:
         text     = analysis
         if alerts:
             text += "\n\n⚡ 即時訊號\n" + "\n".join(alerts)
-        return [_text(text[:4800], qr_items(
-            ("📈 報價",   f"/quote {stock_code}"),
-            ("🏛 分點",   f"/broker {stock_code}"),
-            ("💼 庫存",   "/portfolio"),
-        ))]
+        return [TextMessage(text=text[:5000])]
     except Exception as e:
-        return [_text(f"❌ 個股分析失敗：{e}")]
+        return [TextMessage(text="功能暫時無法使用，請稍後再試")]
 
 
 async def _cmd_accuracy() -> list:
@@ -1584,10 +1603,8 @@ async def _cmd_news_feed(uid: str) -> list:
         news = await get_recent_news(limit=6)
         msg  = format_news_for_line(news)
     except Exception:
-        msg = "📰 今日暫無新聞"
-    return [_text(msg, qr_items(
-        ("🔄 更新", "/n"), ("🤖 AI簡評", "/ai 今日台股氣氛"), ("📊 大盤", "/market"),
-    ))]
+        return [TextMessage(text="功能暫時無法使用，請稍後再試")]
+    return [TextMessage(text=msg[:5000])]
 
 
 def _ai_guide() -> TextMessage:
@@ -1999,15 +2016,12 @@ async def _cmd_daily(uid: str) -> list:
     try:
         from quant.decision_engine import DecisionEngine
         daily = await asyncio.wait_for(DecisionEngine().run(uid), timeout=25)
-        return [_text(daily.format_line(),
-                      qr_items(("🔍 動能股", "/movers"), ("🛡 持倉健康", "/overlay"), ("💼 庫存", "/p")))]
+        return [TextMessage(text=daily.format_line()[:5000])]
     except asyncio.TimeoutError:
-        return [_text("⏱ 決策引擎資料載入中，請 30 秒後再試 /daily",
-                      qr_items(("🔍 動能股", "/movers"), ("💼 庫存", "/p")))]
+        return [TextMessage(text="功能暫時無法使用，請稍後再試")]
     except Exception as e:
         logger.error("[daily] %s", e, exc_info=True)
-        return [_text(f"❌ 決策報告失敗：{type(e).__name__}: {e}",
-                      qr_items(("💼 庫存", "/p")))]
+        return [TextMessage(text="功能暫時無法使用，請稍後再試")]
 
 
 async def _daily_bg(uid: str) -> None:
@@ -2079,15 +2093,10 @@ async def _cmd_overlay(uid: str) -> list:
         overlay  = PortfolioOverlay()
         signals  = await overlay.scan(uid)
         report   = overlay.format_report(signals)
-        return [_text(report, qr_items(
-            ("📋 決策報告", "/daily"),
-            ("💼 庫存",     "/p"),
-            ("🔍 動能股",   "/movers"),
-        ))]
+        return [TextMessage(text=report[:5000])]
     except Exception as e:
         logger.error("[overlay] %s", e)
-        return [_text(f"❌ 持倉健康檢查失敗：{e}",
-                      qr_items(("💼 庫存", "/p")))]
+        return [TextMessage(text="功能暫時無法使用，請稍後再試")]
 
 
 async def _cmd_research(code: str, uid: str) -> list:
@@ -2648,19 +2657,11 @@ async def _cmd_risk_report(uid: str) -> list:
             f"市場狀態：{market_note}，建議持股 {hold_pct}%",
         ]
 
-        return [_text(
-            "\n".join(lines),
-            qr_items(
-                ("查看優化建議", "/risk_optimize"),
-                ("📐 相關性",    "/correlation"),
-                ("💼 庫存",      "/p"),
-            ),
-        )]
+        return [TextMessage(text="\n".join(lines)[:5000])]
 
     except Exception as e:
         logger.error("[risk_report] %s", e)
-        return [_text(f"❌ 風控分析失敗：{e}",
-                      qr_items(("💼 庫存", "/p")))]
+        return [TextMessage(text="功能暫時無法使用，請稍後再試")]
 
 
 async def _risk_optimize_bg(uid: str) -> None:
@@ -2785,27 +2786,22 @@ async def _cmd_strategy_preset(preset: str, uid: str) -> list:
 
 async def _cmd_report(screen_type: str, uid: str, sector: str = "") -> list:
     """/report [type] — 同步選股並 reply（不用 push）"""
-    import asyncio, os
+    import asyncio
     from backend.services.report_screener import async_run_screener, paginate, get_label
-    from backend.services.generate_report_image import generate_report_image
     from backend.services.report_tracker import batch_record
 
-    qr = qr_items(
-        ("動能", "/report momentum"), ("存股", "/report value"),
-        ("籌碼", "/report chip"),     ("突破", "/report breakout"),
-    )
     label = get_label(screen_type, sector)
     try:
         rows = await asyncio.wait_for(
             async_run_screener(screen_type, sector=sector), timeout=22)
     except asyncio.TimeoutError:
-        return [_text(f"⏱ 選股資料載入中，請稍後再試 /report {screen_type}", qr)]
+        return [TextMessage(text="功能暫時無法使用，請稍後再試")]
     except Exception as e:
         logger.error("[report] %s", e)
-        return [_text(f"❌ 選股失敗：{type(e).__name__}", qr)]
+        return [TextMessage(text="功能暫時無法使用，請稍後再試")]
 
     if not rows:
-        return [_text("⚠️ 目前無法取得 TWSE 即時資料（非交易時間或 API 異常），請稍後再試。", qr)]
+        return [TextMessage(text="📊 選股列表\n目前沒有符合條件的股票")]
 
     page_rows, total_pages = paginate(rows, 1)
     _report_pages[uid] = {"rows": rows, "page": 1, "total_pages": total_pages,
@@ -2815,45 +2811,22 @@ async def _cmd_report(screen_type: str, uid: str, sector: str = "") -> list:
     except Exception:
         pass
 
-    msgs = []
-    base_url = os.getenv("BASE_URL", "")
-    if base_url:
-        try:
-            path = generate_report_image(
-                stocks=page_rows, group=label,
-                market_state=os.getenv("MARKET_STATE", "unknown"),
-                page=1, total_pages=total_pages,
-            )
-            image_url = f"{base_url.rstrip('/')}/static/reports/{path.name}"
-            msgs.append({"type": "image",
-                         "originalContentUrl": image_url,
-                         "previewImageUrl":    image_url})
-        except Exception:
-            msgs.append(_build_text_fallback(page_rows, label, 1, total_pages))
-    else:
-        msgs.append(_build_text_fallback(page_rows, label, 1, total_pages))
-
-    msgs.append(_build_stock_list_msg(page_rows, label, 1, total_pages, screen_type))
-    return msgs[:5]
+    return [_build_stock_list_msg(page_rows, label, 1, total_pages, screen_type)]
 
 
 async def _cmd_report_page(uid: str, delta: int = 0, go_to: int = 0) -> list:
     """/report next 或 /report page N — 分頁翻頁（同步 reply）"""
-    import os
     from backend.services.report_screener import paginate, get_label
-    from backend.services.generate_report_image import generate_report_image
 
     cache = _report_pages.get(uid)
     if not cache:
-        return [_text("沒有進行中的選股，請先輸入 /report [類型]",
-                      qr_items(("選單", "/screen")))]
+        return [TextMessage(text="沒有進行中的選股，請先輸入 /report")]
     current = cache["page"]
     total_p = cache["total_pages"]
     next_p  = go_to if go_to > 0 else current + delta
     next_p  = max(1, min(next_p, total_p))
     if next_p == current and delta != 0:
-        return [_text(f"已是最{'後' if delta > 0 else '前'}一頁（第 {current}/{total_p} 頁）",
-                      qr_items(("重新選股", "/screen")))]
+        return [TextMessage(text=f"已是最{'後' if delta > 0 else '前'}一頁（第 {current}/{total_p} 頁）")]
 
     rows        = cache["rows"]
     screen_type = cache["screen_type"]
@@ -2861,27 +2834,7 @@ async def _cmd_report_page(uid: str, delta: int = 0, go_to: int = 0) -> list:
     label       = get_label(screen_type, sector)
     page_rows, _ = paginate(rows, next_p)
     _report_pages[uid]["page"] = next_p
-
-    msgs = []
-    base_url = os.getenv("BASE_URL", "")
-    if base_url:
-        try:
-            path = generate_report_image(
-                stocks=page_rows, group=label,
-                market_state=os.getenv("MARKET_STATE","unknown"),
-                page=next_p, total_pages=total_p,
-            )
-            image_url = f"{base_url.rstrip('/')}/static/reports/{path.name}"
-            msgs.append({"type": "image",
-                         "originalContentUrl": image_url,
-                         "previewImageUrl":    image_url})
-        except Exception:
-            msgs.append(_build_text_fallback(page_rows, label, next_p, total_p))
-    else:
-        msgs.append(_build_text_fallback(page_rows, label, next_p, total_p))
-
-    msgs.append(_build_stock_list_msg(page_rows, label, next_p, total_p, screen_type))
-    return msgs[:5]
+    return [_build_stock_list_msg(page_rows, label, next_p, total_p, screen_type)]
 
 
 async def _report_bg(
@@ -2968,8 +2921,8 @@ def _build_text_fallback(rows, label: str, page: int, total: int) -> TextMessage
 
 def _build_stock_list_msg(
     rows: list, label: str, page: int, total_pages: int, screen_type: str,
-) -> dict:
-    """文字股票列表 + 翻頁 + 個股分析 Quick Reply 按鈕"""
+) -> TextMessage:
+    """文字股票列表。"""
     lines = [f"📊 {label}  第{page}/{total_pages}頁", "─" * 18]
     for i, r in enumerate(rows[:10], 1):
         arrow = "▲" if r.change_pct > 0 else ("▼" if r.change_pct < 0 else "─")
@@ -2980,44 +2933,7 @@ def _build_stock_list_msg(
             f"   {close_str}元  AI{r.confidence:.0f}分  {arrow}{sign}{r.change_pct:.1f}%"
         )
 
-    qr_list = []
-    if page > 1:
-        qr_list.append({
-            "type": "action",
-            "action": {"type": "postback", "label": "⬅️ 上一頁",
-                       "data": "act=report_prev", "displayText": "上一頁"},
-        })
-    if page < total_pages:
-        qr_list.append({
-            "type": "action",
-            "action": {"type": "postback", "label": "➡️ 下一頁",
-                       "data": "act=report_next", "displayText": "下一頁"},
-        })
-    qr_list.append({
-        "type": "action",
-        "action": {"type": "postback", "label": "🔄 換策略",
-                   "data": "act=screener_qr", "displayText": "換策略"},
-    })
-    qr_list.append({
-        "type": "action",
-        "action": {"type": "postback", "label": "🏠 主選單",
-                   "data": "act=market_card", "displayText": "主選單"},
-    })
-    for r in rows[:4]:
-        qr_list.append({
-            "type": "action",
-            "action": {
-                "type": "postback",
-                "label": f"🔍{r.stock_id}",
-                "data": f"act=recommend_detail&code={r.stock_id}",
-                "displayText": f"分析 {r.stock_id}",
-            },
-        })
-
-    return TextMessage(
-        text="\n".join(lines)[:4800],
-        quick_reply=_make_qr({"items": qr_list[:13]}),
-    )
+    return TextMessage(text="\n".join(lines)[:5000])
 
 
 async def _cmd_custom_screen(conditions: str, uid: str) -> list:
@@ -3881,14 +3797,10 @@ async def _cmd_analyst_today() -> list:
         await init_default_analysts()
         clist = await calculate_daily_consensus_with_alpha()
         text  = await _format_consensus_report(clist)
-        return [_text(text, _qr_postback(
-            ("📊 熱度圖",    "consensus"),
-            ("🏆 分析師排行", "act=analyst_ranking"),
-            ("📈 今日選股",  "act=screener_qr"),
-        ))]
+        return [TextMessage(text=text[:5000])]
     except Exception as e:
         logger.error(f"[analyst_today] {e}")
-        return [_text(f"❌ 共識報告讀取失敗：{type(e).__name__}")]
+        return [TextMessage(text="功能暫時無法使用，請稍後再試")]
 
 
 async def _cmd_analyst_list() -> list:
