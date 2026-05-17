@@ -778,14 +778,20 @@ def _any_kw(text: str, keywords: tuple) -> bool:
 # ── 各指令實作 ────────────────────────────────────────────────────────────────
 
 async def _cmd_quote(code: str) -> list:
-    q = await fetch_realtime_quote(code)
-    if not q:
-        return [_text(f"❌ 查無 {code}", _home_qr())]
-    card = flex_quote(q)
-    qr   = quick_reply_quote(code, q.get("price", 0))
-    if not _is_valid_flex_container(card):
-        return [_text(_quote_text_fallback(code, q), qr)]
-    return [_flex(f"{q.get('name', code)} 報價", card, qr)]
+    try:
+        quote = await fetch_realtime_quote(code)
+        if not quote:
+            return [TextMessage(text=f"查無 {code} 報價")]
+
+        name = quote.get("name", code)
+        price = quote.get("close", quote.get("price", 0))
+        change = quote.get("change", 0)
+        change_pct = quote.get("change_pct", 0)
+        sign = "+" if change >= 0 else "-"
+        text = f"📊 {code} {name}\n現價：{price}元\n漲跌：{sign}{abs(change_pct):.2f}%"
+        return [TextMessage(text=text)]
+    except Exception as e:
+        return [TextMessage(text=f"查詢失敗：{str(e)}")]
 
 
 async def _cmd_market() -> list:
