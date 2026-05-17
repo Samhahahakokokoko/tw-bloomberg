@@ -1,6 +1,7 @@
 """LINE Bot Webhook — 多用戶 · Flex · Quick Reply · Postback · 策略推薦"""
 import re
 import sys, os, urllib.parse
+import httpx
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from fastapi import APIRouter, Request, HTTPException
@@ -110,25 +111,45 @@ async def webhook(request: Request):
 
 
 async def _reply(token: str, messages: list):
+    """Reply through LINE HTTP API with text-only payloads.
+
+    The LINE SDK model serializer has repeatedly produced invalid Flex payloads
+    in production.  Normalize every reply to raw text JSON at the final boundary
+    so command handlers cannot accidentally send an empty Flex body.
+    """
+    payload_messages = [_to_line_text_payload(m) for m in (messages or [])[:5]]
+    payload_messages = [m for m in payload_messages if m.get("text", "").strip()]
+    if not payload_messages:
+        payload_messages = [{"type": "text", "text": "功能暫時無法使用，請稍後再試"}]
+
     try:
-        messages = [_ensure_valid_line_message(m) for m in messages[:5]]
-        async with AsyncApiClient(configuration) as client:
-            api = AsyncMessagingApi(client)
-            await api.reply_message(
-                ReplyMessageRequest(reply_token=token, messages=messages)
+        headers = {
+            "Authorization": f"Bearer {settings.line_channel_access_token}",
+            "Content-Type": "application/json",
+        }
+        payload = {"replyToken": token, "messages": payload_messages}
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.post(
+                "https://api.line.me/v2/bot/message/reply",
+                headers=headers,
+                json=payload,
             )
+        if resp.status_code >= 400:
+            logger.error(f"Reply error: {resp.status_code} {resp.text}")
     except Exception as e:
         logger.error(f"Reply error: {e}")
-        # Flex 失敗時嘗試純文字 fallback（token 只能用一次，但失敗時未消耗）
-        try:
-            fallback = TextMessage(text="⚠️ 顯示失敗，請重試或輸入 /help")
-            async with AsyncApiClient(configuration) as client:
-                api = AsyncMessagingApi(client)
-                await api.reply_message(
-                    ReplyMessageRequest(reply_token=token, messages=[fallback])
-                )
-        except Exception:
-            pass
+
+
+def _to_line_text_payload(message) -> dict:
+    if isinstance(message, dict):
+        text = message.get("text") or message.get("altText") or message.get("alt_text")
+    else:
+        text = getattr(message, "text", None) or getattr(message, "alt_text", None)
+
+    if not text:
+        text = "功能暫時無法使用，請稍後再試"
+
+    return {"type": "text", "text": str(text)[:5000]}
 
 
 # ── Postback 處理 ─────────────────────────────────────────────────────────────
