@@ -79,14 +79,14 @@ async def webhook(request: Request):
                 text = event.message.text.strip()
                 logger.info(f"[{uid[:8]}] text: {text!r}")
                 msgs = await _handle_text(text, uid)
-                await _reply(event.reply_token, msgs)
+                await _reply(event, *msgs)
 
             elif isinstance(event, PostbackEvent):
                 uid  = event.source.user_id
                 data = event.postback.data
                 logger.info(f"[{uid[:8]}] postback: {data!r}")
                 msgs = await _handle_postback(data, uid)
-                await _reply(event.reply_token, msgs)
+                await _reply(event, *msgs)
 
             else:
                 logger.info(f"Ignored event type: {type(event).__name__}")
@@ -110,46 +110,37 @@ async def webhook(request: Request):
     return "OK"
 
 
-async def _reply(token: str, messages: list):
-    """Reply through LINE HTTP API with text-only payloads.
-
-    The LINE SDK model serializer has repeatedly produced invalid Flex payloads
-    in production.  Normalize every reply to raw text JSON at the final boundary
-    so command handlers cannot accidentally send an empty Flex body.
-    """
-    payload_messages = [_to_line_text_payload(m) for m in (messages or [])[:5]]
-    payload_messages = [m for m in payload_messages if m.get("text", "").strip()]
-    if not payload_messages:
-        payload_messages = [{"type": "text", "text": "功能暫時無法使用，請稍後再試"}]
-
+async def _reply(event, *messages):
     try:
-        headers = {
-            "Authorization": f"Bearer {settings.line_channel_access_token}",
-            "Content-Type": "application/json",
-        }
-        payload = {"replyToken": token, "messages": payload_messages}
-        async with httpx.AsyncClient(timeout=10) as client:
+        reply_token = event.reply_token
+        text_messages = []
+        for msg in messages:
+            if hasattr(msg, "text"):
+                text_messages.append({"type": "text", "text": str(msg.text)})
+            elif isinstance(msg, str):
+                text_messages.append({"type": "text", "text": msg})
+            else:
+                text_messages.append({"type": "text", "text": str(msg)})
+
+        if not text_messages:
+            text_messages.append({"type": "text", "text": "功能暫時無法使用，請稍後再試"})
+
+        async with httpx.AsyncClient() as client:
             resp = await client.post(
                 "https://api.line.me/v2/bot/message/reply",
-                headers=headers,
-                json=payload,
+                headers={
+                    "Authorization": f"Bearer {settings.line_channel_access_token}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "replyToken": reply_token,
+                    "messages": text_messages[:5],
+                },
             )
-        if resp.status_code >= 400:
-            logger.error(f"Reply error: {resp.status_code} {resp.text}")
+            if resp.status_code != 200:
+                logger.error(f"Reply error: {resp.status_code} {resp.text}")
     except Exception as e:
-        logger.error(f"Reply error: {e}")
-
-
-def _to_line_text_payload(message) -> dict:
-    if isinstance(message, dict):
-        text = message.get("text") or message.get("altText") or message.get("alt_text")
-    else:
-        text = getattr(message, "text", None) or getattr(message, "alt_text", None)
-
-    if not text:
-        text = "功能暫時無法使用，請稍後再試"
-
-    return {"type": "text", "text": str(text)[:5000]}
+        logger.error(f"Reply exception: {e}")
 
 
 # ── Postback 處理 ─────────────────────────────────────────────────────────────
