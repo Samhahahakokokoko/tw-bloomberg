@@ -14,7 +14,7 @@ async def run(stock_id: str = "", sector: str = "") -> AgentVote:
         from backend.models.models import NewsArticle
         from sqlalchemy import select
 
-        cutoff = (datetime.now() - timedelta(days=3)).strftime("%Y-%m-%d")
+        cutoff = datetime.now() - timedelta(days=3)
         async with AsyncSessionLocal() as db:
             q = select(NewsArticle).where(NewsArticle.published_at >= cutoff)
             if stock_id:

@@ -924,7 +924,7 @@ async def run_full_pipeline(req: PipelineRequest):
 @router.get("/get_factor_ic", summary="取得因子 IC / ICIR 動態權重")
 async def get_factor_ic(
     stock_code:   str = "2330",
-    forward_days: int = 5,
+    forward_days: int = Query(5, ge=1, le=20),
 ):
     """
     計算指定股票的因子 IC / ICIR，套用淘汰規則後回傳動態權重字典。
