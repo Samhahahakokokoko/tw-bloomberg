@@ -799,9 +799,17 @@ async def _cmd_quote(code: str) -> list:
         price = quote.get("close", quote.get("price", 0))
         change = quote.get("change", 0)
         change_pct = quote.get("change_pct", 0)
+        source = quote.get("source", "")
+        data_time = quote.get("timestamp") or quote.get("date") or ""
         print(f"[quote] code={code} price={price}")
         sign = "+" if change >= 0 else "-"
-        text = f"📊 {code} {name}\n現價：{price}元\n漲跌：{sign}{abs(change_pct):.2f}%"
+        source_label = "即時" if "mis" in source else "收盤"
+        text = (
+            f"📊 {code} {name}\n"
+            f"價格：{price}元\n"
+            f"漲跌：{sign}{abs(change):.2f} ({sign}{abs(change_pct):.2f}%)\n"
+            f"資料：{source_label} {data_time}"
+        )
         return [TextMessage(text=text)]
     except Exception as e:
         return [TextMessage(text="功能暫時無法使用，請稍後再試")]

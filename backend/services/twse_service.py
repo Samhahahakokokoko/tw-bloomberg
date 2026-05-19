@@ -1,6 +1,7 @@
 """TWSE OpenAPI 串接服務 — 即時報價、K線、三大法人"""
 import httpx
 from datetime import datetime, timedelta
+import time
 from typing import Optional
 from loguru import logger
 
@@ -118,6 +119,134 @@ async def _fetch_twse_mi(stock_code: str) -> dict:
         result = await _fetch_twse_mi_single(stock_code, market)
         if result:
             return result
+    return {}
+
+
+def _safe_float(v, default=0.0):
+    try:
+        return float(str(v).replace(",", ""))
+    except (TypeError, ValueError):
+        return default
+
+
+def _first_level(raw: str) -> float:
+    if not raw:
+        return 0.0
+    return _safe_float(str(raw).split("_")[0])
+
+
+async def fetch_twse_quote(stock_code: str) -> dict:
+    """Fetch latest TWSE daily close quote."""
+    return await _fetch_twse_daily_quote(stock_code)
+
+
+async def fetch_realtime_quote(stock_code: str) -> dict:
+    """Fetch quote with live MIS first; daily close is fallback only."""
+    for market in ("tse", "otc"):
+        result = await _fetch_twse_mi_single(stock_code, market)
+        if result:
+            return result
+
+    result = await _fetch_twse_daily_quote(stock_code)
+    if result:
+        return result
+
+    return await _fetch_tpex_daily_quote(stock_code)
+
+
+async def _fetch_twse_daily_quote(stock_code: str) -> dict:
+    url = f"{TWSE_BASE}/exchangeReport/STOCK_DAY_ALL"
+    try:
+        async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
+            resp = await client.get(
+                url,
+                params={"_": str(int(time.time() * 1000))},
+                headers={"Cache-Control": "no-cache", "Pragma": "no-cache"},
+            )
+            resp.raise_for_status()
+            for item in resp.json():
+                if item.get("Code") == stock_code:
+                    return _normalize_twse_quote(item)
+    except Exception as e:
+        logger.error(f"TWSE quote error for {stock_code}: {e}")
+    return {}
+
+
+async def _fetch_tpex_daily_quote(stock_code: str) -> dict:
+    url = f"{TPEX_BASE}/tpex_mainboard_daily_close_quotes"
+    try:
+        async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
+            resp = await client.get(
+                url,
+                params={"_": str(int(time.time() * 1000))},
+                headers={"Cache-Control": "no-cache", "Pragma": "no-cache"},
+            )
+            resp.raise_for_status()
+            for item in resp.json():
+                if item.get("SecuritiesCompanyCode") == stock_code:
+                    return _normalize_tpex_quote(item)
+    except Exception as e:
+        logger.error(f"TPEX quote error for {stock_code}: {e}")
+    return {}
+
+
+async def _fetch_twse_mi_single(stock_code: str, market: str) -> dict:
+    """Fetch live quote from TWSE MIS for one market: tse or otc."""
+    url = f"https://mis.twse.com.tw/stock/api/getStockInfo.jsp?ex_ch={market}_{stock_code}.tw"
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.get(
+                url,
+                params={"json": "1", "delay": "0", "_": str(int(time.time() * 1000))},
+                headers={
+                    "Cache-Control": "no-cache",
+                    "Pragma": "no-cache",
+                    "Referer": f"https://mis.twse.com.tw/stock/fibest.jsp?stock={stock_code}",
+                },
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            msgs = data.get("msgArray", [])
+            if not msgs:
+                return {}
+
+            item = msgs[0]
+            name = item.get("n", "")
+            if not name:
+                return {}
+
+            price = _safe_float(item.get("z")) or _safe_float(item.get("pz"))
+            if price <= 0:
+                best_bid = _first_level(item.get("b", ""))
+                best_ask = _first_level(item.get("a", ""))
+                if best_bid and best_ask:
+                    price = round((best_bid + best_ask) / 2, 2)
+                else:
+                    price = best_bid or best_ask
+            prev_close = _safe_float(item.get("y"))
+            if price <= 0:
+                return {}
+
+            change = price - prev_close if prev_close else 0.0
+            trade_date = item.get("d") or data.get("queryTime", {}).get("sysDate", "")
+            trade_time = item.get("t") or item.get("%") or data.get("queryTime", {}).get("sysTime", "")
+            return {
+                "code": stock_code,
+                "name": name,
+                "price": price,
+                "open": _safe_float(item.get("o")),
+                "high": _safe_float(item.get("h")),
+                "low": _safe_float(item.get("l")),
+                "volume": int(item.get("v", 0) or 0),
+                "change": round(change, 4),
+                "change_pct": round(change / prev_close * 100, 2) if prev_close else 0.0,
+                "date": trade_date,
+                "time": trade_time,
+                "source": f"twse_mis_{market}",
+                "timestamp": f"{trade_date} {trade_time}".strip(),
+            }
+    except Exception as e:
+        logger.error(f"MI fetch error ({market}_{stock_code}): {e}")
     return {}
 
 
@@ -303,6 +432,40 @@ def _normalize_tpex_quote(item: dict) -> dict:
         "change": _f(item.get("Change")),
         "change_pct": _calc_pct(item.get("Close"), item.get("Change")),
         "timestamp": datetime.now().isoformat(),
+    }
+
+
+def _normalize_twse_quote(item: dict) -> dict:
+    return {
+        "code": item.get("Code", ""),
+        "name": item.get("Name", ""),
+        "price": _safe_float(item.get("ClosingPrice")),
+        "open": _safe_float(item.get("OpeningPrice")),
+        "high": _safe_float(item.get("HighestPrice")),
+        "low": _safe_float(item.get("LowestPrice")),
+        "volume": _parse_int(item.get("TradeVolume")) // 1000,
+        "change": _safe_float(item.get("Change")),
+        "change_pct": _calc_pct(item.get("ClosingPrice"), item.get("Change")),
+        "date": item.get("Date", ""),
+        "source": "twse_daily_close",
+        "timestamp": item.get("Date", ""),
+    }
+
+
+def _normalize_tpex_quote(item: dict) -> dict:
+    return {
+        "code": item.get("SecuritiesCompanyCode", ""),
+        "name": item.get("CompanyName", ""),
+        "price": _safe_float(item.get("Close")),
+        "open": _safe_float(item.get("Open")),
+        "high": _safe_float(item.get("High")),
+        "low": _safe_float(item.get("Low")),
+        "volume": _parse_int(item.get("TradingShares")) // 1000,
+        "change": _safe_float(item.get("Change")),
+        "change_pct": _calc_pct(item.get("Close"), item.get("Change")),
+        "date": item.get("Date", ""),
+        "source": "tpex_daily_close",
+        "timestamp": item.get("Date", ""),
     }
 
 
