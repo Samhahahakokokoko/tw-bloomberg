@@ -1,4 +1,6 @@
 """APScheduler — 排程任務"""
+import os
+
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from loguru import logger
@@ -460,9 +462,52 @@ def start_scheduler() -> AsyncIOScheduler:
         id="prediction_market_weekly", replace_existing=True,
     )
 
+    _apply_line_quota_safe_mode(scheduler)
     scheduler.start()
     logger.info("Scheduler started (morning report 08:30 / weekly report Fri 14:30)")
     return scheduler
+
+
+def _apply_line_quota_safe_mode(scheduler: AsyncIOScheduler) -> None:
+    enabled = os.getenv("LINE_QUOTA_SAFE_MODE", "1").lower() not in {"0", "false", "off"}
+    if not enabled:
+        logger.info("[Scheduler] LINE quota safe mode disabled")
+        return
+
+    # Preserve core reports and user alerts under the small LINE push quota.
+    optional_line_push_jobs = {
+        "weekly_picks",
+        "portfolio_overlay",
+        "daily_decision",
+        "morning_picks",
+        "group_report",
+        "friday_summary",
+        "smart_money",
+        "ai_feed",
+        "smart_alert_v2",
+        "watchlist_daily",
+        "analyst_alert_check",
+        "analyst_consensus_push",
+        "autonomous_research",
+        "smart_money_v2",
+        "agent_report",
+        "sector_heatmap",
+        "portfolio_manager_advice",
+        "mistake_detector_weekly",
+        "narrative_map_push",
+        "macro_weekly",
+        "euphoria_stress_push",
+        "ai_debate_push",
+    }
+    removed = []
+    for job_id in optional_line_push_jobs:
+        if scheduler.get_job(job_id):
+            scheduler.remove_job(job_id)
+            removed.append(job_id)
+    logger.info(
+        f"[Scheduler] LINE quota safe mode removed {len(removed)} optional push jobs: "
+        f"{','.join(sorted(removed))}"
+    )
 
 
 async def _run_morning_report():

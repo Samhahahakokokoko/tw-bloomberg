@@ -151,4 +151,9 @@ async def _push_to_users(user_ids: list[str], message: str):
                 "https://api.line.me/v2/bot/message/multicast",
                 json=payload, headers=headers
             )
-            logger.info(f"Multicast to {len(batch)} users: {r.status_code}")
+            if r.is_success:
+                logger.info(f"Multicast to {len(batch)} users: {r.status_code}")
+            else:
+                logger.error(
+                    f"Multicast to {len(batch)} users failed: {r.status_code} {r.text[:500]}"
+                )
