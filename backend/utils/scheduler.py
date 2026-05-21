@@ -5,6 +5,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from loguru import logger
 from ..models.database import AsyncSessionLocal
+from ..services.line_push import push_line_messages
 
 
 async def _push_failure_alert(task_name: str, error: str) -> None:
@@ -37,10 +38,11 @@ async def _push_failure_alert(task_name: str, error: str) -> None:
                 if not uid:
                     continue
                 try:
-                    await c.post(
-                        "https://api.line.me/v2/bot/message/push",
-                        json={"to": uid, "messages": [{"type": "text", "text": text}]},
-                        headers=headers,
+                    await push_line_messages(
+                        uid,
+                        [{"type": "text", "text": text}],
+                        client=c,
+                        context="scheduler.failure_alert",
                     )
                 except Exception:
                     pass
@@ -995,14 +997,14 @@ async def _run_monthly_tier_update():
         async with AsyncSessionLocal() as db:
             r    = await db.execute(select(Subscriber).where(Subscriber.subscribed_morning == True))
             subs = r.scalars().all()
-        headers = {"Authorization": f"Bearer {settings.line_channel_access_token}"}
         async with httpx.AsyncClient(timeout=30) as c:
             for sub in subs:
                 try:
-                    await c.post(
-                        "https://api.line.me/v2/bot/message/push",
-                        json={"to": sub.line_user_id, "messages": [{"type": "text", "text": report}]},
-                        headers=headers,
+                    await push_line_messages(
+                        sub.line_user_id,
+                        [{"type": "text", "text": report}],
+                        client=c,
+                        context="scheduler.monthly_tier",
                     )
                 except Exception:
                     pass
@@ -1170,13 +1172,15 @@ async def _push_narrative_map():
             subs = r.scalars().all()
         if not subs:
             return
-        headers = {"Authorization": f"Bearer {settings.line_channel_access_token}"}
         async with httpx.AsyncClient(timeout=30) as c:
             for sub in subs:
                 try:
-                    await c.post("https://api.line.me/v2/bot/message/push",
-                                 json={"to": sub.line_user_id, "messages": [{"type": "text", "text": text}]},
-                                 headers=headers)
+                    await push_line_messages(
+                        sub.line_user_id,
+                        [{"type": "text", "text": text}],
+                        client=c,
+                        context="scheduler.narrative",
+                    )
                 except Exception:
                     pass
         logger.info("[Narrative] pushed to %d subscribers", len(subs))
@@ -1226,13 +1230,15 @@ async def _push_macro_weekly():
             subs = r.scalars().all()
         if not subs:
             return
-        headers = {"Authorization": f"Bearer {settings.line_channel_access_token}"}
         async with httpx.AsyncClient(timeout=30) as c:
             for sub in subs:
                 try:
-                    await c.post("https://api.line.me/v2/bot/message/push",
-                                 json={"to": sub.line_user_id, "messages": [{"type": "text", "text": report}]},
-                                 headers=headers)
+                    await push_line_messages(
+                        sub.line_user_id,
+                        [{"type": "text", "text": report}],
+                        client=c,
+                        context="scheduler.macro",
+                    )
                 except Exception:
                     pass
         logger.info("[Macro] weekly report pushed to %d", len(subs))
@@ -1315,14 +1321,14 @@ async def _run_drift_detection_job():
             r    = await db.execute(select(Subscriber).where(Subscriber.subscribed_morning == True))
             subs = r.scalars().all()
 
-        headers = {"Authorization": f"Bearer {settings.line_channel_access_token}"}
         async with httpx.AsyncClient(timeout=30) as c:
             for sub in subs:
                 try:
-                    await c.post(
-                        "https://api.line.me/v2/bot/message/push",
-                        json={"to": sub.line_user_id, "messages": [{"type": "text", "text": text}]},
-                        headers=headers,
+                    await push_line_messages(
+                        sub.line_user_id,
+                        [{"type": "text", "text": text}],
+                        client=c,
+                        context="scheduler.drift",
                     )
                 except Exception:
                     pass
@@ -1358,14 +1364,14 @@ async def _push_euphoria_stress():
         if not subs:
             return
 
-        headers = {"Authorization": f"Bearer {settings.line_channel_access_token}"}
         async with httpx.AsyncClient(timeout=30) as c:
             for sub in subs:
                 try:
-                    await c.post(
-                        "https://api.line.me/v2/bot/message/push",
-                        json={"to": sub.line_user_id, "messages": [{"type": "text", "text": text}]},
-                        headers=headers,
+                    await push_line_messages(
+                        sub.line_user_id,
+                        [{"type": "text", "text": text}],
+                        client=c,
+                        context="scheduler.euphoria_stress",
                     )
                 except Exception:
                     pass
@@ -1409,14 +1415,14 @@ async def _push_ai_debate():
         if not subs:
             return
 
-        headers = {"Authorization": f"Bearer {settings.line_channel_access_token}"}
         async with httpx.AsyncClient(timeout=30) as c:
             for sub in subs:
                 try:
-                    await c.post(
-                        "https://api.line.me/v2/bot/message/push",
-                        json={"to": sub.line_user_id, "messages": [{"type": "text", "text": full_text}]},
-                        headers=headers,
+                    await push_line_messages(
+                        sub.line_user_id,
+                        [{"type": "text", "text": full_text}],
+                        client=c,
+                        context="scheduler.ai_debate",
                     )
                 except Exception:
                     pass

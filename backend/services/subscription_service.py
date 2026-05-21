@@ -13,8 +13,7 @@ async def submit_feedback(uid: str, content: str, kind: str = "feedback"):
         logger.info(f"[feedback] uid={uid[:8]} kind={kind}: {content[:80]}")
         return
 
-    import httpx
-    from ..models.database import settings
+    from .line_push import push_line_messages
     icons = {"feedback": "💬", "bug": "🐛"}
     icon  = icons.get(kind, "📩")
     text  = (
@@ -23,13 +22,9 @@ async def submit_feedback(uid: str, content: str, kind: str = "feedback"):
         f"時間：{datetime.now().strftime('%m/%d %H:%M')}\n"
         f"{'─' * 18}\n{content[:300]}"
     )
-    headers = {"Authorization": f"Bearer {settings.line_channel_access_token}"}
-    async with httpx.AsyncClient(timeout=10) as c:
-        try:
-            await c.post(
-                "https://api.line.me/v2/bot/message/push",
-                json={"to": admin_uid, "messages": [{"type": "text", "text": text}]},
-                headers=headers,
-            )
-        except Exception as e:
-            logger.warning(f"[feedback] push failed: {e}")
+    await push_line_messages(
+        admin_uid,
+        [{"type": "text", "text": text}],
+        timeout=10,
+        context="feedback",
+    )

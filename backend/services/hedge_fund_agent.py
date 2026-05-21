@@ -283,19 +283,18 @@ async def push_agent_report():
     if not subs:
         return
 
-    headers = {"Authorization": f"Bearer {settings.line_channel_access_token}"}
+    from .line_push import push_line_messages
     async with httpx.AsyncClient(timeout=60) as c:
         for sub in subs:
             try:
                 report = await run_agent_pipeline(sub.line_user_id)
                 text   = report.to_line_text()
                 qr     = report.to_line_qr()
-                await c.post(
-                    "https://api.line.me/v2/bot/message/push",
-                    json={"to": sub.line_user_id, "messages": [
-                        {"type": "text", "text": text, "quickReply": qr}
-                    ]},
-                    headers=headers,
+                await push_line_messages(
+                    sub.line_user_id,
+                    [{"type": "text", "text": text, "quickReply": qr}],
+                    client=c,
+                    context="hedge_fund_agent",
                 )
             except Exception as e:
                 logger.warning(f"[agent] push failed uid={sub.line_user_id[:8]}: {e}")

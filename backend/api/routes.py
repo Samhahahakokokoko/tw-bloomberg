@@ -1,14 +1,24 @@
-from fastapi import APIRouter, Depends, HTTPException, Query
+import secrets
+
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from pydantic import BaseModel
 from typing import Optional
 from sqlalchemy.ext.asyncio import AsyncSession
-from ..models.database import get_db, AsyncSessionLocal
+from ..models.database import get_db, AsyncSessionLocal, settings
 from ..models.models import Alert, NewsArticle, Subscriber
 from ..services import twse_service, portfolio_service
 from sqlalchemy import select
 from loguru import logger
 
 router = APIRouter()
+
+
+async def require_admin_api_token(x_admin_token: str = Header("")):
+    configured_token = settings.admin_api_token
+    if not configured_token:
+        raise HTTPException(503, "ADMIN_API_TOKEN not configured")
+    if not x_admin_token or not secrets.compare_digest(x_admin_token, configured_token):
+        raise HTTPException(401, "Invalid admin token")
 
 
 # ── Schemas ────────────────────────────────────────────────────────────────────
@@ -293,7 +303,7 @@ class SubscribeRequest(BaseModel):
     subscribed_weekly: bool = True
 
 
-@router.post("/subscribe", status_code=201)
+@router.post("/subscribe", status_code=201, dependencies=[Depends(require_admin_api_token)])
 async def subscribe(payload: SubscribeRequest, db: AsyncSession = Depends(get_db)):
     result = await db.execute(
         select(Subscriber).where(Subscriber.line_user_id == payload.line_user_id)
@@ -310,7 +320,7 @@ async def subscribe(payload: SubscribeRequest, db: AsyncSession = Depends(get_db
     return sub
 
 
-@router.get("/subscribers")
+@router.get("/subscribers", dependencies=[Depends(require_admin_api_token)])
 async def list_subscribers(db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(Subscriber))
     return result.scalars().all()

@@ -150,16 +150,14 @@ async def push_daily_research():
         return
 
     msg     = {"type": "text", "text": text, "quickReply": qr}
-    headers = {"Authorization": f"Bearer {settings.line_channel_access_token}"}
+    from .line_push import push_line_messages
     async with httpx.AsyncClient(timeout=30) as c:
         for sub in subs:
-            try:
-                await c.post(
-                    "https://api.line.me/v2/bot/message/push",
-                    json={"to": sub.line_user_id, "messages": [msg]},
-                    headers=headers,
-                )
-            except Exception as e:
-                logger.warning(f"[autonomous_research] push failed: {e}")
+            await push_line_messages(
+                sub.line_user_id,
+                [msg],
+                client=c,
+                context="autonomous_research",
+            )
 
     logger.info(f"[autonomous_research] pushed {len(opps)} opps to {len(subs)} subscribers")

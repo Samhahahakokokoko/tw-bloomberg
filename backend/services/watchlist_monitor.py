@@ -97,7 +97,6 @@ async def push_daily_watchlist_reports():
         logger.info("[watchlist_monitor] no watchlist users")
         return
 
-    headers = {"Authorization": f"Bearer {settings.line_channel_access_token}"}
     async with httpx.AsyncClient(timeout=30) as c:
         for uid in uids:
             try:
@@ -106,12 +105,12 @@ async def push_daily_watchlist_reports():
                     continue
                 text = format_watchlist_report(uid, results)
                 qr   = _build_watchlist_qr(results)
-                await c.post(
-                    "https://api.line.me/v2/bot/message/push",
-                    json={"to": uid, "messages": [{
-                        "type": "text", "text": text, "quickReply": qr
-                    }]},
-                    headers=headers,
+                from .line_push import push_line_messages
+                await push_line_messages(
+                    uid,
+                    [{"type": "text", "text": text, "quickReply": qr}],
+                    client=c,
+                    context="watchlist_monitor",
                 )
             except Exception as e:
                 logger.warning(f"[watchlist_monitor] push failed uid={uid[:8]}: {e}")

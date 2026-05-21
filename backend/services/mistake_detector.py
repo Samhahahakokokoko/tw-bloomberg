@@ -180,7 +180,6 @@ async def push_weekly_mistake_reports():
     if not subs:
         return
 
-    headers = {"Authorization": f"Bearer {settings.line_channel_access_token}"}
     async with httpx.AsyncClient(timeout=30) as c:
         for sub in subs:
             try:
@@ -193,12 +192,12 @@ async def push_weekly_mistake_reports():
                         "type": "postback", "label": "💼 看庫存",
                         "data": "act=portfolio_view", "displayText": "看庫存"}},
                 ]}
-                await c.post(
-                    "https://api.line.me/v2/bot/message/push",
-                    json={"to": sub.line_user_id, "messages": [
-                        {"type": "text", "text": text, "quickReply": qr}
-                    ]},
-                    headers=headers,
+                from .line_push import push_line_messages
+                await push_line_messages(
+                    sub.line_user_id,
+                    [{"type": "text", "text": text, "quickReply": qr}],
+                    client=c,
+                    context="mistake_detector",
                 )
             except Exception as e:
                 logger.warning(f"[mistake_detector] push failed: {e}")

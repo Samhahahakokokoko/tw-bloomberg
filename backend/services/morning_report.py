@@ -136,24 +136,18 @@ async def _ai_summary(report_body: str) -> str:
 
 async def _push_to_users(user_ids: list[str], message: str):
     from ..models.database import settings
+    from .line_push import multicast_line_messages
     if not settings.line_channel_access_token or not user_ids:
         return
-    headers = {"Authorization": f"Bearer {settings.line_channel_access_token}"}
     # LINE multicast (一次最多 500 人)
     for i in range(0, len(user_ids), 500):
         batch = user_ids[i:i+500]
-        payload = {
-            "to": batch,
-            "messages": [{"type": "text", "text": message}]
-        }
         async with httpx.AsyncClient(timeout=15) as client:
-            r = await client.post(
-                "https://api.line.me/v2/bot/message/multicast",
-                json=payload, headers=headers
+            ok = await multicast_line_messages(
+                batch,
+                [{"type": "text", "text": message}],
+                client=client,
+                context="morning_report",
             )
-            if r.is_success:
-                logger.info(f"Multicast to {len(batch)} users: {r.status_code}")
-            else:
-                logger.error(
-                    f"Multicast to {len(batch)} users failed: {r.status_code} {r.text[:500]}"
-                )
+            if ok:
+                logger.info(f"Multicast to {len(batch)} users")

@@ -10,6 +10,7 @@ class Settings(BaseSettings):
     anthropic_api_key: str = ""
     line_channel_access_token: str = ""
     line_channel_secret: str = ""
+    admin_api_token: str = ""
     finmind_token: str = ""
     youtube_api_key: str = ""
 

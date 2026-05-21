@@ -145,7 +145,6 @@ async def push_daily_portfolio_advice():
     if not subs:
         return
 
-    headers = {"Authorization": f"Bearer {settings.line_channel_access_token}"}
     async with httpx.AsyncClient(timeout=30) as c:
         for sub in subs:
             try:
@@ -161,12 +160,12 @@ async def push_daily_portfolio_advice():
                         "type": "postback", "label": "📊 今日選股",
                         "data": "act=screener_qr", "displayText": "今日選股"}},
                 ]}
-                await c.post(
-                    "https://api.line.me/v2/bot/message/push",
-                    json={"to": sub.line_user_id, "messages": [
-                        {"type": "text", "text": text, "quickReply": qr}
-                    ]},
-                    headers=headers,
+                from .line_push import push_line_messages
+                await push_line_messages(
+                    sub.line_user_id,
+                    [{"type": "text", "text": text, "quickReply": qr}],
+                    client=c,
+                    context="portfolio_manager",
                 )
             except Exception as e:
                 logger.warning(f"[portfolio_manager] push failed: {e}")

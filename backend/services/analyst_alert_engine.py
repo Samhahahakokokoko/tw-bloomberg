@@ -196,7 +196,7 @@ async def push_view_change_alerts(alerts: list[ViewChangeAlert]):
         r    = await db.execute(sa_select(Subscriber).where(Subscriber.subscribed_morning == True))
         subs = r.scalars().all()
 
-    headers = {"Authorization": f"Bearer {settings.line_channel_access_token}"}
+    from .line_push import push_line_messages
     async with httpx.AsyncClient(timeout=20) as c:
         for sub in subs:
             msgs = []
@@ -208,14 +208,12 @@ async def push_view_change_alerts(alerts: list[ViewChangeAlert]):
                 })
             if not msgs:
                 continue
-            try:
-                await c.post(
-                    "https://api.line.me/v2/bot/message/push",
-                    json={"to": sub.line_user_id, "messages": msgs[:5]},
-                    headers=headers,
-                )
-            except Exception as e:
-                logger.warning(f"[alert] push failed: {e}")
+            await push_line_messages(
+                sub.line_user_id,
+                msgs[:5],
+                client=c,
+                context="analyst_alert",
+            )
 
     logger.info(f"[alert] pushed {len(important)} view changes to {len(subs)} subscribers")
 

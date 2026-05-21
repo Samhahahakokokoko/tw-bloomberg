@@ -181,15 +181,15 @@ async def push_heatmap():
          ]}},
     ]
 
+    from .line_push import push_line_messages
+
     async with httpx.AsyncClient(timeout=20) as c:
         for sub in subs:
-            try:
-                await c.post(
-                    "https://api.line.me/v2/bot/message/push",
-                    json={"to": sub.line_user_id, "messages": msgs},
-                    headers=headers,
-                )
-            except Exception as e:
-                logger.warning(f"[heatmap] push failed: {e}")
+            await push_line_messages(
+                sub.line_user_id,
+                msgs,
+                client=c,
+                context="sector_heatmap",
+            )
 
     logger.info(f"[heatmap] pushed to {len(subs)} subscribers")

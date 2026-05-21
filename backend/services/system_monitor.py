@@ -119,18 +119,15 @@ async def push_health_alert(module: str, error: str, admin_uid: str = None):
             "type": "message", "label": "略過", "text": "ok"}},
     ]}
 
-    headers = {"Authorization": f"Bearer {settings.line_channel_access_token}"}
+    from .line_push import push_line_messages
+
     async with httpx.AsyncClient(timeout=15) as c:
-        try:
-            await c.post(
-                "https://api.line.me/v2/bot/message/push",
-                json={"to": admin_id, "messages": [
-                    {"type": "text", "text": text, "quickReply": qr}
-                ]},
-                headers=headers,
-            )
-        except Exception as e:
-            logger.error(f"[system_monitor] alert push failed: {e}")
+        await push_line_messages(
+            admin_id,
+            [{"type": "text", "text": text, "quickReply": qr}],
+            client=c,
+            context="system_monitor",
+        )
 
 
 def format_health_dashboard(statuses: list[ModuleStatus]) -> str:

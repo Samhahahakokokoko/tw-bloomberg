@@ -207,8 +207,7 @@ async def _step_push(
         return 0
 
     success = 0
-    headers = {"Authorization": f"Bearer {token}",
-               "Content-Type":  "application/json"}
+    from .line_push import push_line_messages
 
     # 決定訊息格式
     messages: list[dict] = []
@@ -231,15 +230,15 @@ async def _step_push(
     async with httpx.AsyncClient(timeout=20) as client:
         for uid in user_ids:
             try:
-                r = await client.post(
-                    "https://api.line.me/v2/bot/message/push",
-                    json={"to": uid, "messages": messages[:5]},
-                    headers=headers,
+                ok = await push_line_messages(
+                    uid,
+                    messages[:5],
+                    token=token,
+                    client=client,
+                    context="news_pipeline",
                 )
-                if r.status_code == 200:
+                if ok:
                     success += 1
-                else:
-                    logger.warning("[pipeline] push %s HTTP %d", uid[:8], r.status_code)
             except Exception as e:
                 logger.error("[pipeline] push error uid=%s: %s", uid[:8], e)
 

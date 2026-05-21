@@ -520,21 +520,21 @@ async def push_report_image(
     alt_text: str = "族群連動選股表",
 ) -> None:
     import httpx
+    from .line_push import push_line_messages
     image_url = f"{base_url.rstrip('/')}/static/reports/{image_path.name}"
-    headers   = {"Authorization": f"Bearer {access_token}"}
     message   = {"type": "image",
                   "originalContentUrl": image_url,
                   "previewImageUrl":    image_url}
     async with httpx.AsyncClient(timeout=15) as c:
         for uid in user_ids:
             try:
-                r = await c.post("https://api.line.me/v2/bot/message/push",
-                                 json={"to": uid, "messages": [message]},
-                                 headers=headers)
-                if r.status_code != 200:
-                    import logging
-                    logging.getLogger(__name__).warning(
-                        f"[Report] push to {uid[:8]} HTTP {r.status_code}")
+                await push_line_messages(
+                    uid,
+                    [message],
+                    token=access_token,
+                    client=c,
+                    context="report_image",
+                )
             except Exception as e:
                 import logging
                 logging.getLogger(__name__).error(f"[Report] push error: {e}")

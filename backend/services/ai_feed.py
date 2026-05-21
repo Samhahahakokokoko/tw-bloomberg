@@ -158,17 +158,10 @@ async def push_ai_feed():
     }
 
     uids    = [s.line_user_id for s in subs]
-    headers = {"Authorization": f"Bearer {settings.line_channel_access_token}"}
+    from .line_push import push_line_messages
 
     async with httpx.AsyncClient(timeout=20) as c:
         for uid in uids:
-            try:
-                await c.post(
-                    "https://api.line.me/v2/bot/message/push",
-                    json={"to": uid, "messages": [message]},
-                    headers=headers,
-                )
-            except Exception as e:
-                logger.warning(f"[ai_feed] push failed uid={uid[:8]}: {e}")
+            await push_line_messages(uid, [message], client=c, context="ai_feed")
 
     logger.info(f"[ai_feed] pushed to {len(uids)} subscribers")

@@ -122,19 +122,16 @@ async def push_breadth_warning(snap: BreadthSnapshot):
         }},
     ]}
 
-    headers = {"Authorization": f"Bearer {settings.line_channel_access_token}"}
+    from .line_push import push_line_messages
+
     async with httpx.AsyncClient(timeout=20) as c:
         for sub in subs:
-            try:
-                await c.post(
-                    "https://api.line.me/v2/bot/message/push",
-                    json={"to": sub.line_user_id, "messages": [{
-                        "type": "text", "text": text, "quickReply": qr,
-                    }]},
-                    headers=headers,
-                )
-            except Exception:
-                pass
+            await push_line_messages(
+                sub.line_user_id,
+                [{"type": "text", "text": text, "quickReply": qr}],
+                client=c,
+                context="market_breadth",
+            )
 
     logger.info(f"[market_breadth] warning pushed to {len(subs)} subscribers")
 

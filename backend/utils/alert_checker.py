@@ -95,16 +95,16 @@ async def _send_alert(alert: Alert, trigger_msg: str, name: str):
         logger.info(f"Alert triggered (no LINE push): {alert.stock_code} — {trigger_msg}")
         return
 
-    headers = {"Authorization": f"Bearer {settings.line_channel_access_token}"}
-    payload = {"to": line_id, "messages": [{"type": "text", "text": msg}]}
-    try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            r = await client.post(
-                "https://api.line.me/v2/bot/message/push", json=payload, headers=headers
-            )
-            logger.info(f"Alert pushed {alert.stock_code} → {line_id}: {r.status_code}")
-    except Exception as e:
-        logger.error(f"Alert LINE push error: {e}")
+    from ..services.line_push import push_line_messages
+
+    ok = await push_line_messages(
+        line_id,
+        [{"type": "text", "text": msg}],
+        timeout=10,
+        context="alert_checker",
+    )
+    if ok:
+        logger.info(f"Alert pushed {alert.stock_code} → {line_id}")
 
 
 def _type_label(alert_type: str) -> str:

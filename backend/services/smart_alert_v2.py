@@ -180,7 +180,6 @@ async def push_alerts_to_subscribers(alerts: list[SmartAlert]):
     if not subs:
         return
 
-    headers = {"Authorization": f"Bearer {settings.line_channel_access_token}"}
     # 只推最重要的 3 個警報，避免訊息轟炸
     top_alerts = sorted(alerts, key=lambda a: 0 if a.severity == "warning" else 1)[:3]
 
@@ -193,14 +192,13 @@ async def push_alerts_to_subscribers(alerts: list[SmartAlert]):
                     "text": alert.to_line_text(),
                     "quickReply": alert.to_line_qr(),
                 })
-            try:
-                await c.post(
-                    "https://api.line.me/v2/bot/message/push",
-                    json={"to": sub.line_user_id, "messages": msgs[:5]},
-                    headers=headers,
-                )
-            except Exception as e:
-                logger.warning(f"[smart_alert] push failed: {e}")
+            from .line_push import push_line_messages
+            await push_line_messages(
+                sub.line_user_id,
+                msgs[:5],
+                client=c,
+                context="smart_alert",
+            )
 
     logger.info(f"[smart_alert] pushed {len(top_alerts)} alerts to {len(subs)} subscribers")
 
