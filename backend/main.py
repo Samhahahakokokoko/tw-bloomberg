@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from loguru import logger
 
@@ -152,3 +152,25 @@ try:
 except Exception as e:
     logger.warning(f"LINE Bot not mounted (non-fatal): {e}")
     logger.debug(traceback.format_exc())
+
+
+_FRONTEND_DIST = os.path.join(_ROOT, "frontend", "dist")
+_FRONTEND_INDEX = os.path.join(_FRONTEND_DIST, "index.html")
+_FRONTEND_ASSETS = os.path.join(_FRONTEND_DIST, "assets")
+
+if os.path.exists(_FRONTEND_INDEX):
+    if os.path.isdir(_FRONTEND_ASSETS):
+        app.mount("/assets", StaticFiles(directory=_FRONTEND_ASSETS), name="frontend-assets")
+
+    @app.get("/", include_in_schema=False)
+    async def frontend_index():
+        return FileResponse(_FRONTEND_INDEX)
+
+    @app.get("/{full_path:path}", include_in_schema=False)
+    async def frontend_spa(full_path: str):
+        candidate = os.path.join(_FRONTEND_DIST, full_path)
+        if os.path.isfile(candidate):
+            return FileResponse(candidate)
+        return FileResponse(_FRONTEND_INDEX)
+else:
+    logger.warning(f"Frontend dist not found at {_FRONTEND_DIST}; root URL will return 404")
