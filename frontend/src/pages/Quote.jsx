@@ -80,6 +80,13 @@ export default function Quote() {
           <Card title={`${quote.name} (${quote.code})`}>
             <div className="text-4xl font-bold text-terminal-text mb-2">{quote.price}</div>
             <PriceTag value={quote.change || 0} pct={quote.change_pct} />
+            <div className="mt-3 flex flex-wrap items-center gap-2 text-xs">
+              <span className={quote.is_realtime ? "text-terminal-green" : "text-terminal-yellow"}>
+                {quote.source_label || (quote.is_realtime ? "即時" : "收盤")}
+              </span>
+              <span className="text-terminal-muted">{quote.as_of || quote.timestamp}</span>
+              {quote.is_stale && <span className="text-terminal-red">資料非今日</span>}
+            </div>
             <div className="grid grid-cols-2 gap-x-4 mt-4 text-xs text-terminal-muted">
               {[
                 ["開盤", quote.open],

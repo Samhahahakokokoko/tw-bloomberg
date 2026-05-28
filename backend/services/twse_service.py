@@ -23,6 +23,20 @@ def _first_level(raw: str) -> float:
     return _safe_float(str(raw).split("_")[0])
 
 
+def _twse_date_to_iso(raw: str) -> str:
+    value = str(raw or "").strip()
+    if len(value) == 8 and value.isdigit() and value.startswith("20"):
+        return f"{value[:4]}-{value[4:6]}-{value[6:]}"
+    if len(value) == 7 and value.isdigit():
+        year = int(value[:3]) + 1911
+        return f"{year:04d}-{value[3:5]}-{value[5:]}"
+    return value
+
+
+def _is_today_yyyymmdd(raw: str) -> bool:
+    return str(raw or "") == datetime.now().strftime("%Y%m%d")
+
+
 async def fetch_twse_quote(stock_code: str) -> dict:
     """Fetch latest TWSE daily close quote."""
     return await _fetch_twse_daily_quote(stock_code)
@@ -131,6 +145,11 @@ async def _fetch_twse_mi_single(stock_code: str, market: str) -> dict:
                 "date": trade_date,
                 "time": trade_time,
                 "source": f"twse_mis_{market}",
+                "source_label": "TWSE MIS 即時",
+                "is_realtime": True,
+                "is_stale": not _is_today_yyyymmdd(trade_date),
+                "data_status": "realtime" if _is_today_yyyymmdd(trade_date) else "stale_realtime",
+                "as_of": f"{_twse_date_to_iso(trade_date)} {trade_time}".strip(),
                 "timestamp": f"{trade_date} {trade_time}".strip(),
             }
     except Exception as e:
@@ -282,6 +301,8 @@ async def fetch_stock_list() -> list[dict]:
 
 
 def _normalize_twse_quote(item: dict) -> dict:
+    date = item.get("Date", "")
+    iso_date = _twse_date_to_iso(date)
     return {
         "code": item.get("Code", ""),
         "name": item.get("Name", ""),
@@ -292,13 +313,20 @@ def _normalize_twse_quote(item: dict) -> dict:
         "volume": _parse_int(item.get("TradeVolume")) // 1000,
         "change": _safe_float(item.get("Change")),
         "change_pct": _calc_pct(item.get("ClosingPrice"), item.get("Change")),
-        "date": item.get("Date", ""),
+        "date": date,
         "source": "twse_daily_close",
-        "timestamp": item.get("Date", ""),
+        "source_label": "TWSE 收盤",
+        "is_realtime": False,
+        "is_stale": iso_date != datetime.now().strftime("%Y-%m-%d"),
+        "data_status": "daily_close",
+        "as_of": iso_date,
+        "timestamp": date,
     }
 
 
 def _normalize_tpex_quote(item: dict) -> dict:
+    date = item.get("Date", "")
+    iso_date = _twse_date_to_iso(date)
     return {
         "code": item.get("SecuritiesCompanyCode", ""),
         "name": item.get("CompanyName", ""),
@@ -309,9 +337,14 @@ def _normalize_tpex_quote(item: dict) -> dict:
         "volume": _parse_int(item.get("TradingShares")) // 1000,
         "change": _safe_float(item.get("Change")),
         "change_pct": _calc_pct(item.get("Close"), item.get("Change")),
-        "date": item.get("Date", ""),
+        "date": date,
         "source": "tpex_daily_close",
-        "timestamp": item.get("Date", ""),
+        "source_label": "TPEx 收盤",
+        "is_realtime": False,
+        "is_stale": iso_date != datetime.now().strftime("%Y-%m-%d"),
+        "data_status": "daily_close",
+        "as_of": iso_date,
+        "timestamp": date,
     }
 
 

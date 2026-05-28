@@ -800,15 +800,16 @@ async def _cmd_quote(code: str) -> list:
         change = quote.get("change", 0)
         change_pct = quote.get("change_pct", 0)
         source = quote.get("source", "")
-        data_time = quote.get("timestamp") or quote.get("date") or ""
+        data_time = quote.get("as_of") or quote.get("timestamp") or quote.get("date") or ""
         print(f"[quote] code={code} price={price}")
         sign = "+" if change >= 0 else "-"
-        source_label = "即時" if "mis" in source else "收盤"
+        source_label = quote.get("source_label") or ("即時" if "mis" in source else "收盤")
+        stale_note = "\n⚠️ 資料非今日" if quote.get("is_stale") else ""
         text = (
             f"📊 {code} {name}\n"
             f"價格：{price}元\n"
             f"漲跌：{sign}{abs(change):.2f} ({sign}{abs(change_pct):.2f}%)\n"
-            f"資料：{source_label} {data_time}"
+            f"資料：{source_label} {data_time}{stale_note}"
         )
         return [TextMessage(text=text)]
     except Exception as e:
