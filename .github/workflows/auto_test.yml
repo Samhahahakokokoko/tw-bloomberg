@@ -49,16 +49,16 @@ jobs:
         env:
           RAILWAY_BACKEND_URL: ${{ secrets.RAILWAY_BACKEND_URL }}
         run: |
-          echo "=== 測試 /api/system/health ==="
+          echo "=== 測試 /health ==="
           HTTP_STATUS=$(curl -s -o /tmp/health_resp.json -w "%{http_code}" \
-            --max-time 20 "${RAILWAY_BACKEND_URL}/api/system/health")
+            --max-time 20 "${RAILWAY_BACKEND_URL}/health")
           echo "HTTP Status: ${HTTP_STATUS}"
           cat /tmp/health_resp.json | python -m json.tool 2>/dev/null || cat /tmp/health_resp.json
           if [ "$HTTP_STATUS" -ge 400 ]; then
             echo "::error::Health check 失敗 (HTTP ${HTTP_STATUS})"
             exit 1
           fi
-          echo "✅ /api/system/health 正常"
+          echo "✅ /health 正常"
 
       - name: Test /quote/2330 endpoint
         if: ${{ env.RAILWAY_BACKEND_URL != '' }}

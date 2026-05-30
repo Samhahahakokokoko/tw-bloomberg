@@ -614,7 +614,7 @@ async def run_health_tests(base_url: str) -> list[dict]:
     import httpx
 
     tests = [
-        ("系統健康",  "GET",  "/api/system/health",  None),
+        ("基本健康",  "GET",  "/health",              None),
         ("台積電報價", "GET",  "/api/quote/2330",      None),
         ("每日建議",  "GET",  "/api/advice/daily",    None),
         ("早報生成",  "POST", "/api/report/morning",  None),
