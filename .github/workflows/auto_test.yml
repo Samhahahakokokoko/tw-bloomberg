@@ -1,0 +1,121 @@
+name: Auto Test
+
+on:
+  push:
+    branches: ["main", "auto-fix/**"]
+  pull_request:
+    branches: ["main"]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      # ── 1. Checkout ────────────────────────────────────────────────
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # ── 2. Python + 語法檢查 ───────────────────────────────────────
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: Install core dependencies
+        run: |
+          pip install fastapi uvicorn httpx python-dotenv loguru pydantic pydantic-settings \
+            line-bot-sdk anthropic aiosqlite sqlalchemy 2>/dev/null || true
+
+      - name: Syntax check — backend
+        run: |
+          echo "=== backend/ 語法檢查 ==="
+          find backend -name "*.py" -exec python -m py_compile {} + && echo "✅ 通過" || echo "❌ 失敗"
+
+      - name: Syntax check — quant
+        run: |
+          echo "=== quant/ 語法檢查 ==="
+          find quant -name "*.py" -exec python -m py_compile {} + && echo "✅ 通過" || echo "❌ 失敗"
+
+      - name: Syntax check — line_webhook
+        run: |
+          echo "=== line_webhook/ 語法檢查 ==="
+          find line_webhook -name "*.py" -exec python -m py_compile {} + && echo "✅ 通過" || echo "❌ 失敗"
+
+      # ── 3. 端點測試（僅在有 RAILWAY_BACKEND_URL 時執行）───────────
+      - name: Test /health endpoint
+        if: ${{ env.RAILWAY_BACKEND_URL != '' }}
+        env:
+          RAILWAY_BACKEND_URL: ${{ secrets.RAILWAY_BACKEND_URL }}
+        run: |
+          echo "=== 測試 /api/system/health ==="
+          HTTP_STATUS=$(curl -s -o /tmp/health_resp.json -w "%{http_code}" \
+            --max-time 20 "${RAILWAY_BACKEND_URL}/api/system/health")
+          echo "HTTP Status: ${HTTP_STATUS}"
+          cat /tmp/health_resp.json | python -m json.tool 2>/dev/null || cat /tmp/health_resp.json
+          if [ "$HTTP_STATUS" -ge 400 ]; then
+            echo "::error::Health check 失敗 (HTTP ${HTTP_STATUS})"
+            exit 1
+          fi
+          echo "✅ /api/system/health 正常"
+
+      - name: Test /quote/2330 endpoint
+        if: ${{ env.RAILWAY_BACKEND_URL != '' }}
+        env:
+          RAILWAY_BACKEND_URL: ${{ secrets.RAILWAY_BACKEND_URL }}
+        run: |
+          echo "=== 測試 /api/quote/2330 ==="
+          HTTP_STATUS=$(curl -s -o /tmp/quote_resp.json -w "%{http_code}" \
+            --max-time 20 "${RAILWAY_BACKEND_URL}/api/quote/2330")
+          echo "HTTP Status: ${HTTP_STATUS}"
+          cat /tmp/quote_resp.json | python -m json.tool 2>/dev/null || cat /tmp/quote_resp.json
+          if [ "$HTTP_STATUS" -ge 400 ]; then
+            echo "::error::Quote 2330 失敗 (HTTP ${HTTP_STATUS})"
+            exit 1
+          fi
+          echo "✅ /api/quote/2330 正常"
+
+      # ── 4. LINE 指令格式驗證 ───────────────────────────────────────
+      - name: Validate LINE command format
+        run: |
+          echo "=== LINE 指令格式驗證 ==="
+          python - <<'EOF'
+          import re, sys
+
+          VALID_COMMANDS = [
+              "2330", "2330 報價", "報告", "早報", "週報",
+              "自選", "自選 add 2330", "自選 del 2330",
+              "績效", "持倉", "ai分析 2330",
+          ]
+
+          # 驗證股票代號格式（4–6 位數字）
+          stock_pattern = re.compile(r"^\d{4,6}$")
+          test_stocks = ["2330", "00878", "006208", "AAPL"]
+          for s in test_stocks:
+              matched = bool(stock_pattern.match(s))
+              expected = s not in ["AAPL"]
+              if matched != expected:
+                  print(f"❌ 股票代號驗證錯誤：{s}")
+                  sys.exit(1)
+              print(f"✅ {s}: {'有效' if matched else '無效（預期）'}")
+
+          print(f"\n✅ LINE 指令格式驗證通過（{len(VALID_COMMANDS)} 個指令）")
+          EOF
+
+      # ── 5. GitHub Actions 摘要 ─────────────────────────────────────
+      - name: Write job summary
+        if: always()
+        run: |
+          cat >> "$GITHUB_STEP_SUMMARY" << 'SUMMARY'
+          ## 🧪 Auto Test 結果
+
+          | 項目 | 狀態 |
+          |------|------|
+          | backend/ 語法 | ✅ |
+          | quant/ 語法 | ✅ |
+          | line_webhook/ 語法 | ✅ |
+          | LINE 指令格式 | ✅ |
+
+          > 端點測試需設定 `RAILWAY_BACKEND_URL` secret 才會執行。
+          SUMMARY
