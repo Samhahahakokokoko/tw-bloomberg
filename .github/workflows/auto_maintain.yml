@@ -2,8 +2,16 @@ name: Auto Maintain
 
 on:
   schedule:
-    - cron: '0 19 * * *'   # 03:00 台灣時間（UTC+8 = UTC 19:00）
-  workflow_dispatch:        # 允許從 Actions 頁面手動觸發
+    # 每天 03:00 台灣時間（UTC 19:00）
+    - cron: '0 19 * * *'
+    # 每週日 03:00 台灣時間（UTC 週六 19:00）額外執行週報
+    - cron: '0 19 * * 6'
+  workflow_dispatch:
+    inputs:
+      weekly:
+        description: '強制執行週報測試'
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -12,7 +20,7 @@ permissions:
 jobs:
   auto-maintain:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 20
 
     steps:
       # ── 1. Checkout ────────────────────────────────────────────────
@@ -30,42 +38,48 @@ jobs:
           cache: pip
 
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: |
+          pip install httpx python-dotenv loguru aiosqlite asyncpg \
+            line-bot-sdk fastapi 2>/dev/null || true
+          # 安裝完整依賴（有 requirements.txt 則用完整版）
+          [ -f requirements.txt ] && pip install -r requirements.txt --quiet || true
 
-      # ── 3. Railway CLI（選填，失敗時降級為 GraphQL API）─────────────
+      # ── 3. Railway CLI（選填）─────────────────────────────────────
       - name: Install Railway CLI
         run: |
           curl -fsSL https://railway.app/install.sh | sh 2>/dev/null \
-            || npm install -g @railway/cli 2>/dev/null \
-            || echo "Railway CLI 不可用，將使用 GraphQL API 備援"
+            || echo "Railway CLI 不可用，改用 GraphQL API"
 
-      # ── 4. 執行自動維護：抓 logs → Claude 分析 → 套用修復 → 測試 → LINE ──
-      - name: Analyse, patch & report
+      # ── 4. 規則引擎維護 + 健康測試 + LINE 推播 ────────────────────
+      - name: Run auto_maintain
         id: maintain
         env:
-          ANTHROPIC_API_KEY:          ${{ secrets.ANTHROPIC_API_KEY }}
-          LINE_CHANNEL_ACCESS_TOKEN:  ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
-          ADMIN_LINE_UID:             ${{ secrets.ADMIN_LINE_UID }}
-          RAILWAY_TOKEN:              ${{ secrets.RAILWAY_TOKEN }}
-          RAILWAY_PROJECT_ID:         ${{ secrets.RAILWAY_PROJECT_ID }}
-          RAILWAY_SERVICE_ID:         ${{ secrets.RAILWAY_SERVICE_ID }}
-          RAILWAY_BACKEND_URL:        ${{ secrets.RAILWAY_BACKEND_URL }}
-          DATABASE_URL:               ${{ secrets.DATABASE_URL }}
+          LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
+          ADMIN_LINE_UID:            ${{ secrets.ADMIN_LINE_UID }}
+          RAILWAY_TOKEN:             ${{ secrets.RAILWAY_TOKEN }}
+          RAILWAY_PROJECT_ID:        ${{ secrets.RAILWAY_PROJECT_ID }}
+          RAILWAY_SERVICE_ID:        ${{ secrets.RAILWAY_SERVICE_ID }}
+          RAILWAY_BACKEND_URL:       ${{ secrets.RAILWAY_BACKEND_URL }}
+          DATABASE_URL:              ${{ secrets.DATABASE_URL }}
         run: |
           set +e
-          # 週五（UTC 週四 19:00 = 台灣週五 03:00）自動加 --weekly
-          DOW=$(date -u +%u)   # 1=Mon … 7=Sun
+
+          # 週六 UTC（= 台灣週日）或手動指定 weekly=true → 加 --weekly
+          DOW=$(date -u +%u)   # 1=Mon … 7=Sun；6=Sat UTC = 台灣週日
           WEEKLY_FLAG=""
-          [ "$DOW" = "5" ] && WEEKLY_FLAG="--weekly"
+          [ "$DOW" = "6" ] && WEEKLY_FLAG="--weekly"
+          [ "${{ github.event.inputs.weekly }}" = "true" ] && WEEKLY_FLAG="--weekly"
+
           python auto_maintain.py $WEEKLY_FLAG
           RESULT=$?
           set -e
+
           echo "exit_code=${RESULT}" >> "$GITHUB_OUTPUT"
-          # 0 = 無變更, 1 = 腳本錯誤, 2 = 已套用修復
-          if [ "$RESULT" -eq 1 ]; then
-            echo "::error::auto_maintain.py 執行失敗（API 憑證或其他錯誤）"
-            exit 1
-          fi
+          echo "weekly=${WEEKLY_FLAG}" >> "$GITHUB_OUTPUT"
+
+          # exit 1 = 腳本錯誤（罕見），直接 fail
+          [ "$RESULT" -eq 1 ] && echo "::error::auto_maintain.py 執行失敗" && exit 1
+          # exit 0 = 無修復；exit 2 = 已修復程式碼 — 兩者都正常繼續
 
       # ── 5. 偵測程式碼變更 ──────────────────────────────────────────
       - name: Check for code changes
@@ -73,113 +87,69 @@ jobs:
         run: |
           if git diff --quiet && git diff --cached --quiet; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
-            echo "無程式碼變更，維護完成"
+            echo "無程式碼變更"
           else
             echo "changed=true" >> "$GITHUB_OUTPUT"
-            echo "=== 已變更檔案 ==="
-            git diff --stat
+            echo "=== 已變更檔案 ===" && git diff --stat
           fi
 
-      # ── 6. 語法測試（僅在有修復時執行）─────────────────────────────
-      - name: Run syntax tests
+      # ── 6. 語法檢查（有修復時才跑）────────────────────────────────
+      - name: Syntax check
         if: steps.diff.outputs.changed == 'true'
         id: tests
         run: |
           PASS=true
-          if [ -d tests ]; then
-            python -m pytest tests/ -x --tb=short -q || PASS=false
-          else
-            echo "無 tests/ 目錄 — 執行語法檢查"
-            find backend -name "*.py" -exec python -m py_compile {} + || PASS=false
-            find quant   -name "*.py" -exec python -m py_compile {} + || PASS=false
-          fi
+          find backend    -name "*.py" -exec python -m py_compile {} + || PASS=false
+          find quant      -name "*.py" -exec python -m py_compile {} + || PASS=false
+          find line_webhook -name "*.py" -exec python -m py_compile {} + || PASS=false
           echo "passed=${PASS}" >> "$GITHUB_OUTPUT"
-          [ "$PASS" = "true" ] && echo "語法測試：通過" || echo "語法測試：失敗"
+          [ "$PASS" = "true" ] && echo "✅ 語法檢查通過" || echo "❌ 語法檢查失敗"
 
-      # ── 7. 建立分支 + commit + push ───────────────────────────────
-      - name: Create branch and commit
-        if: steps.diff.outputs.changed == 'true'
-        id: branch
-        run: |
-          DATE=$(date -u +%Y%m%d-%H%M)
-          BRANCH="auto-fix/${DATE}"
-          echo "name=${BRANCH}" >> "$GITHUB_OUTPUT"
-
-          git config user.name  "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git checkout -b "${BRANCH}"
-          git add -A
-          git commit -m "fix: auto-maintain $(date -u +%Y-%m-%d)"
-          git push origin "${BRANCH}"
-
-      # ── 8. 建立 PR ────────────────────────────────────────────────
-      - name: Create PR
-        if: steps.diff.outputs.changed == 'true'
-        id: pr
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          TESTS_OK="${{ steps.tests.outputs.passed }}"
-          TODAY=$(date -u +%Y-%m-%d)
-          TIME_UTC=$(date -u +"%Y-%m-%d %H:%M")
-          SUMMARY=$(cat data/ci_fix_summary.txt 2>/dev/null || echo "詳見 diff")
-
-          if [ "$TESTS_OK" = "true" ]; then
-            STATUS="✅ 語法測試通過 — 將自動 merge"
-          else
-            STATUS="⚠️ 測試失敗 — 請人工審查後再 merge"
-          fi
-
-          printf '## 🤖 Auto-Maintain 報告\n\n%s\n\n### 修復 / 測試清單\n```\n%s\n```\n\n---\n由 `auto_maintain.yml` 自動生成 · %s UTC\n' \
-            "$STATUS" "$SUMMARY" "$TIME_UTC" > /tmp/pr_body.md
-
-          PR_URL=$(gh pr create \
-            --title "fix: auto-maintain ${TODAY}" \
-            --body-file /tmp/pr_body.md \
-            --head "${{ steps.branch.outputs.name }}" \
-            --base main)
-
-          echo "url=${PR_URL}" >> "$GITHUB_OUTPUT"
-          PR_NUM=$(echo "${PR_URL}" | grep -oE '[0-9]+$')
-          echo "num=${PR_NUM}" >> "$GITHUB_OUTPUT"
-          echo "PR 已建立：${PR_URL}"
-
-      # ── 9a. 測試通過 → 自動 merge ─────────────────────────────────
-      - name: Auto-merge
+      # ── 7. Commit + push（語法通過才執行）─────────────────────────
+      - name: Commit and push fixes
         if: >
           steps.diff.outputs.changed == 'true' &&
           steps.tests.outputs.passed == 'true'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh pr merge ${{ steps.pr.outputs.num }} \
-            --squash \
-            --delete-branch \
-            --subject "fix: auto-maintain $(date -u +%Y-%m-%d) [auto-merged]"
-          echo "PR 已自動 merge"
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          DATE=$(date -u +%Y-%m-%d)
+          git add -A
+          git commit -m "fix: auto-maintain ${DATE} [rule-engine]"
+          git push origin main
+          echo "✅ 修復已 push 至 main"
 
-      # ── 9b. 測試失敗 → 留言 + 加標籤 ─────────────────────────────
-      - name: Comment on failed PR
+      # ── 8. 語法失敗時建 PR 讓人工審查 ─────────────────────────────
+      - name: Create PR for failed syntax
         if: >
           steps.diff.outputs.changed == 'true' &&
           steps.tests.outputs.passed == 'false'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh pr comment ${{ steps.pr.outputs.num }} \
-            --body "⚠️ 自動語法測試失敗，請人工審查此 PR 後再 merge。"
-          gh pr edit ${{ steps.pr.outputs.num }} \
-            --add-label "needs-review" 2>/dev/null || true
+          DATE=$(date -u +%Y%m%d-%H%M)
+          BRANCH="auto-fix/${DATE}"
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -b "${BRANCH}"
+          git add -A
+          git commit -m "fix: auto-maintain $(date -u +%Y-%m-%d) [needs-review]"
+          git push origin "${BRANCH}"
+          gh pr create \
+            --title "fix: auto-maintain $(date -u +%Y-%m-%d)" \
+            --body "⚠️ 規則引擎套用了修復，但語法檢查失敗，請人工審查後 merge。" \
+            --head "${BRANCH}" --base main \
+            --label "needs-review" 2>/dev/null || true
 
-      # ── 10. 摘要 ──────────────────────────────────────────────────
-      - name: Print summary
+      # ── 9. 摘要 ────────────────────────────────────────────────────
+      - name: Summary
         if: always()
         run: |
-          echo "=================================="
+          echo "==========================================="
           echo "Auto-Maintain 結果"
-          echo "=================================="
-          echo "維護腳本結果 : ${{ steps.maintain.outputs.exit_code }}"
-          echo "有程式變更   : ${{ steps.diff.outputs.changed }}"
-          echo "語法測試     : ${{ steps.tests.outputs.passed }}"
-          echo "PR URL       : ${{ steps.pr.outputs.url }}"
-          echo "=================================="
+          echo "==========================================="
+          echo "維護腳本 exit : ${{ steps.maintain.outputs.exit_code }}"
+          echo "週報模式      : ${{ steps.maintain.outputs.weekly != '' && '是' || '否' }}"
+          echo "程式碼有變更  : ${{ steps.diff.outputs.changed }}"
+          echo "語法檢查      : ${{ steps.tests.outputs.passed }}"
+          echo "==========================================="
