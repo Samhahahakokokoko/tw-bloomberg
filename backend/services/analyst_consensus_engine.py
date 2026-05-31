@@ -26,6 +26,7 @@ class ConsensusResult:
     total_analysts:  int
     high_cred_count: int
     key_thesis:      list[str]
+    analyst_names:   list[str] = field(default_factory=list)  # 提及此股的分析師名字
     is_divergent:    bool = False
 
     @property
@@ -42,8 +43,13 @@ class ConsensusResult:
         lines = [
             f"{self.strength_icons} {self.stock_id} {self.stock_name}",
             f"共識強度：{self.consensus_score:.0f}/100",
-            f"提及：{self.total_analysts}位分析師（{self.high_cred_count}位高可信）",
         ]
+        if self.analyst_names:
+            names_str = "、".join(self.analyst_names[:4])
+            suffix = f" 等{len(self.analyst_names)}位" if len(self.analyst_names) > 4 else ""
+            lines.append(f"分析師：{names_str}{suffix}")
+        else:
+            lines.append(f"提及：{self.total_analysts}位分析師（{self.high_cred_count}位高可信）")
         if self.key_thesis:
             lines.append(f"論點：{'、'.join(self.key_thesis[:2])}")
         if self.is_divergent:
@@ -69,6 +75,7 @@ async def calculate_daily_consensus(days: int = 7) -> list[ConsensusResult]:
         win_map    = {a.analyst_id: a.win_rate for a in analysts}
         tier_map   = {a.analyst_id: getattr(a, "tier", "A") for a in analysts}
         spec_map   = {a.analyst_id: getattr(a, "specialty", "") for a in analysts}
+        name_map   = {a.analyst_id: a.name for a in analysts}
 
         r2 = await db.execute(
             select(AnalystCall)
@@ -169,6 +176,19 @@ async def calculate_daily_consensus(days: int = 7) -> list[ConsensusResult]:
                 pass
         unique_thesis = list(dict.fromkeys(all_points))[:3]
 
+        # 收集分析師名字（去重，S/A 優先排序）
+        seen_ids: set[str] = set()
+        sorted_calls = sorted(
+            stock_calls,
+            key=lambda c: {"S": 0, "A": 1, "B": 2, "C": 3}.get(tier_map.get(c.analyst_id, "B"), 2)
+        )
+        analyst_names: list[str] = []
+        for c in sorted_calls:
+            if c.analyst_id not in seen_ids:
+                seen_ids.add(c.analyst_id)
+                display = name_map.get(c.analyst_id) or c.analyst_id
+                analyst_names.append(display)
+
         # 取股票名稱：優先 DB 記錄，若空或等於 stock_id 則從 rt_cache 查詢中文名
         _raw_name = stock_calls[0].stock_name if stock_calls[0].stock_name else ""
         if not _raw_name or _raw_name == stock_id:
@@ -188,6 +208,7 @@ async def calculate_daily_consensus(days: int = 7) -> list[ConsensusResult]:
             total_analysts  = total,
             high_cred_count = high_cred,
             key_thesis      = unique_thesis,
+            analyst_names   = analyst_names,
             is_divergent    = is_divergent,
         ))
 
