@@ -7,22 +7,19 @@ chart_service.py — K 線技術分析圖表產生器（深色主題）
   - RSI(14) 含超買超賣區域
   - MACD（含柱狀圖）
   - 深色背景、中文字體自動偵測
-  - 輸出 PNG 至 static/reports/
+  - 全程 in-memory（BytesIO），不寫入本地檔案系統
 """
 
 from __future__ import annotations
 
+import io
 import logging
 import os
-from datetime import datetime
-from pathlib import Path
 from typing import Optional
 
 import matplotlib
 matplotlib.use("Agg")  # 必須在 pyplot import 之前，避免 Tkinter/GUI 依賴
 import matplotlib.pyplot as plt
-import matplotlib.patches as mpatches
-from matplotlib.patches import Rectangle
 import matplotlib.ticker as mticker
 import numpy as np
 
@@ -56,12 +53,6 @@ for _fp in _FONT_CANDIDATES:
 if not _font_loaded:
     plt.rcParams["axes.unicode_minus"] = False
     logger.warning("[chart_service] 未找到 CJK 字體，中文可能顯示方塊")
-
-# ── 輸出目錄（相對於專案根目錄）────────────────────────────────────────────────
-
-_PROJECT_ROOT = Path(__file__).parent.parent.parent
-STATIC_DIR = _PROJECT_ROOT / "static" / "reports"
-STATIC_DIR.mkdir(parents=True, exist_ok=True)
 
 # ── 顏色配置（深色主題）─────────────────────────────────────────────────────────
 
@@ -205,8 +196,8 @@ async def generate_chart(
     stock_code: str,
     kline_data: list[dict],
     name: str = "",
-) -> Path:
-    """產生 K 線技術分析圖表並儲存為 PNG，在執行緒中執行以免阻塞 event loop。"""
+) -> bytes:
+    """產生 K 線技術分析圖表，回傳 PNG bytes（全程 in-memory，不寫檔）。"""
     import asyncio
     return await asyncio.to_thread(_generate_chart_sync, stock_code, kline_data, name)
 
@@ -215,18 +206,13 @@ def _generate_chart_sync(
     stock_code: str,
     kline_data: list[dict],
     name: str = "",
-) -> Path:
+) -> bytes:
     s = _STYLE
-
-    # ── 輸出檔名 ───────────────────────────────────────────────────────────────
-    today_str = datetime.now().strftime("%Y%m%d")
-    output_path = STATIC_DIR / f"chart_{stock_code}_{today_str}.png"
 
     # ── 資料驗證與預處理 ────────────────────────────────────────────────────────
     if not kline_data:
         logger.warning(f"[chart_service] {stock_code} kline_data 為空，產生空白圖")
-        _save_placeholder(output_path, stock_code, "無資料")
-        return output_path
+        return _placeholder_bytes(stock_code, "無資料")
 
     # 過濾並確保欄位型別
     rows: list[dict] = []
@@ -245,8 +231,7 @@ def _generate_chart_sync(
 
     if not rows:
         logger.warning(f"[chart_service] {stock_code} 有效資料為空")
-        _save_placeholder(output_path, stock_code, "資料解析失敗")
-        return output_path
+        return _placeholder_bytes(stock_code, "資料解析失敗")
 
     n = len(rows)
     x_idx = np.arange(n)
@@ -478,23 +463,25 @@ def _generate_chart_sync(
     # ── X 軸刻度：每隔一段顯示日期，旋轉 30° ─────────────────────────────────
     _set_xaxis(ax_macd, x_idx, dates, n)
 
-    # ── 儲存 ─────────────────────────────────────────────────────────────────────
+    # ── 輸出為 bytes（in-memory，不寫檔）────────────────────────────────────────
+    buf = io.BytesIO()
     try:
         fig.savefig(
-            str(output_path),
+            buf,
+            format="png",
             dpi=120,
             bbox_inches="tight",
             facecolor=s["fig_facecolor"],
             edgecolor="none",
         )
-        logger.info(f"[chart_service] 圖表已儲存：{output_path}")
+        logger.info(f"[chart_service] {stock_code} 圖表已生成（{buf.tell()} bytes）")
     except Exception as e:
-        logger.error(f"[chart_service] 儲存失敗: {e}")
+        logger.error(f"[chart_service] 生成失敗: {e}")
         raise
     finally:
         plt.close(fig)
 
-    return output_path
+    return buf.getvalue()
 
 
 # ── 內部輔助函式 ─────────────────────────────────────────────────────────────────
@@ -534,8 +521,8 @@ def _set_xaxis(
     ax.set_xlim(-0.5, n - 0.5)
 
 
-def _save_placeholder(output_path: Path, stock_code: str, msg: str) -> None:
-    """儲存一張帶提示訊息的空白深色佔位圖"""
+def _placeholder_bytes(stock_code: str, msg: str) -> bytes:
+    """回傳帶提示訊息的空白深色佔位圖 bytes"""
     s = _STYLE
     fig, ax = plt.subplots(figsize=(12, 10), dpi=120)
     fig.patch.set_facecolor(s["fig_facecolor"])
@@ -548,7 +535,8 @@ def _save_placeholder(output_path: Path, stock_code: str, msg: str) -> None:
         ha="center", va="center",
         color=s["text_color"], fontsize=18, alpha=0.7,
     )
-    fig.savefig(str(output_path), dpi=120, bbox_inches="tight",
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", dpi=120, bbox_inches="tight",
                 facecolor=s["fig_facecolor"], edgecolor="none")
     plt.close(fig)
-    logger.info(f"[chart_service] 佔位圖已儲存：{output_path}")
+    return buf.getvalue()

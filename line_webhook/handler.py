@@ -4431,20 +4431,43 @@ async def _chart_bg(code: str, uid: str) -> None:
         q = await fetch_realtime_quote(code)
         name = (q.get("name") or code) if q else code
 
-        path = await generate_chart(code, kline, name)
-        base_url = os.getenv("BASE_URL", os.getenv("RAILWAY_BACKEND_URL", "")).rstrip("/")
+        png_bytes = await generate_chart(code, kline, name)
+        token = os.getenv("LINE_CHANNEL_ACCESS_TOKEN", "")
+        content_url = await _upload_image_to_line(png_bytes, token) if token else None
 
-        if base_url:
-            url = f"{base_url}/static/reports/{path.name}"
-            msg = {"type": "image", "originalContentUrl": url, "previewImageUrl": url}
+        if content_url:
+            msg = {"type": "image", "originalContentUrl": content_url, "previewImageUrl": content_url}
         else:
-            msg = {"type": "text", "text": f"📊 {code} {name} 技術分析圖已生成（需設定 BASE_URL 才能顯示）"}
+            msg = {"type": "text", "text": f"📊 {code} {name} 技術分析圖生成完成（上傳失敗，請稍後再試）"}
 
         await push_line_messages(uid, [msg], timeout=20, context="handler.chart_bg")
     except Exception as e:
         logger.error(f"[chart_bg] {code}: {e}", exc_info=True)
         await push_line_messages(uid, [{"type": "text", "text": f"❌ {code} 圖表生成失敗，請稍後再試"}],
                                  timeout=15, context="handler.chart_bg.error")
+
+
+async def _upload_image_to_line(png_bytes: bytes, token: str) -> str | None:
+    """上傳 PNG bytes 到 LINE Content API，回傳可用於 image message 的 URL。"""
+    import httpx
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.post(
+                "https://api-data.line.me/v2/bot/message/upload/multipart",
+                headers={"Authorization": f"Bearer {token}"},
+                files={"imageFile": ("chart.png", png_bytes, "image/png")},
+                data={"type": "image"},
+            )
+        if resp.status_code == 200:
+            msg_id = resp.json().get("messageId", "")
+            if msg_id:
+                url = f"https://api-data.line.me/v2/bot/message/{msg_id}/content"
+                logger.info(f"[chart] LINE upload OK: {url}")
+                return url
+        logger.warning(f"[chart] LINE upload {resp.status_code}: {resp.text[:200]}")
+    except Exception as e:
+        logger.error(f"[chart] LINE upload error: {e}")
+    return None
 
 
 # ── /compare v2 (純文字) ──────────────────────────────────────────────────────
