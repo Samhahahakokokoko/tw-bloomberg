@@ -4412,6 +4412,7 @@ async def _execute_fixes_bg(uid: str, fix_ids: list[int] | None) -> None:
 
 async def _cmd_chart(code: str, uid: str) -> list:
     """/chart 2330 — 個股技術分析圖（非同步產生後推送）"""
+    print(f"[chart] 開始產生圖表 code={code}", flush=True)
     import asyncio
     asyncio.create_task(_chart_bg(code, uid))
     return [_text(
