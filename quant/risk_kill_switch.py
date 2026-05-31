@@ -189,32 +189,23 @@ def _push_recovery(reason: str):
 def _push_line(text: str):
     try:
         import asyncio
-        import httpx
 
         async def _send():
             try:
                 from backend.models.database import settings, AsyncSessionLocal
                 from backend.models.models import Subscriber
+                from backend.services.line_push import multicast_line_messages
                 from sqlalchemy import select
-                token = settings.line_channel_access_token
-                if not token:
+                if not settings.line_channel_access_token:
                     return
                 async with AsyncSessionLocal() as db:
                     r = await db.execute(
                         select(Subscriber).where(Subscriber.subscribed_morning == True)
                     )
                     subs = r.scalars().all()
-                headers = {"Authorization": f"Bearer {token}"}
-                async with httpx.AsyncClient(timeout=20) as c:
-                    for sub in subs:
-                        try:
-                            await c.post(
-                                "https://api.line.me/v2/bot/message/push",
-                                json={"to": sub.line_user_id, "messages": [{"type": "text", "text": text}]},
-                                headers=headers,
-                            )
-                        except Exception:
-                            pass
+                uids = [s.line_user_id for s in subs if s.line_user_id]
+                if uids:
+                    await multicast_line_messages(uids, [{"type": "text", "text": text}], timeout=20, context="kill_switch.push")
             except Exception as e:
                 logger.warning("[KillSwitch] LINE push failed: %s", e)
 

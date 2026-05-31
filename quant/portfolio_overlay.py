@@ -15,8 +15,6 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Optional
 
-import httpx
-
 logger = logging.getLogger(__name__)
 
 # ── 燈號門檻 ──────────────────────────────────────────────────────────────────
@@ -301,17 +299,9 @@ class PortfolioOverlay:
     async def push(self, signals: list[HoldingSignal], uid: str, token: str) -> None:
         if not signals or not token:
             return
-        report  = self.format_report(signals)
-        headers = {"Authorization": f"Bearer {token}"}
-        try:
-            async with httpx.AsyncClient(timeout=15) as c:
-                await c.post(
-                    "https://api.line.me/v2/bot/message/push",
-                    json={"to": uid, "messages": [{"type": "text", "text": report[:4800]}]},
-                    headers=headers,
-                )
-        except Exception as e:
-            logger.error("[PortfolioOverlay] push failed: %s", e)
+        from backend.services.line_push import push_line_messages
+        report = self.format_report(signals)
+        await push_line_messages(uid, [{"type": "text", "text": report[:4800]}], token=token, timeout=15, context="portfolio_overlay.push")
 
     async def push_all_subscribers(self, token: str) -> int:
         try:

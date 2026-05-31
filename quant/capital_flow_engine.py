@@ -228,7 +228,7 @@ class CapitalFlowEngine:
         """主線資金連續流出 → 推送警告"""
         if not snap.rotation_warning or not token:
             return
-        import httpx
+        from backend.services.line_push import multicast_line_messages
         try:
             from backend.models.database import AsyncSessionLocal
             from backend.models.models import Subscriber
@@ -236,21 +236,14 @@ class CapitalFlowEngine:
             async with AsyncSessionLocal() as db:
                 r    = await db.execute(select(Subscriber))
                 subs = r.scalars().all()
-            msg     = (
+            msg = (
                 f"⚠️ 資金輪動警告\n\n"
                 f"主線（{snap.top_inflow_sector}）資金已連續 {abs(snap.main_flow_days)} 日流出\n"
                 f"留意族群切換，降低暴露比例"
             )
-            headers = {"Authorization": f"Bearer {token}"}
-            async with httpx.AsyncClient(timeout=15) as c:
-                for sub in subs:
-                    uid = sub.line_user_id
-                    if uid:
-                        await c.post(
-                            "https://api.line.me/v2/bot/message/push",
-                            json={"to": uid, "messages": [{"type": "text", "text": msg}]},
-                            headers=headers,
-                        )
+            uids = [s.line_user_id for s in subs if s.line_user_id]
+            if uids:
+                await multicast_line_messages(uids, [{"type": "text", "text": msg}], token=token, timeout=15, context="capital_flow.push_warning")
         except Exception as e:
             logger.error("[CapitalFlow] push_warning failed: %s", e)
 

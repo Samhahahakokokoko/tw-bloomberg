@@ -11,6 +11,7 @@ class Settings(BaseSettings):
     line_channel_access_token: str = ""
     line_channel_secret: str = ""
     admin_api_token: str = ""
+    admin_line_uid: str = ""
     finmind_token: str = ""
     youtube_api_key: str = ""
 

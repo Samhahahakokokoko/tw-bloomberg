@@ -253,7 +253,7 @@ class MetaAlphaEngine:
 
     async def push_weekly_report(self, token: str) -> None:
         """推送週報給所有訂閱者"""
-        import httpx
+        from backend.services.line_push import multicast_line_messages
         report = await self.run_weekly()
         text   = report.format_line()
         try:
@@ -263,16 +263,9 @@ class MetaAlphaEngine:
             async with AsyncSessionLocal() as db:
                 r    = await db.execute(select(Subscriber))
                 subs = r.scalars().all()
-            headers = {"Authorization": f"Bearer {token}"}
-            async with httpx.AsyncClient(timeout=15) as c:
-                for sub in subs:
-                    uid = sub.line_user_id
-                    if uid:
-                        await c.post(
-                            "https://api.line.me/v2/bot/message/push",
-                            json={"to": uid, "messages": [{"type": "text", "text": text[:4800]}]},
-                            headers=headers,
-                        )
+            uids = [s.line_user_id for s in subs if s.line_user_id]
+            if uids:
+                await multicast_line_messages(uids, [{"type": "text", "text": text[:4800]}], token=token, timeout=15, context="meta_alpha.push_weekly")
         except Exception as e:
             logger.error("[MetaAlpha] push failed: %s", e)
 

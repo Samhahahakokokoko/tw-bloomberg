@@ -206,23 +206,16 @@ async def generate_chart(
     kline_data: list[dict],
     name: str = "",
 ) -> Path:
-    """
-    產生 K 線技術分析圖表並儲存為 PNG。
+    """產生 K 線技術分析圖表並儲存為 PNG，在執行緒中執行以免阻塞 event loop。"""
+    import asyncio
+    return await asyncio.to_thread(_generate_chart_sync, stock_code, kline_data, name)
 
-    Parameters
-    ----------
-    stock_code : str
-        股票代碼，例如 "2330"
-    kline_data : list[dict]
-        K 線資料，每筆包含 date / open / high / low / close / volume
-    name : str
-        股票名稱（選填），顯示於圖表標題
 
-    Returns
-    -------
-    Path
-        儲存的 PNG 檔案路徑
-    """
+def _generate_chart_sync(
+    stock_code: str,
+    kline_data: list[dict],
+    name: str = "",
+) -> Path:
     s = _STYLE
 
     # ── 輸出檔名 ───────────────────────────────────────────────────────────────

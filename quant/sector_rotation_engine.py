@@ -321,7 +321,7 @@ class SectorRotationEngine:
 
     async def push_report(self, token: str) -> None:
         """推送族群熱度報告給所有訂閱者"""
-        import httpx
+        from backend.services.line_push import multicast_line_messages
         try:
             from backend.models.database import AsyncSessionLocal
             from backend.models.models import Subscriber
@@ -335,16 +335,9 @@ class SectorRotationEngine:
             report    = self.format_report(strengths, signal)
             await self.save_snapshot(strengths)
 
-            headers = {"Authorization": f"Bearer {token}"}
-            async with httpx.AsyncClient(timeout=15) as c:
-                for sub in subs:
-                    uid = sub.line_user_id
-                    if uid:
-                        await c.post(
-                            "https://api.line.me/v2/bot/message/push",
-                            json={"to": uid, "messages": [{"type": "text", "text": report[:4800]}]},
-                            headers=headers,
-                        )
+            uids = [s.line_user_id for s in subs if s.line_user_id]
+            if uids:
+                await multicast_line_messages(uids, [{"type": "text", "text": report[:4800]}], token=token, timeout=15, context="sector_rotation.push_report")
         except Exception as e:
             logger.error("[SectorRotation] push failed: %s", e)
 

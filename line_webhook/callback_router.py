@@ -319,8 +319,7 @@ def _register_default_routes(router: CallbackRouter) -> None:
 
 async def _mc_bg(strategy: str, uid: str) -> None:
     """背景：蒙地卡羅 + 推送圖片"""
-    import httpx
-    from backend.models.database import settings as line_settings
+    from backend.services.line_push import push_line_messages
 
     try:
         from quant.montecarlo_engine import MonteCarloEngine
@@ -350,10 +349,6 @@ async def _mc_bg(strategy: str, uid: str) -> None:
         )
         msgs.append({"type": "text", "text": text})
 
-        headers = {"Authorization": f"Bearer {line_settings.line_channel_access_token}"}
-        async with httpx.AsyncClient(timeout=20) as c:
-            await c.post("https://api.line.me/v2/bot/message/push",
-                         json={"to": uid, "messages": msgs[:5]},
-                         headers=headers)
+        await push_line_messages(uid, msgs[:5], timeout=20, context="callback.mc_bg")
     except Exception as e:
         logger.error("[mc_bg] %s", e)
