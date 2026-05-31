@@ -279,3 +279,108 @@ def _safe_float(val) -> float | None:
         return float(str(val).replace(",", ""))
     except (ValueError, TypeError):
         return None
+
+
+# ── 法說會日曆（MOPS 公開資訊觀測站）────────────────────────────────────────
+
+async def get_investor_meetings(days: int = 30) -> list[dict]:
+    """抓取 MOPS 法說會資訊（未來 N 天）"""
+    import re
+    now = date.today()
+    end = now + timedelta(days=days)
+    b_date = now.strftime("%Y/%m/%d")
+    e_date = end.strftime("%Y/%m/%d")
+
+    try:
+        async with httpx.AsyncClient(timeout=25, follow_redirects=True) as client:
+            resp = await client.post(
+                "https://mops.twse.com.tw/mops/web/ajax_t05st27",
+                data={
+                    "encodeURIComponent": "1",
+                    "step": "1",
+                    "firstin": "1",
+                    "b_date": b_date,
+                    "e_date": e_date,
+                },
+                headers={
+                    "Content-Type": "application/x-www-form-urlencoded",
+                    "User-Agent": "Mozilla/5.0",
+                },
+            )
+        if resp.status_code != 200:
+            logger.warning(f"MOPS investor meeting fetch: HTTP {resp.status_code}")
+            return []
+        return _parse_mops_meetings(resp.text)
+    except Exception as e:
+        logger.error(f"Investor meetings fetch error: {e}")
+        return []
+
+
+def _parse_mops_meetings(html: str) -> list[dict]:
+    import re
+    meetings: list[dict] = []
+    rows = re.findall(r'<tr[^>]*>(.*?)</tr>', html, re.DOTALL | re.IGNORECASE)
+    for row in rows:
+        cells = re.findall(r'<td[^>]*>(.*?)</td>', row, re.DOTALL | re.IGNORECASE)
+        cells = [re.sub(r'<[^>]+>', '', c).strip() for c in cells]
+        cells = [c.replace('&nbsp;', ' ').replace('&amp;', '&').strip() for c in cells]
+        # Typical MOPS t05st27 columns:
+        # 日期 | 股票代號 | 公司名稱 | 法說會時間 | 地點/備註
+        if len(cells) >= 3 and re.match(r'\d{4}/\d{2}/\d{2}', cells[0]):
+            meetings.append({
+                "date":     cells[0],
+                "code":     cells[1] if len(cells) > 1 else "",
+                "name":     cells[2] if len(cells) > 2 else "",
+                "time":     cells[3] if len(cells) > 3 else "",
+                "location": cells[4] if len(cells) > 4 else "",
+            })
+    return meetings
+
+
+def format_investor_calendar(meetings: list[dict]) -> str:
+    if not meetings:
+        return (
+            "📅 法說會日曆（未來 30 天）\n"
+            "─" * 22 + "\n"
+            "暫無法說會資料\n\n"
+            "資料來源：公開資訊觀測站"
+        )
+
+    lines = [
+        f"📅 法說會日曆（未來 30 天）",
+        f"共 {len(meetings)} 場",
+        "─" * 22,
+    ]
+    for m in meetings[:15]:
+        d    = m.get("date", "")[-5:]   # MM/DD
+        code = m.get("code", "")
+        name = m.get("name", "")[:8]
+        t    = m.get("time", "")[:5]
+        lines.append(f"{d}  {code} {name}  {t}".rstrip())
+
+    if len(meetings) > 15:
+        lines.append(f"...另有 {len(meetings) - 15} 場")
+    lines.append("\n資料來源：MOPS 公開資訊觀測站")
+    return "\n".join(lines)
+
+
+async def push_weekly_investor_meetings():
+    """每週一推送本週法說會給所有訂閱者"""
+    from ..models.database import AsyncSessionLocal, settings
+    from ..models.models import Subscriber
+    from sqlalchemy import select
+    from .morning_report import _push_to_users
+
+    meetings = await get_investor_meetings(days=7)
+    text = format_investor_calendar(meetings)
+
+    async with AsyncSessionLocal() as db:
+        r = await db.execute(
+            select(Subscriber).where(Subscriber.subscribed_morning == True)
+        )
+        subs = r.scalars().all()
+
+    if not subs:
+        return
+    await _push_to_users([s.line_user_id for s in subs], text)
+    logger.info(f"[earnings] weekly investor meetings pushed to {len(subs)} subscribers")

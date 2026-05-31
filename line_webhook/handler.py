@@ -702,14 +702,17 @@ async def _handle_text(text: str, uid: str) -> list:
     if cmd == "/recommend":
         regime_arg = parts[1] if len(parts) > 1 else "unknown"
         return await _cmd_recommend(regime_arg)
+    if cmd == "/chart" and len(parts) >= 2:
+        return await _cmd_chart(parts[1].upper(), uid)
     if cmd == "/odd" and len(parts) >= 2:
-        # /odd 5000 2330  或  /odd 5000（預設推薦組合）
-        budget_str = parts[1]
-        code_arg   = parts[2] if len(parts) > 2 else None
-        return await _cmd_odd(budget_str, code_arg, uid)
+        arg1 = parts[1]
+        arg2 = parts[2] if len(parts) > 2 else None
+        # /odd 2330 5000 format (code first) vs /odd 5000 [2330] (budget first)
+        if arg1.isdigit() and 4 <= len(arg1) <= 6 and arg2 and arg2.replace(",", "").replace(".", "").isdigit():
+            return await _cmd_odd_v2(arg1, arg2, uid)
+        return await _cmd_odd(arg1, arg2, uid)
     if cmd == "/compare" and len(parts) >= 3:
-        codes = parts[1:]   # 支援 2~3 支股票
-        return await _cmd_compare_image(codes, uid)
+        return await _cmd_compare_v2(parts[1].upper(), parts[2].upper(), uid)
     if cmd == "/strategy" and len(parts) >= 2:
         return await _cmd_strategy_analyze(parts[1])
     if cmd == "/track" and len(parts) >= 2:
@@ -3509,23 +3512,33 @@ async def _cmd_insider(code: str, uid: str) -> list:
 
 
 async def _cmd_earnings(code: str, uid: str) -> list:
-    """/earnings [代碼] — 財報分析或行事曆"""
+    """/earnings [代碼] — 法說會日曆（無代碼）或個股財報（有代碼）"""
+    if not code:
+        # 無代碼 → 法說會日曆
+        try:
+            from backend.services.earnings_service import (
+                get_investor_meetings, format_investor_calendar,
+            )
+            meetings = await get_investor_meetings(days=30)
+            text = format_investor_calendar(meetings)
+            return [_text(text, qr_items(
+                ("台積電財報", "/earnings 2330"),
+                ("聯發科財報", "/earnings 2454"),
+                ("刷新", "/earnings"),
+            ))]
+        except Exception as e:
+            logger.error(f"[earnings calendar] {e}")
+            return [_text("❌ 法說會日曆讀取失敗，請稍後再試")]
+    # 有代碼 → 個股財報分析
     try:
         from backend.services.earnings_intelligence import (
-            analyze_earnings, format_earnings_calendar, get_upcoming_earnings
+            analyze_earnings, format_earnings_calendar, get_upcoming_earnings,
         )
-        if code:
-            result = await analyze_earnings(code)
-            if result:
-                return [TextMessage(text=result.to_line_text(),
-                                    quick_reply=_make_qr(result.to_line_qr()))]
-            return [_text(f"❌ 查無 {code} 財報資料")]
-        items = await get_upcoming_earnings(days=14)
-        text  = format_earnings_calendar(items)
-        return [_text(text, qr_items(
-            ("台積電", "/earnings 2330"),
-            ("聯發科", "/earnings 2454"),
-        ))]
+        result = await analyze_earnings(code)
+        if result:
+            return [TextMessage(text=result.to_line_text(),
+                                quick_reply=_make_qr(result.to_line_qr()))]
+        return [_text(f"❌ 查無 {code} 財報資料")]
     except Exception as e:
         logger.error(f"[earnings] {e}")
         return [_text("❌ 財報查詢失敗，請稍後再試")]
@@ -4382,3 +4395,228 @@ async def _execute_fixes_bg(uid: str, fix_ids: list[int] | None) -> None:
     except Exception as e:
         logger.error(f"[execute_fixes_bg] {e}", exc_info=True)
         await push_line_messages(uid, [{"type": "text", "text": f"❌ 執行失敗：{e}"}], timeout=15, context="handler.execute_fixes.error")
+
+
+# ── /chart ────────────────────────────────────────────────────────────────────
+
+async def _cmd_chart(code: str, uid: str) -> list:
+    """/chart 2330 — 個股技術分析圖（非同步產生後推送）"""
+    import asyncio
+    asyncio.create_task(_chart_bg(code, uid))
+    return [_text(
+        f"📊 正在生成 {code} 技術分析圖\n包含 K線/MA/RSI/MACD…約需 5-10 秒",
+        qr_items((f"報價 {code}", f"/quote {code}"), ("大盤", "/market")),
+    )]
+
+
+async def _chart_bg(code: str, uid: str) -> None:
+    try:
+        from backend.services.chart_service import generate_chart
+        from backend.services.twse_service import fetch_kline, fetch_realtime_quote
+
+        kline = await fetch_kline(code)
+        if not kline:
+            await push_line_messages(uid, [{"type": "text", "text": f"❌ {code} 無 K 線資料"}],
+                                     timeout=15, context="handler.chart_bg.no_kline")
+            return
+
+        q = await fetch_realtime_quote(code)
+        name = (q.get("name") or code) if q else code
+
+        path = await generate_chart(code, kline, name)
+        base_url = os.getenv("BASE_URL", os.getenv("RAILWAY_BACKEND_URL", "")).rstrip("/")
+
+        if base_url:
+            url = f"{base_url}/static/reports/{path.name}"
+            msg = {"type": "image", "originalContentUrl": url, "previewImageUrl": url}
+        else:
+            msg = {"type": "text", "text": f"📊 {code} {name} 技術分析圖已生成（需設定 BASE_URL 才能顯示）"}
+
+        await push_line_messages(uid, [msg], timeout=20, context="handler.chart_bg")
+    except Exception as e:
+        logger.error(f"[chart_bg] {code}: {e}", exc_info=True)
+        await push_line_messages(uid, [{"type": "text", "text": f"❌ {code} 圖表生成失敗，請稍後再試"}],
+                                 timeout=15, context="handler.chart_bg.error")
+
+
+# ── /compare v2 (純文字) ──────────────────────────────────────────────────────
+
+async def _cmd_compare_v2(code_a: str, code_b: str, uid: str) -> list:
+    """/compare CODE_A CODE_B — 並排比較兩股（純文字 + AI 建議）"""
+    import asyncio
+    try:
+        qa, qb = await asyncio.gather(
+            fetch_realtime_quote(code_a),
+            fetch_realtime_quote(code_b),
+            return_exceptions=True,
+        )
+        qa = qa if isinstance(qa, dict) else {}
+        qb = qb if isinstance(qb, dict) else {}
+    except Exception:
+        qa, qb = {}, {}
+
+    def _get(q, *keys, default=0.0):
+        for k in keys:
+            v = q.get(k)
+            if v is not None:
+                try:
+                    return float(v)
+                except (ValueError, TypeError):
+                    pass
+        return default
+
+    def _s(v, fmt=".2f"):
+        return f"{v:{fmt}}" if v else "N/A"
+
+    pa   = _get(qa, "close", "price")
+    pb   = _get(qb, "close", "price")
+    ca   = _get(qa, "change_pct")
+    cb   = _get(qb, "change_pct")
+    pea  = _get(qa, "pe_ratio", "pe")
+    peb  = _get(qb, "pe_ratio", "pe")
+    dya  = _get(qa, "dividend_yield", "yield")
+    dyb  = _get(qb, "dividend_yield", "yield")
+    na   = qa.get("name") or code_a
+    nb   = qb.get("name") or code_b
+
+    # Try to get 1-month return from kline
+    async def _month_ret(code):
+        try:
+            from backend.services.twse_service import fetch_kline
+            kl = await fetch_kline(code)
+            if kl and len(kl) >= 20:
+                c0 = float(kl[-20].get("close") or 0)
+                c1 = float(kl[-1].get("close") or 0)
+                if c0 > 0:
+                    return (c1 - c0) / c0 * 100
+        except Exception:
+            pass
+        return None
+
+    mr_a, mr_b = await asyncio.gather(_month_ret(code_a), _month_ret(code_b))
+
+    # Scoring for AI recommendation (higher is better)
+    score_a = score_b = 0
+    notes_a: list[str] = []
+    notes_b: list[str] = []
+
+    if ca > cb:
+        score_a += 1; notes_a.append("近日強勢")
+    elif cb > ca:
+        score_b += 1; notes_b.append("近日強勢")
+
+    if mr_a is not None and mr_b is not None:
+        if mr_a > mr_b:
+            score_a += 1; notes_a.append("月漲幅領先")
+        elif mr_b > mr_a:
+            score_b += 1; notes_b.append("月漲幅領先")
+
+    if 0 < pea < peb or (pea > 0 and peb == 0):
+        score_a += 1; notes_a.append("本益比較低")
+    elif 0 < peb < pea or (peb > 0 and pea == 0):
+        score_b += 1; notes_b.append("本益比較低")
+
+    if dya > dyb:
+        score_a += 1; notes_a.append("殖利率較高")
+    elif dyb > dya:
+        score_b += 1; notes_b.append("殖利率較高")
+
+    if score_a >= score_b:
+        rec_code, rec_name, rec_notes = code_a, na, notes_a
+    else:
+        rec_code, rec_name, rec_notes = code_b, nb, notes_b
+
+    reason = "、".join(rec_notes) if rec_notes else "綜合評估略優"
+
+    def pct_str(v):
+        return f"{v:+.2f}%" if v is not None else "N/A"
+
+    col_w = max(len(code_a), len(code_b), 4) + 2
+
+    lines = [
+        f"⚖️ 個股比較",
+        f"{'─' * 24}",
+        f"{'項目':<8}  {code_a:<{col_w}}  {code_b}",
+        f"{'公司':<8}  {na[:6]:<{col_w}}  {nb[:6]}",
+        f"{'現價':<8}  {_s(pa, ',.0f'):<{col_w}}  {_s(pb, ',.0f')}",
+        f"{'今日漲跌':<6}  {pct_str(ca):<{col_w}}  {pct_str(cb)}",
+        f"{'月漲幅':<7}  {pct_str(mr_a):<{col_w}}  {pct_str(mr_b)}",
+        f"{'本益比':<7}  {_s(pea, '.1f') if pea else 'N/A':<{col_w}}  {_s(peb, '.1f') if peb else 'N/A'}",
+        f"{'殖利率':<7}  {_s(dya, '.2f')+'%' if dya else 'N/A':<{col_w}}  {_s(dyb, '.2f')+'%' if dyb else 'N/A'}",
+        f"{'─' * 24}",
+        f"🤖 建議關注：{rec_code} {rec_name}",
+        f"   原因：{reason}",
+    ]
+
+    return [_text("\n".join(lines), qr_items(
+        (f"查 {code_a}", f"/quote {code_a}"),
+        (f"查 {code_b}", f"/quote {code_b}"),
+        (f"AI {code_a}", f"/ai {code_a}"),
+        (f"AI {code_b}", f"/ai {code_b}"),
+    ))]
+
+
+# ── /odd v2 (新格式：CODE BUDGET) ─────────────────────────────────────────────
+
+async def _cmd_odd_v2(code: str, budget_str: str, uid: str) -> list:
+    """/odd 2330 5000 — 零股試算（代碼在前，金額在後）"""
+    try:
+        budget = float(budget_str.replace(",", ""))
+    except ValueError:
+        return [_text("格式：/odd 2330 5000")]
+
+    try:
+        quote = await fetch_realtime_quote(code)
+        price = float(quote.get("close") or quote.get("price") or 0)
+        name  = quote.get("name") or code
+    except Exception:
+        price, name = 0.0, code
+
+    if price <= 0:
+        return [_text(f"無法取得 {code} 現價，請稍後再試")]
+
+    shares = int(budget // price)
+    if shares <= 0:
+        return [_text(
+            f"📌 {code} {name}\n"
+            f"現價：{price:,.2f} 元\n"
+            f"{budget:,.0f} 元不足以買 1 股（至少需 {price:,.0f} 元）"
+        )]
+
+    actual_cost = shares * price
+    fee_rate    = 0.001425
+    fee         = max(20.0, actual_cost * fee_rate)
+    fee_pct     = fee / actual_cost * 100 if actual_cost > 0 else 0
+    remaining   = budget - actual_cost - fee
+
+    # 手續費低於 2% 所需最低金額
+    min_cost_for_2pct = 20.0 / fee_rate          # 約 14,035 元
+    min_shares        = max(1, int(min_cost_for_2pct / price) + 1)
+    min_budget        = min_shares * price
+
+    lines = [
+        f"🔢 零股試算",
+        f"{'─' * 22}",
+        f"股票：{code} {name}",
+        f"現價：{price:,.2f} 元",
+        f"預算：{budget:,.0f} 元",
+        f"可買：{shares:,} 股",
+        f"花費：{actual_cost:,.0f} 元",
+        f"手續費：{fee:.0f} 元（{fee_pct:.2f}%）",
+    ]
+
+    if remaining > 0:
+        lines.append(f"剩餘：{remaining:.0f} 元")
+
+    if fee_pct > 2.0:
+        lines += [
+            f"",
+            f"⚠️ 手續費佔比 {fee_pct:.1f}% 超過 2%！",
+            f"建議最低投入 {min_budget:,.0f} 元（{min_shares} 股）",
+        ]
+
+    return [_text("\n".join(lines), qr_items(
+        (f"報價 {code}", f"/quote {code}"),
+        ("💼 庫存", "/portfolio"),
+        ("再試算", f"/odd {code} {budget_str}"),
+    ))]

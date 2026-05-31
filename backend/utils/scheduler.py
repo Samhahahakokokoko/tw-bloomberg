@@ -16,8 +16,7 @@ async def _push_failure_alert(task_name: str, error: str) -> None:
         from ..models.models import Subscriber
         from sqlalchemy import select
 
-        token = settings.line_channel_access_token
-        if not token:
+        if not settings.line_channel_access_token:
             logger.warning("[Scheduler] LINE token 未設定，無法推送失敗通知")
             return
 
@@ -26,7 +25,6 @@ async def _push_failure_alert(task_name: str, error: str) -> None:
             f"錯誤：{str(error)[:200]}\n\n"
             f"請檢查伺服器日誌"
         )
-        headers = {"Authorization": f"Bearer {token}"}
 
         async with AsyncSessionLocal() as db:
             r = await db.execute(select(Subscriber))
@@ -416,6 +414,13 @@ def start_scheduler() -> AsyncIOScheduler:
         id="macro_weekly", replace_existing=True,
     )
 
+    # 每週一 08:10 法說會日曆提醒
+    scheduler.add_job(
+        _push_investor_meetings,
+        CronTrigger(day_of_week="mon", hour=8, minute=10, timezone="Asia/Taipei"),
+        id="investor_meetings_weekly", replace_existing=True,
+    )
+
     # ── 分析師入職沙盒 + DNA 排程 ──────────────────────────────────────────────
 
     # 每日 17:30 沙盒評估（在 YouTube 抓片後）
@@ -462,6 +467,16 @@ def start_scheduler() -> AsyncIOScheduler:
         _run_prediction_market_weekly,
         CronTrigger(day_of_week="fri", hour=19, minute=0, timezone="Asia/Taipei"),
         id="prediction_market_weekly", replace_existing=True,
+    )
+    scheduler.add_job(
+        _run_self_optimizer,
+        CronTrigger(day_of_week="mon-fri", hour=20, minute=0, timezone="Asia/Taipei"),
+        id="self_optimizer", replace_existing=True,
+    )
+    scheduler.add_job(
+        _run_auto_improve,
+        CronTrigger(day_of_week="mon-fri", hour=7, minute=0, timezone="Asia/Taipei"),
+        id="auto_improve", replace_existing=True,
     )
 
     _apply_line_quota_safe_mode(scheduler)
@@ -1446,3 +1461,62 @@ async def _run_prediction_market_weekly():
                     len(expired), snapshot.accuracy_30d * 100)
     except Exception as e:
         logger.error(f"[predict Fri19:00] prediction market weekly failed: {e}")
+
+
+async def _run_auto_improve():
+    """每個交易日 07:00 — 自動掃描 Railway logs 並推送修復計劃"""
+    try:
+        from ..services.fix_engine import (
+            fetch_railway_logs, parse_errors, analyze_with_claude,
+            save_plan, format_plan_for_line,
+        )
+        from ..services.line_push import push_line_messages
+        import os
+
+        api_key = settings.anthropic_api_key
+        admin_uid = settings.admin_line_uid or os.getenv("ADMIN_LINE_UID", "")
+        if not api_key or not admin_uid:
+            logger.warning("[AutoImprove 07:00] ANTHROPIC_API_KEY 或 ADMIN_LINE_UID 未設定，跳過")
+            return
+
+        logs = await fetch_railway_logs(lines=600)
+        if not logs:
+            logger.info("[AutoImprove 07:00] 無可用 logs，跳過")
+            return
+
+        errors = parse_errors(logs)
+        if not errors:
+            logger.info("[AutoImprove 07:00] 未發現錯誤")
+            return
+
+        fixes = await analyze_with_claude(errors, api_key)
+        if not fixes:
+            logger.info("[AutoImprove 07:00] Claude 未產生修復方案")
+            return
+
+        save_plan(fixes, log_snippet=logs[-1000:])
+        message = format_plan_for_line(fixes)
+        await push_line_messages(admin_uid, [{"type": "text", "text": message}], timeout=15, context="auto_improve.scheduler")
+        logger.info(f"[AutoImprove 07:00] 推送 {len(fixes)} 個修復方案給管理員")
+    except Exception as e:
+        logger.error(f"[AutoImprove 07:00] failed: {e}", exc_info=True)
+
+
+async def _run_self_optimizer():
+    """每個交易日 20:00 — 自我優化引擎"""
+    try:
+        from ..services.self_optimizer import run_self_optimizer
+        summary = await run_self_optimizer()
+        logger.info(f"[SelfOpt 20:00] 完成，{summary['changed_count']} 個模組調整，耗時 {summary['elapsed_sec']}s")
+    except Exception as e:
+        logger.error(f"[SelfOpt 20:00] failed: {e}", exc_info=True)
+
+
+async def _push_investor_meetings():
+    """每週一 08:10 — 本週法說會日曆推播"""
+    try:
+        from ..services.earnings_service import push_weekly_investor_meetings
+        await push_weekly_investor_meetings()
+        logger.info("[InvestorMeetings] weekly calendar pushed")
+    except Exception as e:
+        logger.error(f"Investor meetings push failed: {e}")
