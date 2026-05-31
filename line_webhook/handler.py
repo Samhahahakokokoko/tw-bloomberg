@@ -4431,11 +4431,16 @@ async def _cmd_chart(code: str, uid: str) -> list:
 
 
 async def _chart_bg(code: str, uid: str) -> None:
+    print(f"[chart_bg] 開始 code={code} user_id={uid[:8]}", flush=True)
     try:
         from backend.services.chart_service import generate_chart
         from backend.services.twse_service import fetch_kline, fetch_realtime_quote
 
+        token = os.getenv("LINE_CHANNEL_ACCESS_TOKEN", "")
+        print(f"[chart_bg] token={'OK' if token else 'MISSING'} len={len(token)}", flush=True)
+
         kline = await fetch_kline(code)
+        print(f"[chart_bg] kline rows={len(kline) if kline else 0}", flush=True)
         if not kline:
             await push_line_messages(uid, [{"type": "text", "text": f"❌ {code} 無 K 線資料"}],
                                      timeout=15, context="handler.chart_bg.no_kline")
@@ -4443,19 +4448,24 @@ async def _chart_bg(code: str, uid: str) -> None:
 
         q = await fetch_realtime_quote(code)
         name = (q.get("name") or code) if q else code
+        print(f"[chart_bg] name={name!r}", flush=True)
 
         png_bytes = await generate_chart(code, kline, name)
-        token = os.getenv("LINE_CHANNEL_ACCESS_TOKEN", "")
+        print(f"[chart_bg] 圖表生成完成 size={len(png_bytes)}bytes", flush=True)
+
         content_url = await _upload_image_to_line(png_bytes, token) if token else None
+        print(f"[chart_bg] upload url={content_url!r}", flush=True)
 
         if content_url:
             msg = {"type": "image", "originalContentUrl": content_url, "previewImageUrl": content_url}
         else:
             msg = {"type": "text", "text": f"📊 {code} {name} 技術分析圖生成完成（上傳失敗，請稍後再試）"}
 
-        await push_line_messages(uid, [msg], timeout=20, context="handler.chart_bg")
+        ok = await push_line_messages(uid, [msg], timeout=20, context="handler.chart_bg")
+        print(f"[chart_bg] push 結果 status={'OK' if ok else 'FAILED'} uid={uid[:8]}", flush=True)
     except Exception as e:
         logger.error(f"[chart_bg] {code}: {e}", exc_info=True)
+        print(f"[chart_bg] EXCEPTION {type(e).__name__}: {e}", flush=True)
         await push_line_messages(uid, [{"type": "text", "text": f"❌ {code} 圖表生成失敗，請稍後再試"}],
                                  timeout=15, context="handler.chart_bg.error")
 
