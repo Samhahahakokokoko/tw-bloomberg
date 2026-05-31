@@ -461,6 +461,20 @@ async def _handle_text(text: str, uid: str) -> list:
     parts = text.split()
     cmd   = parts[0].lower() if parts else ""
 
+    logger.info(f"[route] cmd={cmd!r} text={text[:60]!r}")
+
+    # ── 圖表 / 比較 / 零股：必須在所有 fallback 之前攔截 ─────────────────────
+    if cmd in ("/chart", "chart") and len(parts) >= 2:
+        return await _cmd_chart(parts[1].upper(), uid)
+    if cmd in ("/compare", "compare") and len(parts) >= 3:
+        return await _cmd_compare_v2(parts[1].upper(), parts[2].upper(), uid)
+    if cmd in ("/odd", "odd") and len(parts) >= 2:
+        arg1 = parts[1]
+        arg2 = parts[2] if len(parts) > 2 else None
+        if arg1.isdigit() and 4 <= len(arg1) <= 6 and arg2 and arg2.replace(",", "").replace(".", "").isdigit():
+            return await _cmd_odd_v2(arg1, arg2, uid)
+        return await _cmd_odd(arg1, arg2, uid)
+
     # ── 斜線指令（精確比對）──────────────────────────────────────────────────
     if cmd == "/quote"    and len(parts) >= 2: return await _cmd_quote(parts[1])
     if cmd in ("/market", "/market_overview"):  return await _cmd_market()
@@ -702,17 +716,6 @@ async def _handle_text(text: str, uid: str) -> list:
     if cmd == "/recommend":
         regime_arg = parts[1] if len(parts) > 1 else "unknown"
         return await _cmd_recommend(regime_arg)
-    if cmd in ("/chart", "chart") and len(parts) >= 2:
-        return await _cmd_chart(parts[1].upper(), uid)
-    if cmd in ("/odd", "odd") and len(parts) >= 2:
-        arg1 = parts[1]
-        arg2 = parts[2] if len(parts) > 2 else None
-        # /odd 2330 5000 format (code first) vs /odd 5000 [2330] (budget first)
-        if arg1.isdigit() and 4 <= len(arg1) <= 6 and arg2 and arg2.replace(",", "").replace(".", "").isdigit():
-            return await _cmd_odd_v2(arg1, arg2, uid)
-        return await _cmd_odd(arg1, arg2, uid)
-    if cmd in ("/compare", "compare") and len(parts) >= 3:
-        return await _cmd_compare_v2(parts[1].upper(), parts[2].upper(), uid)
 
     # ── Auto-Improve 執行指令（僅限管理員）──────────────────────────────────
     if cmd == "執行" or cmd == "/執行":
