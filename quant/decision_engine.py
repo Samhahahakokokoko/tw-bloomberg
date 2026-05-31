@@ -17,8 +17,6 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Optional
 
-import httpx
-
 logger = logging.getLogger(__name__)
 
 MAX_DECISIONS       = 8
@@ -185,6 +183,7 @@ class DecisionEngine:
             )
 
         # ── Layer 1: 動能啟動掃描 ────────────────────────────────────────────
+        TARGET_MOVERS = 60
         logger.info("[Decision] Layer 1: 動能啟動掃描開始")
         movers = []
         try:
@@ -192,16 +191,24 @@ class DecisionEngine:
             engine   = MoversEngine()
             movers   = await engine.scan()
             if not movers:
-                movers = engine.scan_mock(15)
+                movers = engine.scan_mock(TARGET_MOVERS)
                 for m in movers:
                     m.is_mock = True
-                _enrich_mock_close(movers)   # mock close=0 或硬編碼舊價 → TWSE 即時覆蓋
+                _enrich_mock_close(movers)
+            elif len(movers) < TARGET_MOVERS:
+                existing_ids = {m.stock_id for m in movers}
+                extras = engine.scan_mock(TARGET_MOVERS)
+                for m in extras:
+                    if m.stock_id not in existing_ids and len(movers) < TARGET_MOVERS:
+                        m.is_mock = True
+                        movers.append(m)
+                _enrich_mock_close([m for m in movers if getattr(m, "is_mock", False)])
             movers_count = len(movers)
         except Exception as e:
             logger.warning("[Decision] movers failed: %s", e)
             try:
                 from quant.movers_engine import MoversEngine
-                movers = MoversEngine().scan_mock(10)
+                movers = MoversEngine().scan_mock(TARGET_MOVERS)
                 for m in movers:
                     m.is_mock = True
                 _enrich_mock_close(movers)
@@ -505,17 +512,8 @@ class DecisionEngine:
     async def push(self, daily: DailyDecision, uid: str, token: str) -> None:
         if not token:
             return
-        headers = {"Authorization": f"Bearer {token}"}
-        try:
-            async with httpx.AsyncClient(timeout=15) as c:
-                await c.post(
-                    "https://api.line.me/v2/bot/message/push",
-                    json={"to": uid, "messages": [{"type": "text",
-                          "text": daily.format_line()[:4800]}]},
-                    headers=headers,
-                )
-        except Exception as e:
-            logger.error("[Decision] push failed: %s", e)
+        from backend.services.line_push import push_line_messages
+        await push_line_messages(uid, [{"type": "text", "text": daily.format_line()[:4800]}], token=token, timeout=15, context="decision.push")
 
     async def push_all_subscribers(self, token: str) -> int:
         try:

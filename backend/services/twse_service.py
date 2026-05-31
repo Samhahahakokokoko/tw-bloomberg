@@ -34,7 +34,13 @@ def _twse_date_to_iso(raw: str) -> str:
 
 
 def _is_today_yyyymmdd(raw: str) -> bool:
-    return str(raw or "") == datetime.now().strftime("%Y%m%d")
+    value = str(raw or "").strip()
+    today = datetime.now()
+    if value == today.strftime("%Y%m%d"):
+        return True
+    # ROC year format (YYYMMDD, 7 digits): e.g. 1140528
+    roc_today = f"{today.year - 1911:03d}{today.strftime('%m%d')}"
+    return value == roc_today
 
 
 async def fetch_twse_quote(stock_code: str) -> dict:
@@ -227,34 +233,50 @@ async def _fetch_kline_twse(stock_code: str) -> list[dict]:
 
 
 async def fetch_institutional(stock_code: str) -> dict:
-    """三大法人買賣超（T86 為現行有效端點）"""
-    _urls = [
-        f"{TWSE_BASE}/fund/T86",
-        f"{TWSE_BASE}/fund/TWT38U",
-        f"{TWSE_BASE}/exchangeReport/TWT38U",
-    ]
-    for url in _urls:
+    """三大法人買賣超 — classic TWSE T86 端點（OpenAPI 已 302 失效）"""
+    for delta in range(4):
+        date_str = (datetime.now() - timedelta(days=delta)).strftime("%Y%m%d")
         try:
-            async with httpx.AsyncClient(timeout=15) as client:
-                resp = await client.get(url, follow_redirects=True)
-                if resp.status_code != 200:
+            async with httpx.AsyncClient(timeout=15, follow_redirects=False) as client:
+                resp = await client.get(
+                    "https://www.twse.com.tw/fund/T86",
+                    params={"response": "json", "date": date_str},
+                )
+            if resp.status_code != 200:
+                continue
+            if "json" not in resp.headers.get("content-type", ""):
+                continue
+            d = resp.json()
+            if d.get("stat") != "OK" or not d.get("data"):
+                continue
+
+            fields = d.get("fields", [])
+
+            def _fi(keyword: str) -> Optional[int]:
+                for i, f in enumerate(fields):
+                    if keyword in f:
+                        return i
+                return None
+
+            foreign_i = _fi("外陸資淨") or _fi("外資淨") or 4
+            trust_i   = _fi("投信淨") or 7
+            dealer_candidates = [i for i, f in enumerate(fields) if "自營商淨" in f]
+            dealer_i  = dealer_candidates[-1] if dealer_candidates else 16
+            total_i   = _fi("三大法人淨") or 19
+
+            for row in d["data"]:
+                if row[0].strip() != stock_code:
                     continue
-                if "json" not in resp.headers.get("content-type", ""):
-                    continue
-                data = resp.json()
-                for item in data:
-                    if item.get("Code") == stock_code:
-                        return {
-                            "code": stock_code,
-                            "foreign_net": _parse_int(item.get("Foreign_Investor_Diff")),
-                            "investment_trust_net": _parse_int(item.get("Investment_Trust_Diff")),
-                            "dealer_net": _parse_int(item.get("Dealer_Diff")),
-                            "total_net": _parse_int(item.get("Total_Diff")),
-                            "date": item.get("Date", ""),
-                        }
-                break  # 端點有回應就不再試下一個
+                return {
+                    "code": stock_code,
+                    "foreign_net": _parse_int(row[foreign_i]) if foreign_i < len(row) else 0,
+                    "investment_trust_net": _parse_int(row[trust_i]) if trust_i < len(row) else 0,
+                    "dealer_net": _parse_int(row[dealer_i]) if dealer_i < len(row) else 0,
+                    "total_net": _parse_int(row[total_i]) if total_i < len(row) else 0,
+                    "date": d.get("date", ""),
+                }
         except Exception as e:
-            logger.error(f"Institutional error for {stock_code} ({url}): {e}")
+            logger.error(f"Institutional T86 error {stock_code} {date_str}: {e}")
     return {}
 
 

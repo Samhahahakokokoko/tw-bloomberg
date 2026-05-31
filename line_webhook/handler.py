@@ -16,6 +16,7 @@ from linebot.v3.webhook import WebhookParser
 from loguru import logger
 
 from backend.models.database import settings, AsyncSessionLocal
+from backend.services.line_push import push_line_messages
 from backend.services.twse_service import (
     fetch_realtime_quote, fetch_institutional, fetch_market_overview,
 )
@@ -714,6 +715,21 @@ async def _handle_text(text: str, uid: str) -> list:
     if cmd == "/track" and len(parts) >= 2:
         return await _cmd_track_history(parts[1])
 
+    # ── Auto-Improve 執行指令（僅限管理員）──────────────────────────────────
+    if cmd == "執行" or cmd == "/執行":
+        import os
+        admin_uid = os.getenv("ADMIN_LINE_UID", "")
+        if uid != admin_uid:
+            return [_text("⛔ 此指令僅限管理員使用")]
+        fix_ids = [int(x) for x in parts[1:] if x.isdigit()] or None
+        return await _cmd_execute_fixes(uid, fix_ids)
+
+    if cmd == "/autoplan":
+        import os
+        if uid != os.getenv("ADMIN_LINE_UID", ""):
+            return [_text("⛔ 此指令僅限管理員使用")]
+        return await _cmd_show_fix_plan()
+
     # ── 純數字 4-6 碼 → 直接查報價 ─────────────────────────────────────────
     t = text.strip()
     if t.isdigit() and 4 <= len(t) <= 6:
@@ -795,10 +811,10 @@ async def _cmd_quote(code: str) -> list:
         if not quote:
             return [TextMessage(text=f"查無 {code} 報價")]
 
-        name = quote.get("name", code)
-        price = quote.get("close", quote.get("price", 0))
-        change = quote.get("change", 0)
-        change_pct = quote.get("change_pct", 0)
+        name = quote.get("name") or code
+        price = float(quote.get("close") or quote.get("price") or 0)
+        change = float(quote.get("change") or 0)
+        change_pct = float(quote.get("change_pct") or 0)
         source = quote.get("source", "")
         data_time = quote.get("as_of") or quote.get("timestamp") or quote.get("date") or ""
         print(f"[quote] code={code} price={price}")
@@ -1134,19 +1150,12 @@ async def _cmd_rec_full(uid: str, reply_token: str):
         f"下方為每檔持股的推薦策略與回測數據："
     )
 
-    import httpx
-    headers = {"Authorization": f"Bearer {settings.line_channel_access_token}"}
-    payload = {
-        "to": uid,
-        "messages": [
-            {"type": "text", "text": summary},
-            {"type": "flex", "altText": "策略推薦", "contents": carousel},
-        ],
-    }
-    async with httpx.AsyncClient(timeout=30) as c:
-        r = await c.post("https://api.line.me/v2/bot/message/push",
-                         json=payload, headers=headers)
-        logger.info(f"Push rec to {uid[:8]}: {r.status_code}")
+    ok = await push_line_messages(
+        uid,
+        [{"type": "text", "text": summary}, {"type": "flex", "altText": "策略推薦", "contents": carousel}],
+        timeout=30, context="handler.strategy_rec",
+    )
+    logger.info(f"Push rec to {uid[:8]}: {'ok' if ok else 'failed'}")
 
 
 async def _cmd_ai_ask(question: str, uid: str = "") -> TextMessage:
@@ -1761,34 +1770,16 @@ def _quote_text_fallback(code: str, q: dict) -> str:
     return f"📊 {code} {name}\n現價：{price_text}\n漲跌：{sign}{pct:.1f}%"
 
 
-def _has_non_empty_contents(node) -> bool:
-    if not isinstance(node, dict):
-        return True
-    if "contents" in node:
-        contents = node.get("contents")
-        if not isinstance(contents, list) or not contents:
-            return False
-        return all(_has_non_empty_contents(item) for item in contents)
-    return all(_has_non_empty_contents(value) for value in node.values())
-
-
 def _is_valid_flex_container(container: dict) -> bool:
     if not isinstance(container, dict):
         return False
-    if container.get("type") == "carousel":
+    t = container.get("type")
+    if t == "carousel":
         contents = container.get("contents")
-        return isinstance(contents, list) and bool(contents) and all(
-            _is_valid_flex_container(item) for item in contents
-        )
-    if container.get("type") != "bubble":
-        return False
-    body = container.get("body")
-    return (
-        isinstance(body, dict)
-        and isinstance(body.get("contents"), list)
-        and bool(body["contents"])
-        and _has_non_empty_contents(container)
-    )
+        return isinstance(contents, list) and bool(contents)
+    if t == "bubble":
+        return any(container.get(k) for k in ("body", "hero", "header", "footer"))
+    return False
 
 
 def _ensure_valid_line_message(message):
@@ -1920,11 +1911,7 @@ async def _pipeline_bg(code: str, uid: str) -> None:
 
         msg_text = "\n".join(lines)
 
-    headers = {"Authorization": f"Bearer {settings.line_channel_access_token}"}
-    async with httpx.AsyncClient(timeout=10) as c:
-        await c.post("https://api.line.me/v2/bot/message/push",
-                     json={"to": uid, "messages": [{"type": "text", "text": msg_text[:4800]}]},
-                     headers=headers)
+    await push_line_messages(uid, [{"type": "text", "text": msg_text[:4800]}], timeout=10, context="handler.strategy_perf")
 
 
 def _flex_screen_menu() -> FlexMessage:
@@ -2048,17 +2035,12 @@ async def _cmd_daily(uid: str) -> list:
 
 async def _daily_bg(uid: str) -> None:
     """背景執行決策引擎並推送"""
-    import asyncio, httpx as _httpx
-    headers = {"Authorization": f"Bearer {settings.line_channel_access_token}"}
+    import asyncio
 
     async def _push(text: str):
-        r = await _httpx.AsyncClient(timeout=20).post(
-            "https://api.line.me/v2/bot/message/push",
-            json={"to": uid, "messages": [{"type": "text", "text": text[:4800]}]},
-            headers=headers,
-        )
-        if r.status_code != 200:
-            logger.error("[daily_bg] LINE push failed: %s %s", r.status_code, r.text[:300])
+        ok = await push_line_messages(uid, [{"type": "text", "text": text[:4800]}], timeout=20, context="handler.daily_bg")
+        if not ok:
+            logger.error("[daily_bg] LINE push failed uid=%s", uid)
         else:
             logger.info("[daily_bg] LINE push OK: uid=%s", uid)
 
@@ -2327,9 +2309,7 @@ async def _run_backtest(strategy: str, label: str) -> list:
 
 async def _backtest_bg(strategy: str, label: str, uid: str) -> None:
     """背景：執行回測 → 格式化 → push LINE"""
-    import asyncio, httpx
     from datetime import date, timedelta
-    from backend.models.database import settings as line_settings
 
     try:
         # ── 取得近3個月 K 線（代表股 2330）──────────────────────────
@@ -2402,28 +2382,14 @@ async def _backtest_bg(strategy: str, label: str, uid: str) -> None:
             n_trades=report.n_trades,
             detail_data=detail_qr_data,
         )
-        headers = {"Authorization": f"Bearer {line_settings.line_channel_access_token}"}
-        async with httpx.AsyncClient(timeout=20) as c:
-            await c.post(
-                "https://api.line.me/v2/bot/message/push",
-                json={"to": uid, "messages": [
-                    {"type": "flex", "altText": f"{label}回測結果", "contents": flex_msg},
-                ]},
-                headers=headers,
-            )
+        await push_line_messages(
+            uid,
+            [{"type": "flex", "altText": f"{label}回測結果", "contents": flex_msg}],
+            timeout=20, context="handler.backtest_bg",
+        )
     except Exception as e:
         logger.error("[backtest_bg] %s", e)
-        try:
-            headers = {"Authorization": f"Bearer {line_settings.line_channel_access_token}"}
-            async with httpx.AsyncClient(timeout=10) as c:
-                await c.post(
-                    "https://api.line.me/v2/bot/message/push",
-                    json={"to": uid, "messages": [{"type": "text",
-                        "text": f"❌ 回測計算失敗：{e}"}]},
-                    headers=headers,
-                )
-        except Exception:
-            pass
+        await push_line_messages(uid, [{"type": "text", "text": f"❌ 回測計算失敗：{e}"}], timeout=10, context="handler.backtest_bg.error")
 
 
 def _mock_kline_90d(stock_code: str) -> "pd.DataFrame":
@@ -2727,13 +2693,7 @@ async def _risk_optimize_bg(uid: str) -> None:
 
             msg = "\n".join(lines)
 
-        headers = {"Authorization": f"Bearer {line_settings.line_channel_access_token}"}
-        async with httpx.AsyncClient(timeout=30) as c:
-            await c.post(
-                "https://api.line.me/v2/bot/message/push",
-                json={"to": uid, "messages": [{"type": "text", "text": msg[:4800]}]},
-                headers=headers,
-            )
+        await push_line_messages(uid, [{"type": "text", "text": msg[:4800]}], timeout=30, context="handler.risk_optimize_bg")
     except Exception as e:
         logger.error("[risk_optimize_bg] %s", e)
 
@@ -2878,11 +2838,7 @@ async def _report_bg(
                 logger.info(f"[report_bg] row0: {r0.stock_id} {r0.name} close={r0.close} chg={r0.change_pct} vol={r0.volume} src={getattr(r0, '_data_source', '?')}")
             if not rows:
                 # TWSE 資料無法取得（非交易時間或 API 異常）
-                async with httpx.AsyncClient(timeout=10) as c:
-                    await c.post("https://api.line.me/v2/bot/message/push",
-                                 json={"to": uid, "messages": [{"type": "text",
-                                       "text": "⚠️ 目前無法取得 TWSE 即時資料（非交易時間或 API 異常），請稍後再試。"}]},
-                                 headers={"Authorization": f"Bearer {settings.line_channel_access_token}"})
+                await push_line_messages(uid, [{"type": "text", "text": "⚠️ 目前無法取得 TWSE 即時資料（非交易時間或 API 異常），請稍後再試。"}], timeout=10, context="handler.report_bg")
                 return
         else:
             rows = cached_rows
@@ -2925,10 +2881,7 @@ async def _report_bg(
         # 文字股票列表 + 翻頁 Quick Reply 按鈕
         push_msgs.append(_build_stock_list_msg(page_rows, label, page, total_pages, screen_type))
 
-        async with httpx.AsyncClient(timeout=20) as c:
-            await c.post("https://api.line.me/v2/bot/message/push",
-                         json={"to": uid, "messages": push_msgs[:5]},
-                         headers={"Authorization": f"Bearer {settings.line_channel_access_token}"})
+        await push_line_messages(uid, push_msgs[:5], timeout=20, context="handler.report_bg")
     except Exception as e:
         logger.error(f"[report_bg] {screen_type} uid={uid[:8]} err={e}", exc_info=True)
 
@@ -2984,10 +2937,7 @@ async def _custom_bg(conditions: str, uid: str) -> None:
             msg = {"type": "image", "originalContentUrl": url, "previewImageUrl": url}
         else:
             msg = _build_text_fallback(rows, f"自訂條件：{conditions[:20]}", 1, 1)
-        async with httpx.AsyncClient(timeout=20) as c:
-            await c.post("https://api.line.me/v2/bot/message/push",
-                         json={"to": uid, "messages": [msg]},
-                         headers={"Authorization": f"Bearer {settings.line_channel_access_token}"})
+        await push_line_messages(uid, [msg], timeout=20, context="handler.custom_bg")
     except Exception as e:
         logger.error(f"[custom_bg] err={e}")
 
@@ -3049,10 +2999,7 @@ async def _myfav_bg(stock_ids: list[str], uid: str) -> None:
             msg = {"type": "image", "originalContentUrl": url, "previewImageUrl": url}
         else:
             msg = _build_text_fallback(rows, "我的最愛", 1, 1)
-        async with httpx.AsyncClient(timeout=20) as c:
-            await c.post("https://api.line.me/v2/bot/message/push",
-                         json={"to": uid, "messages": [msg]},
-                         headers={"Authorization": f"Bearer {settings.line_channel_access_token}"})
+        await push_line_messages(uid, [msg], timeout=20, context="handler.myfav_bg")
     except Exception as e:
         logger.error(f"[myfav_bg] err={e}")
 
@@ -3088,10 +3035,7 @@ async def _compare_bg(codes: list[str], uid: str) -> None:
             for r in rows:
                 lines.append(f"{r.stock_id} {r.name}  分:{r.model_score:.0f}  信心:{r.confidence:.0f}")
             msg = {"type": "text", "text": "\n".join(lines)}
-        async with httpx.AsyncClient(timeout=20) as c:
-            await c.post("https://api.line.me/v2/bot/message/push",
-                         json={"to": uid, "messages": [msg]},
-                         headers={"Authorization": f"Bearer {settings.line_channel_access_token}"})
+        await push_line_messages(uid, [msg], timeout=20, context="handler.compare_bg")
     except Exception as e:
         logger.error(f"[compare_bg] err={e}")
 
@@ -3123,21 +3067,12 @@ async def _push_report_bg(group: str, uid: str) -> None:
             return
 
         image_url = f"{base_url.rstrip('/')}/static/reports/{path.name}"
-        headers = {"Authorization": f"Bearer {settings.line_channel_access_token}"}
-        payload = {
-            "to": uid,
-            "messages": [
-                {
-                    "type": "image",
-                    "originalContentUrl": image_url,
-                    "previewImageUrl": image_url,
-                }
-            ],
-        }
-        async with httpx.AsyncClient(timeout=20) as c:
-            r = await c.post("https://api.line.me/v2/bot/message/push",
-                             json=payload, headers=headers)
-            logger.info(f"[Report] push image to {uid[:8]}: {r.status_code}")
+        ok = await push_line_messages(
+            uid,
+            [{"type": "image", "originalContentUrl": image_url, "previewImageUrl": image_url}],
+            timeout=20, context="handler.push_report_bg",
+        )
+        logger.info(f"[Report] push image to {uid[:8]}: {'ok' if ok else 'failed'}")
     except Exception as e:
         logger.error(f"[Report] bg push failed: {e}")
         await _push_text_summary(group, uid)
@@ -3145,7 +3080,6 @@ async def _push_report_bg(group: str, uid: str) -> None:
 
 async def _push_text_summary(group: str, uid: str) -> None:
     """無公開 URL 時，改推文字摘要"""
-    import httpx
     from backend.services.generate_report_image import get_mock_data, LABEL_DEFS
 
     stocks = get_mock_data(group)
@@ -3158,11 +3092,7 @@ async def _push_text_summary(group: str, uid: str) -> None:
             f"  分:{s.model_score:.0f} 籌:{s.chip_5d/1000:+.1f}k {tag_str}"
         )
     text = "\n".join(lines)
-    headers = {"Authorization": f"Bearer {settings.line_channel_access_token}"}
-    payload = {"to": uid, "messages": [{"type": "text", "text": text[:5000]}]}
-    async with httpx.AsyncClient(timeout=10) as c:
-        await c.post("https://api.line.me/v2/bot/message/push",
-                     json=payload, headers=headers)
+    await push_line_messages(uid, [{"type": "text", "text": text[:5000]}], timeout=10, context="handler.push_text_summary")
 
 
 async def _cmd_recommend(regime: str = "unknown") -> list:
@@ -3693,22 +3623,16 @@ async def _cmd_agent(uid: str) -> list:
 
 async def _agent_bg(uid: str) -> None:
     """背景執行 AI Agent 並推送結果"""
-    import httpx
     try:
         from backend.services.hedge_fund_agent import run_agent_pipeline
-        from backend.models.database import settings
         report  = await run_agent_pipeline(uid)
         text    = report.to_line_text()
         qr      = report.to_line_qr()
-        headers = {"Authorization": f"Bearer {settings.line_channel_access_token}"}
-        async with httpx.AsyncClient(timeout=30) as c:
-            await c.post(
-                "https://api.line.me/v2/bot/message/push",
-                json={"to": uid, "messages": [
-                    {"type": "text", "text": text, "quickReply": qr}
-                ]},
-                headers=headers,
-            )
+        await push_line_messages(
+            uid,
+            [{"type": "text", "text": text, "quickReply": qr}],
+            timeout=30, context="handler.agent_bg",
+        )
     except Exception as e:
         logger.error(f"[agent_bg] {e}")
 
@@ -3791,13 +3715,7 @@ async def _cmd_feedback(content: str, uid: str, kind: str = "feedback") -> list:
                 f"用戶：{uid[:12]}\n"
                 f"{'─' * 18}\n{content[:300]}"
             )
-            headers = {"Authorization": f"Bearer {settings.line_channel_access_token}"}
-            async with httpx.AsyncClient(timeout=10) as c:
-                await c.post(
-                    "https://api.line.me/v2/bot/message/push",
-                    json={"to": admin_uid, "messages": [{"type": "text", "text": text}]},
-                    headers=headers,
-                )
+            await push_line_messages(admin_uid, [{"type": "text", "text": text}], timeout=10, context="handler.feedback")
         except Exception as e:
             logger.warning(f"[feedback] push to admin failed: {e}")
     else:
@@ -4416,3 +4334,51 @@ async def _cmd_analyst_dna(analyst_id: str) -> list:
         ))]
     except Exception as e:
         return [_text(f"❌ DNA 查詢失敗：{type(e).__name__}")]
+
+
+# ── Auto-Improve 指令 ────────────────────────────────────────────────────────
+
+async def _cmd_show_fix_plan() -> list:
+    """/autoplan — 顯示待確認的修復計劃"""
+    from backend.services.fix_engine import load_plan, format_plan_for_line
+    plan = load_plan()
+    if not plan:
+        return [_text(
+            "目前沒有待確認的修復計劃\n\n"
+            "每天 07:00 自動掃描 Railway logs\n"
+            "有問題時會自動推送給您",
+            qr_items(("系統狀態", "/system"), ("主選單", "/help")),
+        )]
+    fixes = plan.get("fixes", [])
+    generated = plan.get("generated_at", "")[:16].replace("T", " ")
+    text = format_plan_for_line(fixes)
+    text += f"\n\n（計劃生成於 {generated}）"
+    return [_text(text, qr_items(("全部執行", "執行"), ("系統狀態", "/system")))]
+
+
+async def _cmd_execute_fixes(uid: str, fix_ids: list[int] | None) -> list:
+    """執行 pending_fixes.json 中的修復並 git push"""
+    import asyncio
+    asyncio.create_task(_execute_fixes_bg(uid, fix_ids))
+    if fix_ids:
+        ids_str = " ".join(map(str, fix_ids))
+        return [_text(
+            f"🔧 開始執行修復項目 #{ids_str}...\n完成後自動推送結果",
+            qr_items(("查看計劃", "/autoplan"), ("系統狀態", "/system")),
+        )]
+    return [_text(
+        "🔧 開始執行全部修復計劃...\n完成後自動推送結果",
+        qr_items(("查看計劃", "/autoplan"), ("系統狀態", "/system")),
+    )]
+
+
+async def _execute_fixes_bg(uid: str, fix_ids: list[int] | None) -> None:
+    """背景執行修復 + git push + 回報結果"""
+    try:
+        from backend.services.fix_engine import execute_fixes, format_result_for_line
+        result = await execute_fixes(fix_ids)
+        text = format_result_for_line(result)
+        await push_line_messages(uid, [{"type": "text", "text": text}], timeout=30, context="handler.execute_fixes")
+    except Exception as e:
+        logger.error(f"[execute_fixes_bg] {e}", exc_info=True)
+        await push_line_messages(uid, [{"type": "text", "text": f"❌ 執行失敗：{e}"}], timeout=15, context="handler.execute_fixes.error")
