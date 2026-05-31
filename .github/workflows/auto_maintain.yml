@@ -78,7 +78,10 @@ jobs:
           echo "weekly=${WEEKLY_FLAG}" >> "$GITHUB_OUTPUT"
 
           # exit 1 = 腳本錯誤（罕見），直接 fail
-          [ "$RESULT" -eq 1 ] && echo "::error::auto_maintain.py 執行失敗" && exit 1
+          if [ "$RESULT" -eq 1 ]; then
+            echo "::error::auto_maintain.py 執行失敗"
+            exit 1
+          fi
           # exit 0 = 無修復；exit 2 = 已修復程式碼 — 兩者都正常繼續
 
       # ── 5. 偵測程式碼變更 ──────────────────────────────────────────
