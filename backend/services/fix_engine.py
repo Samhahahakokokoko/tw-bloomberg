@@ -150,7 +150,7 @@ async def analyze_with_claude(errors: list[dict], api_key: str) -> list[dict[str
 
     client = anthropic.AsyncAnthropic(api_key=api_key)
     message = await client.messages.create(
-        model="claude-sonnet-4-6",
+        model="claude-haiku-4-5-20251001",
         max_tokens=2000,
         system=system,
         messages=[{"role": "user", "content": f"以下是 Railway 日誌中的錯誤：\n\n{error_text}"}],

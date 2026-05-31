@@ -40,8 +40,7 @@ jobs:
       - name: Install dependencies
         run: |
           pip install httpx python-dotenv loguru aiosqlite asyncpg \
-            line-bot-sdk fastapi 2>/dev/null || true
-          # 安裝完整依賴（有 requirements.txt 則用完整版）
+            line-bot-sdk fastapi anthropic 2>/dev/null || true
           [ -f requirements.txt ] && pip install -r requirements.txt --quiet || true
 
       # ── 3. Railway CLI（選填）─────────────────────────────────────
@@ -50,12 +49,13 @@ jobs:
           curl -fsSL https://railway.app/install.sh | sh 2>/dev/null \
             || echo "Railway CLI 不可用，改用 GraphQL API"
 
-      # ── 4. 規則引擎維護 + 健康測試 + LINE 推播 ────────────────────
-      - name: Run auto_maintain
+      # ── 4. CI 維護腳本（exit 0=無改動 / 1=腳本錯誤 / 2=已修復）──
+      - name: Run ci_maintain
         id: maintain
         env:
           LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
           ADMIN_LINE_UID:            ${{ secrets.ADMIN_LINE_UID }}
+          ANTHROPIC_API_KEY:         ${{ secrets.ANTHROPIC_API_KEY }}
           RAILWAY_TOKEN:             ${{ secrets.RAILWAY_TOKEN }}
           RAILWAY_PROJECT_ID:        ${{ secrets.RAILWAY_PROJECT_ID }}
           RAILWAY_SERVICE_ID:        ${{ secrets.RAILWAY_SERVICE_ID }}
@@ -65,21 +65,20 @@ jobs:
           set +e
 
           # 週六 UTC（= 台灣週日）或手動指定 weekly=true → 加 --weekly
-          DOW=$(date -u +%u)   # 1=Mon … 7=Sun；6=Sat UTC = 台灣週日
+          DOW=$(date -u +%u)
           WEEKLY_FLAG=""
           [ "$DOW" = "6" ] && WEEKLY_FLAG="--weekly"
           [ "${{ github.event.inputs.weekly }}" = "true" ] && WEEKLY_FLAG="--weekly"
 
-          python auto_maintain.py $WEEKLY_FLAG
+          python scripts/ci_maintain.py $WEEKLY_FLAG
           RESULT=$?
           set -e
 
           echo "exit_code=${RESULT}" >> "$GITHUB_OUTPUT"
           echo "weekly=${WEEKLY_FLAG}" >> "$GITHUB_OUTPUT"
 
-          # exit 1 = 腳本錯誤（罕見），直接 fail
           if [ "$RESULT" -eq 1 ]; then
-            echo "::error::auto_maintain.py 執行失敗"
+            echo "::error::ci_maintain.py 執行失敗"
             exit 1
           fi
           # exit 0 = 無修復；exit 2 = 已修復程式碼 — 兩者都正常繼續
@@ -117,8 +116,9 @@ jobs:
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           DATE=$(date -u +%Y-%m-%d)
-          git add -A
-          git commit -m "fix: auto-maintain ${DATE} [rule-engine]"
+          # 只 stage 原始碼，排除 CI 中間產物
+          git add backend/ quant/ line_webhook/ scripts/ .github/ railway.toml Dockerfile requirements.txt
+          git commit -m "fix: auto-maintain ${DATE} [rule-engine]" || echo "nothing to commit"
           git push origin main
           echo "✅ 修復已 push 至 main"
 
@@ -135,7 +135,7 @@ jobs:
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git checkout -b "${BRANCH}"
-          git add -A
+          git add backend/ quant/ line_webhook/ scripts/ .github/ railway.toml Dockerfile requirements.txt
           git commit -m "fix: auto-maintain $(date -u +%Y-%m-%d) [needs-review]"
           git push origin "${BRANCH}"
           gh pr create \

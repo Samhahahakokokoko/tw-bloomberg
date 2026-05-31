@@ -494,7 +494,16 @@ async def _handle_text(text: str, uid: str) -> list:
     if cmd == "/n":                             return await _cmd_news_feed(uid)
     if cmd == "/p":                             return await _cmd_portfolio(uid)
     if cmd == "/r":                             return [_flex_screen_menu()]
-    if cmd == "/strategy":                      return await _cmd_strategy_manage(uid)
+    if cmd == "/strategy":
+        sub = parts[1].lower() if len(parts) > 1 else ""
+        if sub == "list":               return await _cmd_strategy_list()
+        if sub == "publish" and len(parts) >= 3:
+            return await _cmd_strategy_publish(" ".join(parts[2:]), uid)
+        if sub == "subscribe" and len(parts) >= 3:
+            return await _cmd_strategy_subscribe(parts[2], uid)
+        if sub and re.match(r"^\d{4,6}$", sub):
+            return await _cmd_strategy_analyze(sub)
+        return await _cmd_strategy_manage(uid)
     if cmd == "/risk":                          return await _cmd_risk_report(uid)
     if cmd == "/daily":                         return await _cmd_daily(uid)
     if cmd == "/movers":                        return await _cmd_movers(uid)
@@ -566,15 +575,6 @@ async def _handle_text(text: str, uid: str) -> list:
         sub = parts[1].lower() if len(parts) > 1 else ""
         return await _cmd_public(sub, uid)
     if cmd == "/top":                   return await _cmd_top_portfolios()
-    if cmd == "/strategy":
-        sub = parts[1].lower() if len(parts) > 1 else "list"
-        if sub == "list":               return await _cmd_strategy_list()
-        if sub == "publish" and len(parts) >= 3:
-            name = " ".join(parts[2:])
-            return await _cmd_strategy_publish(name, uid)
-        if sub == "subscribe" and len(parts) >= 3:
-            return await _cmd_strategy_subscribe(parts[2], uid)
-        return await _cmd_strategy_list()
     if cmd == "/agent":                 return await _cmd_agent(uid)
     if cmd == "/order":                 return await _cmd_order_guide(uid)
     if cmd == "/auto":
@@ -713,10 +713,6 @@ async def _handle_text(text: str, uid: str) -> list:
         return await _cmd_odd(arg1, arg2, uid)
     if cmd in ("/compare", "compare") and len(parts) >= 3:
         return await _cmd_compare_v2(parts[1].upper(), parts[2].upper(), uid)
-    if cmd == "/strategy" and len(parts) >= 2:
-        return await _cmd_strategy_analyze(parts[1])
-    if cmd == "/track" and len(parts) >= 2:
-        return await _cmd_track_history(parts[1])
 
     # ── Auto-Improve 執行指令（僅限管理員）──────────────────────────────────
     if cmd == "執行" or cmd == "/執行":

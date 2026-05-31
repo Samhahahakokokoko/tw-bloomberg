@@ -1033,8 +1033,9 @@ async def get_audit_log(limit: int = Query(50), stock_id: str = Query("")):
     q = select(AuditLog).order_by(AuditLog.created_at.desc()).limit(limit)
     if stock_id:
         q = q.where(AuditLog.stock_id == stock_id)
-    result = await (await get_db().__anext__()).execute(q)
-    rows = result.scalars().all()
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(q)
+        rows = result.scalars().all()
     return [
         {
             "id":           r.id,

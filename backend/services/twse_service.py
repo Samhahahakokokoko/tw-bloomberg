@@ -284,7 +284,7 @@ async def fetch_market_overview() -> dict:
     """大盤指數概況"""
     url = f"{TWSE_BASE}/exchangeReport/MI_INDEX"
     try:
-        async with httpx.AsyncClient(timeout=15) as client:
+        async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
             resp = await client.get(url)
             resp.raise_for_status()
             data = resp.json()
@@ -309,7 +309,7 @@ async def fetch_stock_list() -> list[dict]:
     """全部上市股票清單"""
     url = f"{TWSE_BASE}/exchangeReport/STOCK_DAY_ALL"
     try:
-        async with httpx.AsyncClient(timeout=30) as client:
+        async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
             resp = await client.get(url)
             resp.raise_for_status()
             return [
