@@ -702,16 +702,16 @@ async def _handle_text(text: str, uid: str) -> list:
     if cmd == "/recommend":
         regime_arg = parts[1] if len(parts) > 1 else "unknown"
         return await _cmd_recommend(regime_arg)
-    if cmd == "/chart" and len(parts) >= 2:
+    if cmd in ("/chart", "chart") and len(parts) >= 2:
         return await _cmd_chart(parts[1].upper(), uid)
-    if cmd == "/odd" and len(parts) >= 2:
+    if cmd in ("/odd", "odd") and len(parts) >= 2:
         arg1 = parts[1]
         arg2 = parts[2] if len(parts) > 2 else None
         # /odd 2330 5000 format (code first) vs /odd 5000 [2330] (budget first)
         if arg1.isdigit() and 4 <= len(arg1) <= 6 and arg2 and arg2.replace(",", "").replace(".", "").isdigit():
             return await _cmd_odd_v2(arg1, arg2, uid)
         return await _cmd_odd(arg1, arg2, uid)
-    if cmd == "/compare" and len(parts) >= 3:
+    if cmd in ("/compare", "compare") and len(parts) >= 3:
         return await _cmd_compare_v2(parts[1].upper(), parts[2].upper(), uid)
     if cmd == "/strategy" and len(parts) >= 2:
         return await _cmd_strategy_analyze(parts[1])
@@ -777,6 +777,17 @@ async def _handle_text(text: str, uid: str) -> list:
                           "推薦股票", "找出", "法人大買", "外資買超",
                           "營收成長", "三率齊升", "技術突破", "量能")):
         return await _cmd_nl_screener(t)
+
+    # ── chart/compare/odd 自然語言（含 4 碼數字，需在報價 fallback 前攔截）──
+    if _any_kw(t_lower, ("chart", "k線", "k 線", "技術圖", "畫圖", "技術分析圖")):
+        codes_in_t = re.findall(r'\b\d{4,6}\b', t)
+        if codes_in_t:
+            return await _cmd_chart(codes_in_t[0], uid)
+
+    if _any_kw(t_lower, ("compare", "比較")):
+        codes_in_t = re.findall(r'\b\d{4,6}\b', t)
+        if len(codes_in_t) >= 2:
+            return await _cmd_compare_v2(codes_in_t[0], codes_in_t[1], uid)
 
     # ── 句中包含 4 碼數字 → 嘗試查報價 ─────────────────────────────────────
     codes = re.findall(r'\b\d{4,6}\b', t)
