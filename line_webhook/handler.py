@@ -70,45 +70,53 @@ async def webhook(request: Request):
         return "OK"
 
     logger.info(f"=== PARSED {len(events)} events ===")
+    # 立刻回傳 200，事件在背景處理，避免 LINE 499 超時
     for event in events:
-        reply_token = getattr(event, "reply_token", None)
-        try:
-            logger.info(f"=== EVENT {type(event).__name__} ===")
-
-            if isinstance(event, MessageEvent) and isinstance(event.message, TextMessageContent):
-                uid  = event.source.user_id
-                text = event.message.text.strip()
-                logger.info(f"[{uid[:8]}] text: {text!r}")
-                msgs = await _handle_text(text, uid)
-                await _reply(event, *msgs)
-
-            elif isinstance(event, PostbackEvent):
-                uid  = event.source.user_id
-                data = event.postback.data
-                logger.info(f"[{uid[:8]}] postback: {data!r}")
-                msgs = await _handle_postback(data, uid)
-                await _reply(event, *msgs)
-
-            else:
-                logger.info(f"Ignored event type: {type(event).__name__}")
-
-        except Exception as e:
-            import traceback as _tb
-            tb_str = _tb.format_exc().replace('\n', ' | ')
-            logger.error(f"Event error: {e} || TRACE: {tb_str}")
-            if reply_token:
-                try:
-                    async with AsyncApiClient(configuration) as c:
-                        await AsyncMessagingApi(c).reply_message(
-                            ReplyMessageRequest(
-                                reply_token=reply_token,
-                                messages=[TextMessage(text=f"系統錯誤: {type(e).__name__}")]
-                            )
-                        )
-                except Exception:
-                    pass
+        asyncio.create_task(_dispatch_event(event))
 
     return "OK"
+
+
+async def _dispatch_event(event) -> None:
+    """背景處理單一 LINE 事件（webhook 已回傳 200 後執行）"""
+    reply_token = getattr(event, "reply_token", None)
+    try:
+        logger.info(f"=== EVENT {type(event).__name__} ===")
+
+        if isinstance(event, MessageEvent) and isinstance(event.message, TextMessageContent):
+            uid  = event.source.user_id
+            text = event.message.text.strip()
+            logger.info(f"[{uid[:8]}] text: {text!r}")
+            msgs = await _handle_text(text, uid)
+            if msgs:
+                await _reply(event, *msgs)
+
+        elif isinstance(event, PostbackEvent):
+            uid  = event.source.user_id
+            data = event.postback.data
+            logger.info(f"[{uid[:8]}] postback: {data!r}")
+            msgs = await _handle_postback(data, uid)
+            if msgs:
+                await _reply(event, *msgs)
+
+        else:
+            logger.info(f"Ignored event type: {type(event).__name__}")
+
+    except Exception as e:
+        import traceback as _tb
+        tb_str = _tb.format_exc().replace('\n', ' | ')
+        logger.error(f"Event error: {e} || TRACE: {tb_str}")
+        if reply_token:
+            try:
+                async with AsyncApiClient(configuration) as c:
+                    await AsyncMessagingApi(c).reply_message(
+                        ReplyMessageRequest(
+                            reply_token=reply_token,
+                            messages=[TextMessage(text=f"系統錯誤: {type(e).__name__}")]
+                        )
+                    )
+            except Exception:
+                pass
 
 
 async def _reply(event, *messages):
@@ -126,7 +134,7 @@ async def _reply(event, *messages):
         if not text_messages:
             text_messages.append({"type": "text", "text": "功能暫時無法使用，請稍後再試"})
 
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(timeout=4.0) as client:
             resp = await client.post(
                 "https://api.line.me/v2/bot/message/reply",
                 headers={
@@ -4411,13 +4419,15 @@ async def _execute_fixes_bg(uid: str, fix_ids: list[int] | None) -> None:
 
 async def _cmd_chart(code: str, uid: str) -> list:
     """/chart 2330 — 個股技術分析圖（非同步產生後推送）"""
-    print(f"[chart] 開始產生圖表 code={code}", flush=True)
-    import asyncio
+    logger.info(f"[chart] 開始產生圖表 code={code} uid={uid[:8]}")
+    # 用 push_message 推 ack，不依賴 reply token，webhook 可立刻回 200
+    asyncio.create_task(push_line_messages(
+        uid,
+        [{"type": "text", "text": f"📊 正在生成 {code} 技術分析圖\n包含 K線/MA/RSI/MACD…約需 5-10 秒"}],
+        timeout=10, context="handler.chart_ack",
+    ))
     asyncio.create_task(_chart_bg(code, uid))
-    return [_text(
-        f"📊 正在生成 {code} 技術分析圖\n包含 K線/MA/RSI/MACD…約需 5-10 秒",
-        qr_items((f"報價 {code}", f"/quote {code}"), ("大盤", "/market")),
-    )]
+    return []  # webhook 不需 reply
 
 
 async def _chart_bg(code: str, uid: str) -> None:
