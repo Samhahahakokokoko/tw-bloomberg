@@ -1104,3 +1104,14 @@ async def get_analyst(analyst_id: str):
     if not data:
         raise HTTPException(404, f"Analyst {analyst_id} not found")
     return data
+
+
+@router.get("/push/stats")
+async def push_stats():
+    """查詢每月 push_message 累計用量（in-memory，重啟歸零）"""
+    from ..services.line_push import get_push_stats
+    counts = get_push_stats()
+    return {
+        "monthly_counts": counts,
+        "note": "reply_message 不計入此計數；重啟後歸零",
+    }

@@ -87,9 +87,16 @@ async def _dispatch_event(event) -> None:
             uid  = event.source.user_id
             text = event.message.text.strip()
             logger.info(f"[{uid[:8]}] text: {text!r}")
-            msgs = await _handle_text(text, uid)
-            if msgs:
-                await _reply(event, *msgs)
+
+            # /chart: 直接傳 reply_token 給背景任務，圖片用 reply 回傳（零配額）
+            _parts = text.split()
+            _cmd   = _parts[0].lower() if _parts else ""
+            if _cmd in ("/chart", "chart") and len(_parts) >= 2:
+                asyncio.create_task(_chart_bg(_parts[1].upper(), uid, reply_token=reply_token or ""))
+            else:
+                msgs = await _handle_text(text, uid)
+                if msgs:
+                    await _reply(event, *msgs)
 
         elif isinstance(event, PostbackEvent):
             uid  = event.source.user_id
@@ -119,37 +126,51 @@ async def _dispatch_event(event) -> None:
                 pass
 
 
-async def _reply(event, *messages):
+async def _reply(event, *messages) -> None:
+    """reply_message — 不計入 push 配額，使用 SDK 物件序列化"""
+    if not messages:
+        return
     try:
         reply_token = event.reply_token
-        text_messages = []
+        msg_objects = []
         for msg in messages:
-            if hasattr(msg, "text"):
-                text_messages.append({"type": "text", "text": str(msg.text)})
-            elif isinstance(msg, str):
-                text_messages.append({"type": "text", "text": msg})
+            if isinstance(msg, dict):
+                if msg.get("type") == "text":
+                    msg_objects.append(TextMessage(text=msg["text"]))
+                # 其他 dict 類型（image 等）走 push，不走 reply
             else:
-                text_messages.append({"type": "text", "text": str(msg)})
+                msg_objects.append(msg)
+        if not msg_objects:
+            return
+        async with AsyncApiClient(configuration) as c:
+            await AsyncMessagingApi(c).reply_message(
+                ReplyMessageRequest(reply_token=reply_token, messages=msg_objects[:5])
+            )
+    except Exception as e:
+        logger.error(f"Reply exception: {e}")
 
-        if not text_messages:
-            text_messages.append({"type": "text", "text": "功能暫時無法使用，請稍後再試"})
 
-        async with httpx.AsyncClient(timeout=4.0) as client:
+async def _reply_by_token(reply_token: str, messages: list[dict]) -> bool:
+    """用 reply token 傳送任意 dict 格式訊息（圖片等），不計入 push 配額。
+    reply token 只能用一次且約 60 秒內有效。"""
+    if not reply_token or not messages:
+        return False
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
             resp = await client.post(
                 "https://api.line.me/v2/bot/message/reply",
                 headers={
                     "Authorization": f"Bearer {settings.line_channel_access_token}",
                     "Content-Type": "application/json",
                 },
-                json={
-                    "replyToken": reply_token,
-                    "messages": text_messages[:5],
-                },
+                json={"replyToken": reply_token, "messages": messages[:5]},
             )
-            if resp.status_code != 200:
-                logger.error(f"Reply error: {resp.status_code} {resp.text}")
+        if resp.status_code == 200:
+            return True
+        logger.warning(f"[reply_by_token] failed {resp.status_code}: {resp.text[:200]}")
     except Exception as e:
-        logger.error(f"Reply exception: {e}")
+        logger.error(f"[reply_by_token] exception: {e}")
+    return False
 
 
 # ── Postback 處理 ─────────────────────────────────────────────────────────────
@@ -4430,8 +4451,9 @@ async def _cmd_chart(code: str, uid: str) -> list:
     return []  # webhook 不需 reply
 
 
-async def _chart_bg(code: str, uid: str) -> None:
-    print(f"[chart_bg] 開始 code={code} user_id={uid[:8]}", flush=True)
+async def _chart_bg(code: str, uid: str, reply_token: str = "") -> None:
+    """圖表背景生成。優先用 reply_token 回傳（零配額），逾時或失敗才 push fallback。"""
+    print(f"[chart_bg] 開始 code={code} uid={uid[:8]} has_token={bool(reply_token)}", flush=True)
     try:
         from backend.services.chart_service import generate_chart
         from backend.services.twse_service import fetch_kline, fetch_realtime_quote
@@ -4442,8 +4464,11 @@ async def _chart_bg(code: str, uid: str) -> None:
         kline = await fetch_kline(code)
         print(f"[chart_bg] kline rows={len(kline) if kline else 0}", flush=True)
         if not kline:
-            await push_line_messages(uid, [{"type": "text", "text": f"❌ {code} 無 K 線資料"}],
-                                     timeout=15, context="handler.chart_bg.no_kline")
+            err = {"type": "text", "text": f"❌ {code} 無 K 線資料"}
+            if reply_token:
+                await _reply_by_token(reply_token, [err])
+            else:
+                await push_line_messages(uid, [err], timeout=15, context="handler.chart_bg.no_kline")
             return
 
         q = await fetch_realtime_quote(code)
@@ -4457,17 +4482,29 @@ async def _chart_bg(code: str, uid: str) -> None:
         print(f"[chart_bg] upload url={content_url!r}", flush=True)
 
         if content_url:
-            msg = {"type": "image", "originalContentUrl": content_url, "previewImageUrl": content_url}
+            img_msg = {"type": "image", "originalContentUrl": content_url, "previewImageUrl": content_url}
         else:
-            msg = {"type": "text", "text": f"📊 {code} {name} 技術分析圖生成完成（上傳失敗，請稍後再試）"}
+            img_msg = {"type": "text", "text": f"📊 {code} {name} 技術分析圖生成完成（上傳失敗，請稍後再試）"}
 
-        ok = await push_line_messages(uid, [msg], timeout=20, context="handler.chart_bg")
-        print(f"[chart_bg] push 結果 status={'OK' if ok else 'FAILED'} uid={uid[:8]}", flush=True)
+        # 優先用 reply_token（不計配額），失敗 fallback push
+        if reply_token:
+            ok = await _reply_by_token(reply_token, [img_msg])
+            print(f"[chart_bg] reply 結果={'OK' if ok else 'FAILED→fallback push'} uid={uid[:8]}", flush=True)
+            if not ok:
+                ok = await push_line_messages(uid, [img_msg], timeout=20, context="handler.chart_bg.fallback")
+                print(f"[chart_bg] fallback push={'OK' if ok else 'FAILED'}", flush=True)
+        else:
+            ok = await push_line_messages(uid, [img_msg], timeout=20, context="handler.chart_bg")
+            print(f"[chart_bg] push 結果={'OK' if ok else 'FAILED'} uid={uid[:8]}", flush=True)
+
     except Exception as e:
         logger.error(f"[chart_bg] {code}: {e}", exc_info=True)
         print(f"[chart_bg] EXCEPTION {type(e).__name__}: {e}", flush=True)
-        await push_line_messages(uid, [{"type": "text", "text": f"❌ {code} 圖表生成失敗，請稍後再試"}],
-                                 timeout=15, context="handler.chart_bg.error")
+        err = {"type": "text", "text": f"❌ {code} 圖表生成失敗，請稍後再試"}
+        if reply_token:
+            await _reply_by_token(reply_token, [err])
+        else:
+            await push_line_messages(uid, [err], timeout=15, context="handler.chart_bg.error")
 
 
 async def _upload_image_to_line(png_bytes: bytes, token: str) -> str | None:
