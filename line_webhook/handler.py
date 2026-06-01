@@ -566,10 +566,7 @@ async def _handle_text(text: str, uid: str) -> list:
         return [_text("📐 計算馬可維茲最佳配置中…約需 15-30 秒，完成後自動推送",
                       qr_items(("💼 庫存", "/p")))]
     if cmd == "/backtest":
-        strategy = parts[1].lower() if len(parts) > 1 else ""
-        if strategy in ("momentum", "value", "chip", "breakout"):
-            return await _cmd_backtest_run(strategy, uid)
-        return await _cmd_backtest_menu(uid)
+        return await _cmd_backtest_v2(parts, uid)
     if cmd == "/ai_guide":                      return [_ai_guide()]
     if cmd == "/help":                          return [_text(_help_text(), _home_qr())]
     if cmd == "/screener":                      return await _cmd_screener(parts[1] if len(parts) > 1 else "top")
@@ -2275,44 +2272,482 @@ async def _cmd_conviction(code: str, uid: str) -> list:
 
 # ── 回測功能 ─────────────────────────────────────────────────────────────────
 
+# ── /backtest 指令系統 v2 ─────────────────────────────────────────────────────
+
+_STRATEGY_LABELS_V2: dict[str, str] = {
+    "momentum": "⚡ 動能",
+    "value":    "💰 RSI",
+    "chip":     "🏛 MACD",
+    "breakout": "🚀 布林",
+    "ma_cross": "📊 MA均線",
+    "kd":       "🎯 KD",
+}
+
+_STRATEGY_ALIASES: dict[str, str] = {
+    "momentum": "momentum", "m": "momentum",
+    "value":    "value",    "rsi": "value",
+    "chip":     "chip",     "macd": "chip",
+    "breakout": "breakout", "bb": "breakout", "bollinger": "breakout",
+    "ma":       "ma_cross", "ma_cross": "ma_cross",
+    "kd":       "kd",
+}
+
 _BACKTEST_LABELS = {
     "momentum": "⚡ 動能策略",
-    "value":    "💰 存股策略",
-    "chip":     "🏛 籌碼策略",
-    "breakout": "🚀 突破策略",
+    "value":    "💰 RSI 策略",
+    "chip":     "🏛 MACD 策略",
+    "breakout": "🚀 布林突破",
+    "ma_cross": "📊 MA 均線",
+    "kd":       "🎯 KD 策略",
 }
 
 _BACKTEST_QR = qr_items(
-    ("⚡ 動能策略", "/backtest momentum"),
-    ("💰 存股策略", "/backtest value"),
-    ("🏛 籌碼策略", "/backtest chip"),
-    ("🚀 突破策略", "/backtest breakout"),
+    ("⚡ 動能", "/backtest 2330 momentum"),
+    ("💰 RSI",  "/backtest 2330 value"),
+    ("🏛 MACD", "/backtest 2330 chip"),
+    ("🚀 布林", "/backtest 2330 breakout"),
+    ("📊 MA",   "/backtest 2330 ma"),
+    ("🔀 比較", "/backtest compare"),
 )
 
 
-async def _cmd_backtest_menu(uid: str) -> list:
-    """點「📈 回測」→ 顯示 4 策略 Quick Reply"""
-    return [_text(
-        "📈 策略回測\n\n選擇策略查看近3個月回測績效：\n"
-        "（以台積電 2330 為代表股模擬）",
-        _BACKTEST_QR,
-    )]
+def _parse_backtest_args(parts: list[str]) -> dict:
+    """
+    解析 /backtest 指令，回傳 dict:
+      mode: "menu"|"single"|"multi"|"compare"
+      codes, strategy, start_date, end_date, walk_forward
+    """
+    import re, calendar
+    args = [p for p in parts[1:] if p]
+
+    if not args:
+        return {"mode": "menu", "codes": ["2330"], "strategy": "momentum",
+                "start_date": "", "end_date": "", "walk_forward": False}
+
+    if args[0].lower() == "compare":
+        code = args[1].upper() if len(args) > 1 else "2330"
+        return {"mode": "compare", "codes": [code], "strategy": "all",
+                "start_date": "", "end_date": "", "walk_forward": False}
+
+    raw_code = args[0].upper()
+    if "," in raw_code:
+        codes = [c.strip() for c in raw_code.split(",") if c.strip()]
+        mode  = "multi"
+    else:
+        codes = [raw_code]
+        mode  = "single"
+
+    remaining = args[1:]
+    strategy  = "momentum"
+    if remaining and remaining[0].lower() in _STRATEGY_ALIASES:
+        strategy  = _STRATEGY_ALIASES[remaining[0].lower()]
+        remaining = remaining[1:]
+
+    start_date = ""
+    end_date   = ""
+    pat = re.compile(r"^\d{4}-\d{2}$")
+    if remaining and pat.match(remaining[0]):
+        start_date = remaining[0] + "-01"
+        remaining  = remaining[1:]
+    if remaining and pat.match(remaining[0]):
+        y, mo = int(remaining[0][:4]), int(remaining[0][5:7])
+        last  = calendar.monthrange(y, mo)[1]
+        end_date  = f"{remaining[0]}-{last:02d}"
+        remaining = remaining[1:]
+
+    walk_forward = any(r.lower() == "wf" for r in remaining)
+    return {"mode": mode, "codes": codes, "strategy": strategy,
+            "start_date": start_date, "end_date": end_date,
+            "walk_forward": walk_forward}
 
 
-async def _cmd_backtest_run(strategy: str, uid: str) -> list:
-    """選擇策略 → 同步執行回測並 reply（不用 push）"""
-    import asyncio
-    if strategy not in _BACKTEST_LABELS:
-        return [_text("❌ 未知策略", _BACKTEST_QR)]
-    label = _BACKTEST_LABELS[strategy]
+async def _cmd_backtest_v2(parts: list[str], uid: str) -> list:
+    """
+    主入口，支援：
+      /backtest                           → 選單
+      /backtest 2330                      → 預設策略（momentum）
+      /backtest 2330 rsi                  → RSI 策略
+      /backtest 2330 momentum 2024-01 2025-12  → 自訂期間
+      /backtest 2330,2454,3661 momentum   → 多股比較
+      /backtest compare [code]            → 所有策略比較
+      /backtest 2330 momentum wf          → Walk-Forward 驗證
+    """
+    args = _parse_backtest_args(parts)
+    mode = args["mode"]
+
+    if mode == "menu":
+        return [_text(
+            "📈 策略回測 v2\n\n"
+            "指令格式：\n"
+            "  /backtest 2330          預設策略（1年）\n"
+            "  /backtest 2330 rsi      RSI 策略\n"
+            "  /backtest 2330 momentum 2024-01 2025-12\n"
+            "  /backtest 2330,2454,3661 momentum\n"
+            "  /backtest compare 2330  策略總比較\n"
+            "  /backtest 2330 ma wf    Walk-Forward\n\n"
+            "策略：momentum/rsi/macd/breakout/ma/kd",
+            _BACKTEST_QR,
+        )]
+
+    if mode == "compare":
+        code = args["codes"][0]
+        asyncio.create_task(_backtest_compare_bg(code, uid))
+        return [_text(f"📊 {code} 策略比較計算中（6策略）…約需 60 秒，完成後推送")]
+
+    if mode == "multi":
+        asyncio.create_task(_backtest_multi_bg(
+            args["codes"], args["strategy"],
+            args["start_date"], args["end_date"], uid,
+        ))
+        label = _BACKTEST_LABELS.get(args["strategy"], args["strategy"])
+        return [_text(f"📈 多股回測《{label}》計算中…約需 45 秒，完成後推送")]
+
+    # single
+    code     = args["codes"][0]
+    strategy = args["strategy"]
+    label    = _BACKTEST_LABELS.get(strategy, strategy)
     try:
-        result = await asyncio.wait_for(_run_backtest(strategy, label), timeout=25)
+        result = await asyncio.wait_for(
+            _run_backtest_single(code, strategy,
+                                 args["start_date"], args["end_date"],
+                                 args["walk_forward"]),
+            timeout=35,
+        )
         return result
     except asyncio.TimeoutError:
-        return [_text(f"⏱ {label}回測計算逾時，請稍後再試", _BACKTEST_QR)]
+        asyncio.create_task(_backtest_single_bg(
+            code, strategy, args["start_date"], args["end_date"], uid,
+        ))
+        return [_text(f"⏱ {code}《{label}》計算較久，改背景執行…完成後推送")]
     except Exception as e:
-        logger.error("[backtest] %s", e)
-        return [_text(f"❌ 回測計算失敗：{type(e).__name__}", _BACKTEST_QR)]
+        logger.error("[backtest_v2] %s", e)
+        return [_text(f"❌ 回測失敗：{type(e).__name__}", _BACKTEST_QR)]
+
+
+# ── 向後相容（postback 用）────────────────────────────────────────────────────
+
+async def _cmd_backtest_menu(uid: str) -> list:
+    return await _cmd_backtest_v2(["/backtest"], uid)
+
+async def _cmd_backtest_run(strategy: str, uid: str) -> list:
+    return await _cmd_backtest_v2(["/backtest", "2330", strategy], uid)
+
+
+# ── 核心回測：取資料、計算指標 ───────────────────────────────────────────────
+
+async def _fetch_kline_df(code: str, start_date: str, end_date: str = "") -> "pd.DataFrame":
+    """取K線→DataFrame，start 格式 YYYY-MM-DD（空字串=近1年）"""
+    import pandas as pd
+    from datetime import date, timedelta
+    if not start_date:
+        start_date = (date.today() - timedelta(days=365)).strftime("%Y-%m-%d")
+    try:
+        from backend.services.twse_service import fetch_kline
+        kline = await fetch_kline(code, start_date)
+        if not kline or len(kline) < 40:
+            raise ValueError("kline too short")
+        df = pd.DataFrame(kline)
+        for c in ["open","high","low","close","volume"]:
+            if c in df.columns:
+                df[c] = pd.to_numeric(df[c], errors="coerce")
+        if "date" in df.columns and end_date:
+            df["date"] = pd.to_datetime(df["date"])
+            df = df[df["date"] <= pd.Timestamp(end_date)].reset_index(drop=True)
+        return df
+    except Exception:
+        return _mock_kline_90d(code)
+
+
+def _compute_monthly_returns(equity_curve: list) -> list[tuple[str, float]]:
+    """從 equity_curve 計算每月報酬率"""
+    if not equity_curve:
+        return []
+    import pandas as pd
+    rows = [{"date": e.get("date"), "equity": float(e.get("equity") or 0)}
+            for e in equity_curve if e.get("date") and e.get("equity")]
+    if len(rows) < 2:
+        return []
+    df = pd.DataFrame(rows)
+    df["date"] = pd.to_datetime(df["date"])
+    df = df.sort_values("date")
+    df["month"] = df["date"].dt.to_period("M")
+    grp = df.groupby("month")["equity"].agg(["first","last"])
+    grp["ret"] = (grp["last"] / grp["first"] - 1) * 100
+    return [(str(idx).replace("-","/"), round(float(r), 2)) for idx, r in grp["ret"].items()]
+
+
+def _compute_best_worst_trades(trades: list) -> dict:
+    """找出最佳/最差單筆交易百分比"""
+    pnls = []
+    for t in trades:
+        pnl  = t.pnl  if hasattr(t, "pnl")  else (t.get("pnl",  0) if isinstance(t, dict) else 0)
+        cost = getattr(t, "cost", None) or (t.get("cost") if isinstance(t, dict) else None)
+        dt   = getattr(t, "date", "")  or (t.get("date", "") if isinstance(t, dict) else "")
+        if pnl and cost and float(cost) > 0:
+            pnls.append((float(pnl) / float(cost) * 100, str(dt)[:7]))
+    if not pnls:
+        return {"best_pct": None, "best_date": "", "worst_pct": None, "worst_date": ""}
+    best  = max(pnls, key=lambda x: x[0])
+    worst = min(pnls, key=lambda x: x[0])
+    return {"best_pct": round(best[0], 1), "best_date": best[1],
+            "worst_pct": round(worst[0], 1), "worst_date": worst[1]}
+
+
+async def _fetch_benchmark_return(start_date: str, end_date: str = "") -> float | None:
+    """取同期 0050 ETF 報酬率作為大盤基準（失敗回傳 None）"""
+    try:
+        from backend.services.twse_service import fetch_kline
+        import pandas as pd
+        kline = await fetch_kline("0050", start_date)
+        if not kline or len(kline) < 5:
+            return None
+        df = pd.DataFrame(kline)
+        df["close"] = pd.to_numeric(df["close"], errors="coerce")
+        if end_date and "date" in df.columns:
+            df["date"] = pd.to_datetime(df["date"])
+            df = df[df["date"] <= pd.Timestamp(end_date)]
+        if len(df) < 2:
+            return None
+        return round(float((df["close"].iloc[-1] / df["close"].iloc[0] - 1) * 100), 1)
+    except Exception:
+        return None
+
+
+async def _run_backtest_single(
+    code: str, strategy: str,
+    start_date: str = "", end_date: str = "",
+    walk_forward: bool = False,
+) -> list:
+    """單股回測，回傳 LINE messages list（TextMessage）"""
+    import pandas as pd
+
+    df = await _fetch_kline_df(code, start_date, end_date)
+    try:
+        from quant.feature_engine import FeatureEngine
+        feat_df = FeatureEngine(df).compute_all()
+    except Exception:
+        feat_df = df
+
+    signals = _gen_strategy_signals_v2(feat_df, strategy)
+    from quant.backtest_engine import BacktestEngine
+    report  = BacktestEngine(initial_capital=1_000_000, commission_discount=0.6).run(
+        feat_df, signals, stop_loss_pct=0.08
+    )
+
+    try:
+        d0 = str(feat_df.iloc[0].get("date",""))[:7].replace("-","/")
+        d1 = str(feat_df.iloc[-1].get("date",""))[:7].replace("-","/")
+    except Exception:
+        d0 = d1 = "─"
+
+    monthly = _compute_monthly_returns(report.equity_curve)
+    bw      = _compute_best_worst_trades(report.trades)
+    bench_start = start_date or (str(feat_df.iloc[0].get("date",""))[:10] if len(feat_df) else "")
+    bench_end   = end_date   or (str(feat_df.iloc[-1].get("date",""))[:10] if len(feat_df) else "")
+    benchmark   = await _fetch_benchmark_return(bench_start, bench_end)
+
+    wf_summary = ""
+    if walk_forward:
+        try:
+            from quant.backtest_engine import WalkForwardAnalyzer
+            wf_result = WalkForwardAnalyzer(train_days=120, test_days=20).run(feat_df)
+            wf_summary = (
+                f"\n\n【Walk-Forward 驗證】\n"
+                f"樣本外夏普：{wf_result.combined.sharpe:.2f}\n"
+                f"樣本外回撤：{wf_result.combined.max_dd_pct*100:.1f}%\n"
+                f"穩定性：{wf_result.stability.verdict}"
+                f"（{wf_result.stability.pct_profitable*100:.0f}% 期間獲利）"
+            )
+        except Exception as e:
+            logger.warning("[backtest wf] %s", e)
+
+    label = _BACKTEST_LABELS.get(strategy, strategy)
+    text  = _format_backtest_text(code, label, f"{d0} ~ {d1}",
+                                  report, monthly, bw, benchmark, wf_summary)
+    qr = qr_items(
+        ("🔀 比較策略", f"/backtest compare {code}"),
+        ("📊 Walk-Forward", f"/backtest {code} {strategy} wf"),
+        ("📅 自訂期間",  f"/backtest {code} {strategy} 2024-01 2025-12"),
+    )
+    return [_text(text, qr)]
+
+
+def _format_backtest_text(
+    code: str, label: str, period: str, report,
+    monthly: list[tuple[str, float]],
+    bw: dict, benchmark: float | None,
+    wf_summary: str = "",
+) -> str:
+    """格式化完整回測文字報告"""
+    sign = "+" if report.total_return >= 0 else ""
+    sep  = "─" * 22
+
+    bench_line = ""
+    if benchmark is not None:
+        beat = "✅ 跑贏大盤" if report.total_return * 100 >= benchmark else "❌ 輸給大盤"
+        bench_line = f"大盤(0050)：{benchmark:+.1f}%  {beat}\n"
+
+    bw_lines = ""
+    if bw.get("best_pct") is not None:
+        bw_lines = (
+            f"最佳單筆：{bw['best_pct']:+.1f}%（{bw['best_date']}）\n"
+            f"最差單筆：{bw['worst_pct']:+.1f}%（{bw['worst_date']}）\n"
+        )
+
+    monthly_lines = ""
+    if monthly:
+        pos     = [r for _, r in monthly if r > 0]
+        best_m  = max(monthly, key=lambda x: x[1])
+        worst_m = min(monthly, key=lambda x: x[1])
+        monthly_lines = (
+            f"\n【月度分佈】\n"
+            f"正報酬月：{len(pos)}/{len(monthly)} 月"
+            f"（{len(pos)/len(monthly)*100:.0f}%）\n"
+            f"最佳月：{best_m[0]} {best_m[1]:+.1f}%\n"
+            f"最差月：{worst_m[0]} {worst_m[1]:+.1f}%\n"
+        )
+
+    avg_hold  = getattr(report, "avg_holding_days", None)
+    hold_line = f"平均持股：{avg_hold:.0f} 天\n" if avg_hold else ""
+
+    return (
+        f"📈 {code}《{label}》回測\n"
+        f"{sep}\n"
+        f"期間：{period}\n"
+        f"策略報酬：{sign}{report.total_return*100:.1f}%\n"
+        f"{bench_line}"
+        f"{sep}\n"
+        f"【績效指標】\n"
+        f"年化報酬：{report.annual_return*100:+.1f}%\n"
+        f"夏普比率：{report.sharpe_ratio:.2f}\n"
+        f"最大回撤：{report.max_drawdown*100:.1f}%\n"
+        f"{sep}\n"
+        f"【交易統計】\n"
+        f"勝率：{report.win_rate*100:.0f}%\n"
+        f"交易次數：{report.n_trades} 筆\n"
+        f"{hold_line}"
+        f"{bw_lines}"
+        f"{monthly_lines}"
+        f"{wf_summary}"
+    ).strip()
+
+
+# ── 背景任務 ──────────────────────────────────────────────────────────────────
+
+async def _backtest_single_bg(code: str, strategy: str,
+                               start_date: str, end_date: str, uid: str) -> None:
+    try:
+        msgs = await _run_backtest_single(code, strategy, start_date, end_date)
+        for m in msgs:
+            txt = getattr(m, "text", None) or (m.get("text","") if isinstance(m, dict) else "")
+            if txt:
+                await push_line_messages(uid, [{"type":"text","text":txt}],
+                                         timeout=20, context="backtest.single_bg")
+    except Exception as e:
+        logger.error("[backtest_single_bg] %s", e)
+        await push_line_messages(uid, [{"type":"text","text":f"❌ 回測失敗：{e}"}],
+                                 timeout=10, context="backtest.single_bg.err")
+
+
+async def _backtest_multi_bg(codes: list[str], strategy: str,
+                              start_date: str, end_date: str, uid: str) -> None:
+    try:
+        label   = _BACKTEST_LABELS.get(strategy, strategy)
+        results = []
+        for code in codes[:5]:
+            try:
+                df = await _fetch_kline_df(code, start_date, end_date)
+                try:
+                    from quant.feature_engine import FeatureEngine
+                    feat_df = FeatureEngine(df).compute_all()
+                except Exception:
+                    feat_df = df
+                signals = _gen_strategy_signals_v2(feat_df, strategy)
+                from quant.backtest_engine import BacktestEngine
+                report  = BacktestEngine(initial_capital=1_000_000, commission_discount=0.6).run(
+                    feat_df, signals, stop_loss_pct=0.08
+                )
+                results.append((code, report))
+            except Exception as e:
+                logger.warning("[multi_bt] %s %s", code, e)
+
+        if not results:
+            await push_line_messages(uid, [{"type":"text","text":"❌ 多股回測失敗"}],
+                                     timeout=10, context="backtest.multi_bg")
+            return
+
+        results.sort(key=lambda x: x[1].total_return, reverse=True)
+        benchmark = await _fetch_benchmark_return(start_date, end_date)
+
+        sep   = "─" * 22
+        lines = [f"📊 多股回測《{label}》\n{sep}"]
+        medals = ["🥇","🥈","🥉","4️⃣","5️⃣"]
+        for i, (code, r) in enumerate(results, 1):
+            beat  = " ✅" if benchmark is not None and r.total_return*100 >= benchmark else ""
+            lines.append(
+                f"{medals[i-1]} {code}  {r.total_return*100:+.1f}%"
+                f"  夏普{r.sharpe_ratio:.2f}  勝率{r.win_rate*100:.0f}%{beat}"
+            )
+        if benchmark is not None:
+            lines.append(f"\n大盤(0050)：{benchmark:+.1f}%")
+        lines.append(sep)
+        await push_line_messages(uid, [{"type":"text","text":"\n".join(lines)}],
+                                 timeout=20, context="backtest.multi_bg")
+    except Exception as e:
+        logger.error("[backtest_multi_bg] %s", e)
+        await push_line_messages(uid, [{"type":"text","text":f"❌ 多股回測失敗：{e}"}],
+                                 timeout=10, context="backtest.multi_bg.err")
+
+
+async def _backtest_compare_bg(code: str, uid: str) -> None:
+    try:
+        from quant.feature_engine import FeatureEngine
+        from quant.backtest_engine import BacktestEngine
+        from datetime import date, timedelta
+
+        start_date = (date.today() - timedelta(days=365)).strftime("%Y-%m-%d")
+        df = await _fetch_kline_df(code, start_date)
+        try:
+            feat_df = FeatureEngine(df).compute_all()
+        except Exception:
+            feat_df = df
+
+        results = []
+        for strategy in _STRATEGY_LABELS_V2:
+            try:
+                signals = _gen_strategy_signals_v2(feat_df, strategy)
+                report  = BacktestEngine(initial_capital=1_000_000, commission_discount=0.6).run(
+                    feat_df, signals, stop_loss_pct=0.08
+                )
+                results.append((strategy, report))
+            except Exception as e:
+                logger.warning("[compare_bt] %s %s", strategy, e)
+
+        results.sort(key=lambda x: x[1].total_return, reverse=True)
+        benchmark = await _fetch_benchmark_return(start_date)
+
+        sep   = "─" * 22
+        lines = [f"📊 策略比較（{code}，近1年）\n{sep}"]
+        medals = ["🥇","🥈","🥉","4️⃣","5️⃣","6️⃣"]
+        for i, (st, r) in enumerate(results, 1):
+            lbl  = _STRATEGY_LABELS_V2.get(st, st)
+            beat = " ✅" if benchmark is not None and r.total_return*100 >= benchmark else ""
+            lines.append(
+                f"{medals[min(i-1,5)]} {lbl}  {r.total_return*100:+.1f}%"
+                f"  夏普{r.sharpe_ratio:.2f}  勝率{r.win_rate*100:.0f}%{beat}"
+            )
+        if benchmark is not None:
+            beat_cnt = sum(1 for _, r in results if r.total_return*100 >= benchmark)
+            lines.append(f"\n大盤(0050)：{benchmark:+.1f}%（{beat_cnt}/{len(results)} 策略跑贏）")
+        lines.append(sep)
+
+        text = "\n".join(lines)
+        await push_line_messages(uid, [{"type":"text","text":text}],
+                                 timeout=20, context="backtest.compare_bg")
+    except Exception as e:
+        logger.error("[backtest_compare_bg] %s", e)
+        await push_line_messages(uid, [{"type":"text","text":f"❌ 比較失敗：{e}"}],
+                                 timeout=10, context="backtest.compare_bg.err")
 
 
 async def _run_backtest(strategy: str, label: str) -> list:
@@ -2465,42 +2900,50 @@ def _mock_kline_90d(stock_code: str) -> "pd.DataFrame":
 
 
 def _gen_strategy_signals(feat_df: "pd.DataFrame", strategy: str) -> "pd.Series":
-    """根據策略名稱產生 buy/sell/hold 訊號"""
+    return _gen_strategy_signals_v2(feat_df, strategy)
+
+
+def _gen_strategy_signals_v2(feat_df: "pd.DataFrame", strategy: str) -> "pd.Series":
+    """擴充版訊號產生：支援 momentum/value/chip/breakout/ma_cross/kd"""
     import numpy as np, pandas as pd
     n       = len(feat_df)
     signals = ["hold"] * n
-
     try:
         if strategy == "momentum":
             for i, row in feat_df.iterrows():
-                ret5 = row.get("ret_5d", np.nan)
-                if np.isnan(float(ret5 or 0)): continue
-                if float(ret5) > 0.02:  signals[i] = "buy"
-                elif float(ret5) < -0.02: signals[i] = "sell"
-
-        elif strategy == "value":   # RSI 均值回歸（長線存股）
+                ret5 = float(row.get("ret_5d", 0) or 0)
+                if ret5 > 0.02:    signals[i] = "buy"
+                elif ret5 < -0.02: signals[i] = "sell"
+        elif strategy == "value":
             for i, row in feat_df.iterrows():
-                rsi = float(row.get("rsi14", np.nan) or 50)
-                if np.isnan(rsi): continue
-                if rsi < 30:  signals[i] = "buy"
+                rsi = float(row.get("rsi14", 50) or 50)
+                if rsi < 30:   signals[i] = "buy"
                 elif rsi > 72: signals[i] = "sell"
-
-        elif strategy == "chip":    # MACD 黃金交叉
+        elif strategy == "chip":
             for i, row in feat_df.iterrows():
-                golden = row.get("macd_golden", 0)
-                hist   = float(row.get("macd_hist", 0) or 0)
-                if golden:           signals[i] = "buy"
-                elif hist < -0.5:    signals[i] = "sell"
-
-        elif strategy == "breakout":  # 布林突破
+                if row.get("macd_golden", 0): signals[i] = "buy"
+                elif float(row.get("macd_hist", 0) or 0) < -0.5: signals[i] = "sell"
+        elif strategy == "breakout":
             for i, row in feat_df.iterrows():
                 b = float(row.get("boll_b", 0.5) or 0.5)
-                if np.isnan(b): continue
-                if b < 0.05:    signals[i] = "buy"
-                elif b > 0.95:  signals[i] = "sell"
+                if b < 0.05:   signals[i] = "buy"
+                elif b > 0.95: signals[i] = "sell"
+        elif strategy == "ma_cross":
+            close = feat_df["close"] if "close" in feat_df.columns else pd.Series([0] * n)
+            ma5   = feat_df["ma5"]   if "ma5"  in feat_df.columns else close.rolling(5,  min_periods=1).mean()
+            ma20  = feat_df["ma20"]  if "ma20" in feat_df.columns else close.rolling(20, min_periods=1).mean()
+            ma5v, ma20v = ma5.values, ma20.values
+            for i in range(1, n):
+                if ma5v[i-1] < ma20v[i-1] and ma5v[i] > ma20v[i]:   signals[i] = "buy"
+                elif ma5v[i-1] > ma20v[i-1] and ma5v[i] < ma20v[i]: signals[i] = "sell"
+        elif strategy == "kd":
+            for i, row in feat_df.iterrows():
+                k = float(row.get("k_value", row.get("k9", 50)) or 50)
+                d = float(row.get("d_value", row.get("d9", 50)) or 50)
+                if k < 20 and k > d:   signals[i] = "buy"
+                elif k > 80 and k < d: signals[i] = "sell"
     except Exception as e:
-        logger.warning("[backtest] signal gen failed: %s", e)
-
+        logger.warning("[backtest_v2] signal gen failed: %s", e)
     return pd.Series(signals)
 
 
