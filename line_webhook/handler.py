@@ -1,4 +1,5 @@
 """LINE Bot Webhook — 多用戶 · Flex · Quick Reply · Postback · 策略推薦"""
+import asyncio
 import re
 import sys, os, urllib.parse
 import httpx
