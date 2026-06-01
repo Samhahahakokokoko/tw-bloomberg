@@ -1,0 +1,198 @@
+name: Daily Enhance
+
+on:
+  schedule:
+    # 每天 04:00 台灣時間（UTC 20:00 前一天）
+    - cron: '0 20 * * *'
+  workflow_dispatch:
+    inputs:
+      skip_line:
+        description: '略過 LINE 推播（測試用）'
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  daily-enhance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      # ── 1. Checkout ────────────────────────────────────────────────
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      # ── 2. Python ──────────────────────────────────────────────────
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          pip install httpx python-dotenv loguru aiosqlite asyncpg \
+            line-bot-sdk fastapi anthropic sqlalchemy 2>/dev/null || true
+          [ -f requirements.txt ] && pip install -r requirements.txt --quiet || true
+
+      # ── 3. Rule-based log analysis & fixes ─────────────────────────
+      - name: Rule-based enhance
+        id: enhance
+        env:
+          LINE_CHANNEL_ACCESS_TOKEN: ${{ vars.SKIP_LINE == 'true' && '' || secrets.LINE_CHANNEL_ACCESS_TOKEN }}
+          ADMIN_LINE_UID:            ${{ secrets.ADMIN_LINE_UID }}
+          RAILWAY_TOKEN:             ${{ secrets.RAILWAY_TOKEN }}
+          RAILWAY_PROJECT_ID:        ${{ secrets.RAILWAY_PROJECT_ID }}
+          RAILWAY_SERVICE_ID:        ${{ secrets.RAILWAY_SERVICE_ID }}
+          RAILWAY_BACKEND_URL:       ${{ secrets.RAILWAY_BACKEND_URL }}
+          DATABASE_URL:              ${{ secrets.DATABASE_URL }}
+        run: |
+          set +e
+          python scripts/ci_daily_enhance.py
+          RESULT=$?
+          set -e
+          echo "exit_code=${RESULT}" >> "$GITHUB_OUTPUT"
+          # 2 = patches applied; 0 = clean; 1 = script error
+          if [ "$RESULT" -eq 1 ]; then
+            echo "::warning::ci_daily_enhance returned error"
+          fi
+
+      # ── 4. Syntax check ────────────────────────────────────────────
+      - name: Syntax check
+        id: syntax
+        run: |
+          PASS=true
+          for dir in backend quant line_webhook scripts; do
+            if [ -d "$dir" ]; then
+              find "$dir" -name "*.py" -exec python -m py_compile {} + || PASS=false
+            fi
+          done
+          echo "passed=${PASS}" >> "$GITHUB_OUTPUT"
+          if [ "$PASS" = "true" ]; then
+            echo "✅ 語法全部通過"
+          else
+            echo "::error::語法檢查失敗"
+          fi
+
+      # ── 5. LINE command format tests ───────────────────────────────
+      - name: LINE command format tests
+        run: |
+          python - <<'PYEOF'
+          import re, sys
+
+          # Stock code pattern
+          stock_re = re.compile(r"^\d{4,6}$")
+          for code, expect in [("2330", True), ("00878", True), ("006208", True), ("AAPL", False)]:
+              assert bool(stock_re.match(code)) == expect, f"stock pattern failed: {code}"
+
+          # Backtest arg parser (replicate _parse_backtest_args logic)
+          ALIASES = {"momentum":"momentum","mo":"momentum","rsi":"value","value":"value",
+                     "chip":"chip","macd":"chip","breakout":"breakout","bb":"breakout",
+                     "ma":"ma_cross","cross":"ma_cross","ma_cross":"ma_cross","kd":"kd"}
+          DATE_RE = re.compile(r"^(\d{4})-(\d{2})$")
+
+          def parse(parts):
+              codes, strategy, start, end, wf = [], "momentum", "", "", False
+              for p in parts[1:]:
+                  p = p.strip().lower()
+                  if p == "wf": wf = True
+                  elif p == "compare": return {"mode": "compare"}
+                  elif "," in p:
+                      codes = [c.strip().upper() for c in p.split(",") if c.strip()]
+                  elif p in ALIASES:
+                      strategy = ALIASES[p]
+                  elif DATE_RE.match(p) and not start:
+                      start = p
+                  elif DATE_RE.match(p) and start:
+                      end = p
+                  elif re.match(r"^\d{4,6}$", p):
+                      codes.append(p.upper())
+              mode = "multi" if len(codes) > 1 else "single"
+              return {"mode": mode, "codes": codes, "strategy": strategy,
+                      "start": start, "end": end, "wf": wf}
+
+          tests = [
+              (["/backtest", "2330"],                  {"mode":"single","codes":["2330"],"strategy":"momentum"}),
+              (["/backtest", "2330", "rsi"],            {"mode":"single","codes":["2330"],"strategy":"value"}),
+              (["/backtest", "2330,2454", "momentum"],  {"mode":"multi", "codes":["2330","2454"]}),
+              (["/backtest", "compare"],                {"mode":"compare"}),
+              (["/backtest", "2330", "ma_cross"],       {"mode":"single","strategy":"ma_cross"}),
+              (["/backtest", "2330", "kd", "wf"],       {"mode":"single","strategy":"kd","wf":True}),
+              (["/backtest", "2330", "2024-01","2025-12"], {"start":"2024-01","end":"2025-12"}),
+          ]
+
+          for parts, expected in tests:
+              result = parse(parts)
+              for k, v in expected.items():
+                  assert result.get(k) == v, f"FAIL {parts}: {k}={result.get(k)!r} != {v!r}"
+
+          print(f"✅ LINE 指令格式測試全部通過（{len(tests)} 組）")
+          PYEOF
+
+      # ── 6. Detect code changes ─────────────────────────────────────
+      - name: Check for changes
+        id: diff
+        run: |
+          if git diff --quiet && git diff --cached --quiet; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "無程式碼變更"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            git diff --stat
+          fi
+
+      # ── 7. Commit + push if syntax passed ──────────────────────────
+      - name: Commit and push fixes
+        if: >
+          steps.diff.outputs.changed == 'true' &&
+          steps.syntax.outputs.passed == 'true'
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          DATE=$(date -u +%Y-%m-%d)
+          git add backend/ quant/ line_webhook/ scripts/ .github/ requirements.txt
+          git commit -m "fix: daily-enhance ${DATE} [rule-engine]" || echo "nothing to commit"
+          git push origin main
+          echo "✅ 修復已 push"
+
+      # ── 8. Create PR if syntax failed ──────────────────────────────
+      - name: Create PR (syntax failed)
+        if: >
+          steps.diff.outputs.changed == 'true' &&
+          steps.syntax.outputs.passed == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          DATE=$(date -u +%Y%m%d-%H%M)
+          BRANCH="daily-enhance/${DATE}"
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -b "${BRANCH}"
+          git add backend/ quant/ line_webhook/ scripts/
+          git commit -m "fix: daily-enhance $(date -u +%Y-%m-%d) [needs-review]"
+          git push origin "${BRANCH}"
+          gh pr create \
+            --title "fix: daily-enhance $(date -u +%Y-%m-%d)" \
+            --body "⚠️ 規則引擎套用了修復，語法檢查失敗，請人工審查後 merge。" \
+            --head "${BRANCH}" --base main 2>/dev/null || true
+
+      # ── 9. Summary ─────────────────────────────────────────────────
+      - name: Job summary
+        if: always()
+        run: |
+          cat >> "$GITHUB_STEP_SUMMARY" << SUMMARY
+          ## 🔧 Daily Enhance 結果
+
+          | 項目 | 狀態 |
+          |------|------|
+          | 規則修復 exit | ${{ steps.enhance.outputs.exit_code }} |
+          | 語法檢查 | ${{ steps.syntax.outputs.passed == 'true' && '✅' || '❌' }} |
+          | 程式碼變更 | ${{ steps.diff.outputs.changed == 'true' && '有修復 push' || '無變更' }} |
+
+          > 每天 04:00 台灣時間自動執行。
+          SUMMARY

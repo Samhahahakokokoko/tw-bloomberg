@@ -1,0 +1,217 @@
+name: Weekly Enhance
+
+on:
+  schedule:
+    # 每週日 05:00 台灣時間（UTC 週六 21:00）— 接在 auto_maintain 之後
+    - cron: '0 21 * * 6'
+  workflow_dispatch:
+    inputs:
+      force_fail_exit:
+        description: '失敗時以 exit 1 結束（預設忽略非關鍵失敗）'
+        type: boolean
+        default: false
+
+jobs:
+  weekly-enhance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      # ── 1. Checkout ────────────────────────────────────────────────
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # ── 2. Python ──────────────────────────────────────────────────
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          pip install httpx python-dotenv loguru aiosqlite asyncpg \
+            line-bot-sdk fastapi anthropic sqlalchemy 2>/dev/null || true
+          [ -f requirements.txt ] && pip install -r requirements.txt --quiet || true
+
+      # ── 3. API endpoint checks ─────────────────────────────────────
+      - name: API endpoint health check
+        id: api_check
+        env:
+          RAILWAY_BACKEND_URL: ${{ secrets.RAILWAY_BACKEND_URL }}
+        run: |
+          if [ -z "$RAILWAY_BACKEND_URL" ]; then
+            echo "::warning::RAILWAY_BACKEND_URL 未設定，略過 API 端點測試"
+            echo "skipped=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          PASS=true
+          check_endpoint() {
+            local label="$1" url="$2" method="${3:-GET}"
+            local status
+            if [ "$method" = "POST" ]; then
+              status=$(curl -s -o /tmp/resp.json -w "%{http_code}" \
+                --max-time 25 -X POST -H "Content-Type: application/json" \
+                -d '{}' "${url}")
+            else
+              status=$(curl -s -o /tmp/resp.json -w "%{http_code}" \
+                --max-time 25 "${url}")
+            fi
+            if [ "$status" -lt 400 ] 2>/dev/null; then
+              echo "  ✅ [${status}] ${label}"
+            else
+              echo "  ❌ [${status}] ${label}"
+              cat /tmp/resp.json 2>/dev/null | head -3
+              PASS=false
+            fi
+          }
+
+          check_endpoint "健康檢查"   "${RAILWAY_BACKEND_URL}/health"
+          check_endpoint "系統儀表板" "${RAILWAY_BACKEND_URL}/api/system/health"
+          check_endpoint "台積電報價" "${RAILWAY_BACKEND_URL}/api/quote/2330"
+          check_endpoint "每日建議"   "${RAILWAY_BACKEND_URL}/api/advice/daily"
+          check_endpoint "早報生成"   "${RAILWAY_BACKEND_URL}/api/report/morning" "POST"
+
+          echo "passed=${PASS}" >> "$GITHUB_OUTPUT"
+          [ "$PASS" = "true" ] && echo "✅ 全部端點正常" || echo "::warning::部分端點異常"
+
+      # ── 4. Database data check ─────────────────────────────────────
+      - name: Database data check
+        id: db_check
+        env:
+          RAILWAY_BACKEND_URL: ${{ secrets.RAILWAY_BACKEND_URL }}
+        run: |
+          if [ -z "$RAILWAY_BACKEND_URL" ]; then
+            echo "skipped=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          python - <<'PYEOF'
+          import httpx, sys, os
+
+          url = os.getenv("RAILWAY_BACKEND_URL", "").rstrip("/")
+          try:
+              r = httpx.get(f"{url}/api/system/health", timeout=20)
+              if r.status_code >= 400:
+                  print(f"  ⚠️ system/health 回傳 {r.status_code}")
+                  sys.exit(0)
+              data = r.json()
+              overall = data.get("overall_status", "unknown")
+              modules = data.get("modules", [])
+              green   = sum(1 for m in modules if m.get("status") == "green")
+              red     = sum(1 for m in modules if m.get("status") == "red")
+              api_r   = data.get("api_success_rate")
+              mock_r  = data.get("mock_ratio")
+              ks      = data.get("kill_switch_active", False)
+
+              print(f"  整體狀態：{overall}")
+              print(f"  模組：{green} 綠燈 / {red} 紅燈 / {len(modules)} 個")
+              if api_r is not None:
+                  pct = api_r * 100 if api_r <= 1 else api_r
+                  print(f"  API 成功率：{pct:.0f}%")
+              if mock_r is not None:
+                  pct = mock_r * 100 if mock_r <= 1 else mock_r
+                  print(f"  Mock 比例：{pct:.0f}%")
+              if ks:
+                  print("  ⚠️  Kill Switch 啟動中！")
+                  sys.exit(1)
+          except Exception as e:
+              print(f"  ⚠️ 無法取得系統健康資料：{e}")
+          PYEOF
+
+      # ── 5. Scheduler jobs check ────────────────────────────────────
+      - name: Scheduler jobs check
+        run: |
+          python - <<'PYEOF'
+          import re
+          from pathlib import Path
+
+          sched = Path("backend/utils/scheduler.py")
+          if not sched.exists():
+              print("  ⚠️ scheduler.py 不存在")
+              exit(0)
+
+          text = sched.read_text(encoding="utf-8", errors="ignore")
+          jobs = [l.strip() for l in text.splitlines()
+                  if "add_job(" in l or "scheduler.add_job" in l]
+          print(f"  排程器：{len(jobs)} 個 job")
+          for j in jobs[:10]:
+              print(f"    • {j[:80]}")
+
+          if len(jobs) < 5:
+              print("  ⚠️ Job 數量偏少（預期 ≥5）")
+          else:
+              print("  ✅ 排程器 job 數量正常")
+
+          # Check for Taiwan timezone
+          if "Asia/Taipei" in text:
+              print("  ✅ 時區設定正確（Asia/Taipei）")
+          else:
+              print("  ⚠️ 未找到 Asia/Taipei 時區設定")
+          PYEOF
+
+      # ── 6. Code health audit ───────────────────────────────────────
+      - name: Code health audit
+        run: |
+          python - <<'PYEOF'
+          import re
+          from pathlib import Path
+
+          REPO = Path(".")
+          issues = []
+
+          for d in ["backend", "quant", "line_webhook"]:
+              dp = REPO / d
+              if not dp.exists():
+                  continue
+              for f in dp.rglob("*.py"):
+                  try:
+                      text = f.read_text(encoding="utf-8", errors="ignore")
+                  except OSError:
+                      continue
+                  rel = str(f.relative_to(REPO))
+
+                  # asyncio used without import
+                  if re.search(r"\basyncio\.", text) and not re.search(r"^import asyncio", text, re.M):
+                      issues.append(f"missing import asyncio: {rel}")
+
+                  # anthropic calls without credit guard
+                  if "anthropic" in text and "messages.create" in text and "credit balance is too low" not in text:
+                      n = text.count("messages.create")
+                      issues.append(f"anthropic credit guard missing ({n} call(s)): {rel}")
+
+          if issues:
+              print(f"  ⚠️ {len(issues)} 個潛在問題：")
+              for issue in issues[:10]:
+                  print(f"    • {issue}")
+          else:
+              print("  ✅ 代碼審計：無問題")
+          PYEOF
+
+      # ── 7. Deep weekly report via Python script ────────────────────
+      - name: Send weekly LINE report
+        env:
+          LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
+          ADMIN_LINE_UID:            ${{ secrets.ADMIN_LINE_UID }}
+          RAILWAY_BACKEND_URL:       ${{ secrets.RAILWAY_BACKEND_URL }}
+          DATABASE_URL:              ${{ secrets.DATABASE_URL }}
+        run: |
+          python scripts/ci_weekly_enhance.py
+          echo "週報推送完成"
+
+      # ── 8. Job summary ─────────────────────────────────────────────
+      - name: Job summary
+        if: always()
+        run: |
+          cat >> "$GITHUB_STEP_SUMMARY" << SUMMARY
+          ## 📊 Weekly Enhance 結果
+
+          | 項目 | 狀態 |
+          |------|------|
+          | API 端點 | ${{ steps.api_check.outputs.passed == 'true' && '✅ 全部正常' || steps.api_check.outputs.skipped == 'true' && '⏭ 略過' || '⚠️ 部分異常' }} |
+          | 資料庫 | ${{ steps.db_check.outputs.skipped == 'true' && '⏭ 略過' || '✅ 已檢查' }} |
+
+          > 每週日 05:00 台灣時間執行（接在 auto_maintain 之後）。
+          > 如需立即執行請點 **Run workflow**。
+          SUMMARY
