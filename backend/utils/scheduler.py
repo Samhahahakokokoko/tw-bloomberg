@@ -311,11 +311,25 @@ def start_scheduler() -> AsyncIOScheduler:
         CronTrigger(day=1, hour=0, minute=0, timezone="Asia/Taipei"),
         id="monthly_tier_update", replace_existing=True,
     )
-    # 20:00 推送共識報告
+    # 20:00 推送共識報告（每日）
     scheduler.add_job(
         _push_analyst_consensus,
         CronTrigger(day_of_week="mon-fri", hour=20, minute=0, timezone="Asia/Taipei"),
         id="analyst_consensus_push", replace_existing=True,
+    )
+
+    # ── 警報批次推送（每日最多 2 次）─────────────────────────────────────────
+    # 12:00 整合上午所有警報（09:00–12:00 觸發的）
+    scheduler.add_job(
+        _push_morning_alerts,
+        CronTrigger(day_of_week="mon-fri", hour=12, minute=0, timezone="Asia/Taipei"),
+        id="morning_alert_flush", replace_existing=True,
+    )
+    # 15:30 整合下午所有警報（12:00–15:30 觸發的）
+    scheduler.add_job(
+        _push_afternoon_alerts,
+        CronTrigger(day_of_week="mon-fri", hour=15, minute=30, timezone="Asia/Taipei"),
+        id="afternoon_alert_flush", replace_existing=True,
     )
 
     # ── 新功能排程（第三批/最終批）──────────────────────────────────────────
@@ -504,7 +518,6 @@ def _apply_line_quota_safe_mode(scheduler: AsyncIOScheduler) -> None:
         "smart_alert_v2",
         "watchlist_daily",
         "analyst_alert_check",
-        "analyst_consensus_push",
         "autonomous_research",
         "smart_money_v2",
         "agent_report",
@@ -1520,3 +1533,25 @@ async def _push_investor_meetings():
         logger.info("[InvestorMeetings] weekly calendar pushed")
     except Exception as e:
         logger.error(f"Investor meetings push failed: {e}")
+
+
+# ── 警報批次推送 ──────────────────────────────────────────────────────────────
+
+async def _push_morning_alerts():
+    """12:00 — 上午（09:00–12:00）警報整合推送，每人每日最多 2 次"""
+    try:
+        from .alert_checker import flush_alert_buffer
+        n = await flush_alert_buffer(session="上午整合")
+        logger.info(f"[Alert 12:00] pushed to {n} users")
+    except Exception as e:
+        logger.error(f"Morning alert flush failed: {e}")
+
+
+async def _push_afternoon_alerts():
+    """15:30 — 下午（12:00–15:30）警報整合推送，每人每日最多 2 次"""
+    try:
+        from .alert_checker import flush_alert_buffer
+        n = await flush_alert_buffer(session="下午整合")
+        logger.info(f"[Alert 15:30] pushed to {n} users")
+    except Exception as e:
+        logger.error(f"Afternoon alert flush failed: {e}")
