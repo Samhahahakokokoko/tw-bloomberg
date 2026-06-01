@@ -42,7 +42,7 @@ async def _push_failure_alert(task_name: str, error: str) -> None:
                         client=c,
                         context="scheduler.failure_alert",
                     )
-                except Exception:
+                except Exception as e:
                     pass
         logger.info("[Scheduler] 失敗通知已推送：%s", task_name)
     except Exception as e:
@@ -1034,7 +1034,7 @@ async def _run_monthly_tier_update():
                         client=c,
                         context="scheduler.monthly_tier",
                     )
-                except Exception:
+                except Exception as e:
                     pass
         logger.info(f"[monthly_tier] pushed report to {len(subs)} subscribers")
     except Exception as e:
@@ -1209,7 +1209,7 @@ async def _push_narrative_map():
                         client=c,
                         context="scheduler.narrative",
                     )
-                except Exception:
+                except Exception as e:
                     pass
         logger.info("[Narrative] pushed to %d subscribers", len(subs))
     except Exception as e:
@@ -1267,7 +1267,7 @@ async def _push_macro_weekly():
                         client=c,
                         context="scheduler.macro",
                     )
-                except Exception:
+                except Exception as e:
                     pass
         logger.info("[Macro] weekly report pushed to %d", len(subs))
     except Exception as e:
@@ -1358,7 +1358,7 @@ async def _run_drift_detection_job():
                         client=c,
                         context="scheduler.drift",
                     )
-                except Exception:
+                except Exception as e:
                     pass
         logger.info("[drift 16:30] pushed %d alerts to %d subscribers",
                     len(report.high_severity), len(subs))
@@ -1401,7 +1401,7 @@ async def _push_euphoria_stress():
                         client=c,
                         context="scheduler.euphoria_stress",
                     )
-                except Exception:
+                except Exception as e:
                     pass
         logger.info("[intel 17:00] euphoria=%.1f stress=%.1f pushed to %d",
                     euphoria.euphoria_score, stress.stress_score, len(subs))
@@ -1452,7 +1452,7 @@ async def _push_ai_debate():
                         client=c,
                         context="scheduler.ai_debate",
                     )
-                except Exception:
+                except Exception as e:
                     pass
         logger.info("[intel 20:30] debate pushed %d stocks to %d subscribers",
                     len(target), len(subs))

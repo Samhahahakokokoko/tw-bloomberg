@@ -53,7 +53,7 @@ async def generate_weekly_report() -> str:
         summary_text = "\n".join(lines)
         ai = await _weekly_ai_comment(summary_text)
         lines.append(f"\n🤖 {ai}")
-    except Exception:
+    except Exception as e:
         pass
 
     return "\n".join(lines)

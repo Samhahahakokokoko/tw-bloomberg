@@ -17,6 +17,7 @@ from datetime import datetime, date, timedelta
 from loguru import logger
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+import re
 from ..models.database import AsyncSessionLocal
 from ..models.models import EarningsReminder
 from .twse_service import fetch_realtime_quote
@@ -68,7 +69,7 @@ async def add_reminder(
     try:
         q = await fetch_realtime_quote(stock_code)
         stock_name = q.get("name", "")
-    except Exception:
+    except Exception as e:
         pass
 
     reminder = EarningsReminder(

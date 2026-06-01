@@ -80,7 +80,7 @@ async def analyze_user(uid: str) -> MistakeReport:
             chg   = (curr - t.cost_price) / t.cost_price if t.cost_price else 0
             if chg < -0.03:
                 buy_high_count += 1
-        except Exception:
+        except Exception as e:
             pass
 
     if buy_high_count >= 2:
@@ -113,7 +113,7 @@ async def analyze_user(uid: str) -> MistakeReport:
                     score -= 10
                 else:
                     good_habits.append("族群分散做得很好")
-    except Exception:
+    except Exception as e:
         pass
 
     # ── 偵測 4：停損執行率 ──────────────────────────────────────────────────
@@ -123,7 +123,7 @@ async def analyze_user(uid: str) -> MistakeReport:
         try:
             if t.cost_price and t.price and t.price < t.cost_price * 0.90:
                 loss_sells += 1
-        except Exception:
+        except Exception as e:
             pass
 
     if len(sells) > 0:

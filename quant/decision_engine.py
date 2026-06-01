@@ -16,6 +16,7 @@ import logging
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Optional
+import asyncio
 
 logger = logging.getLogger(__name__)
 
@@ -213,7 +214,7 @@ class DecisionEngine:
                     m.is_mock = True
                 _enrich_mock_close(movers)
                 movers_count = len(movers)
-            except Exception:
+            except Exception as e:
                 pass
 
         # Production 環境：若 movers 全為 mock → 停止
@@ -346,7 +347,7 @@ class DecisionEngine:
                     if p.get("close", 0) > 0:
                         close        = float(p["close"])
                         watch_source = "rt_cache(TWSE)"
-                except Exception:
+                except Exception as e:
                     pass
                 if close <= 0 and m.close > 0:
                     close        = m.close
@@ -416,7 +417,7 @@ class DecisionEngine:
 
         try:
             await audit.flush()
-        except Exception:
+        except Exception as e:
             pass
 
         # 排序：sell/reduce > buy/add > watch
@@ -472,7 +473,7 @@ class DecisionEngine:
             if p.get("close", 0) > 0:
                 close        = float(p["close"])
                 price_source = "rt_cache(TWSE)"
-        except Exception:
+        except Exception as e:
             pass
 
         # rt_cache 無此股（上櫃延遲或停牌）→ fallback 到 movers
@@ -558,7 +559,7 @@ def _mock_data_for(rec) -> dict:
             from backend.services.report_screener import _rt_cache
             _p = _rt_cache.get("prices", {}).get(gs("stock_id"), {})
             close = float(_p.get("close", 0) or 0)
-        except Exception:
+        except Exception as e:
             close = 0.0
     return {
         "name":            gs("name"),
@@ -588,7 +589,7 @@ def _enrich_mock_close(movers: list) -> None:
             p = prices.get(m.stock_id, {})
             if p.get("close", 0) > 0:
                 m.close = p["close"]
-    except Exception:
+    except Exception as e:
         pass
 
 

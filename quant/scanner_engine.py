@@ -167,7 +167,7 @@ class ScannerEngine:
         try:
             from backend.services.twse_service import _mkt_cache  # type: ignore
             market_ret_1m = float((_mkt_cache or {}).get("monthly_return", 0.02))
-        except Exception:
+        except Exception as e:
             market_ret_1m = 0.02
         rs = ret_1m - market_ret_1m
 

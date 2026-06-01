@@ -22,6 +22,7 @@ import logging
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Optional
+import json
 
 logger = logging.getLogger(__name__)
 
@@ -169,7 +170,7 @@ class CapitalFlowEngine:
             if ov:
                 change_pct = float(ov.get("change_pct", 0))
                 return change_pct * 1000
-        except Exception:
+        except Exception as e:
             pass
         return 0.0
 
@@ -184,7 +185,7 @@ class CapitalFlowEngine:
                     "margin_change": change / 1000,
                     "short_change":  -change / 2000,
                 }
-        except Exception:
+        except Exception as e:
             pass
         return {"margin_change": 0.0, "short_change": 0.0}
 

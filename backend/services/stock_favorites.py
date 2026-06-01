@@ -28,7 +28,7 @@ def _load(uid: str) -> dict:
     if p.exists():
         try:
             return json.loads(p.read_text(encoding="utf-8"))
-        except Exception:
+        except Exception as e:
             pass
     return {"stocks": []}
 

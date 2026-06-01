@@ -71,6 +71,7 @@ app.add_middleware(
 
 # 可掛載為 sub-router（讓 backend/api/routes.py include 時有 prefix）
 from fastapi import APIRouter
+import re
 router = APIRouter(prefix="/quant", tags=["quant"])
 
 # 全域共享的引擎實例
@@ -504,7 +505,7 @@ async def _get_signal_brief(stock_code: str) -> dict:
         last    = feat_df.iloc[-1]
         out     = _rule_alpha.evaluate(last)
         return {"signal": out.signal.value, "score": out.score}
-    except Exception:
+    except Exception as e:
         return {"signal": "hold", "score": 50}
 
 
@@ -575,7 +576,7 @@ async def strategy_analyze(req: StrategyAnalyzeRequest):
             last = feat_df.iloc[-1]
             if req.close <= 0:
                 req.close = float(last.get("close", req.close))
-    except Exception:
+    except Exception as e:
         pass
 
     data = req.model_dump()
@@ -616,7 +617,7 @@ async def strategy_recommend(
             min_confidence=min_confidence,
             limit=limit,
         )
-    except Exception:
+    except Exception as e:
         pass
 
     # fallback：用 MOCK_STOCKS 即時計算

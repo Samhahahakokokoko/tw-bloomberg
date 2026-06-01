@@ -128,7 +128,7 @@ async def _build_current_vector() -> list[float]:
         mkt = await fetch_market_overview()
         if mkt and mkt.get("rsi"):
             vec[0] = min(1.0, max(0.0, float(mkt["rsi"]) / 100))
-    except Exception:
+    except Exception as e:
         pass
 
     try:
@@ -136,7 +136,7 @@ async def _build_current_vector() -> list[float]:
         from quant.euphoria_engine import compute_euphoria
         eu = await compute_euphoria()
         vec[3] = eu.euphoria_score / 100
-    except Exception:
+    except Exception as e:
         pass
 
     try:
@@ -145,7 +145,7 @@ async def _build_current_vector() -> list[float]:
         hm = await compute_narrative_heatmap()
         if hm.narratives:
             vec[2] = hm.narratives[0].score / 100
-    except Exception:
+    except Exception as e:
         pass
 
     return vec

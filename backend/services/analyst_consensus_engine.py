@@ -90,7 +90,7 @@ async def calculate_daily_consensus(days: int = 7) -> list[ConsensusResult]:
         from .report_screener import all_screener
         rows = all_screener(200)
         stock_sector_map = {r.stock_id: r.sector for r in rows}
-    except Exception:
+    except Exception as e:
         pass
 
     # 按股票聚合
@@ -121,7 +121,7 @@ async def calculate_daily_consensus(days: int = 7) -> list[ConsensusResult]:
                 current_sector=sector,
             )
             dna_weights = {aid: w for aid, w in weighted_list}
-        except Exception:
+        except Exception as e:
             pass
 
         for c in stock_calls:
@@ -140,7 +140,7 @@ async def calculate_daily_consensus(days: int = 7) -> list[ConsensusResult]:
             try:
                 from .analyst_topic_engine import get_specialty_bonus
                 bonus = get_specialty_bonus(spec, sector) if sector else 1.0
-            except Exception:
+            except Exception as e:
                 bonus = 1.0
 
             # DNA 市場加成（在對應市場加權使用）
@@ -172,7 +172,7 @@ async def calculate_daily_consensus(days: int = 7) -> list[ConsensusResult]:
             try:
                 pts = json.loads(c.key_points or "[]")
                 all_points.extend(pts)
-            except Exception:
+            except Exception as e:
                 pass
         unique_thesis = list(dict.fromkeys(all_points))[:3]
 
@@ -195,7 +195,7 @@ async def calculate_daily_consensus(days: int = 7) -> list[ConsensusResult]:
             try:
                 from backend.services.report_screener import _rt_cache
                 _raw_name = _rt_cache.get("prices", {}).get(stock_id, {}).get("name", "") or stock_id
-            except Exception:
+            except Exception as e:
                 _raw_name = stock_id
         stock_name = _raw_name
 

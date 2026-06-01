@@ -10,6 +10,7 @@ import logging
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Optional
+import json
 
 from .data_quality_engine import DataRecord, CONFIDENCE_THRESHOLD
 
@@ -152,7 +153,7 @@ async def check_eligibility_async(symbol: str, **kwargs) -> EligibilityResult:
                 warnings         = json.dumps(result.warnings, ensure_ascii=False),
             ))
             await db.commit()
-    except Exception:
+    except Exception as e:
         pass
 
     return result

@@ -22,6 +22,7 @@ matplotlib.use("Agg")  # 必須在 pyplot import 之前，避免 Tkinter/GUI 依
 import matplotlib.pyplot as plt
 import matplotlib.ticker as mticker
 import numpy as np
+import asyncio
 
 logger = logging.getLogger(__name__)
 
@@ -171,7 +172,7 @@ def _parse_date_label(date_str: str) -> str:
             if year_part < 200:
                 year_part += 1911
             return f"{int(parts[1]):02d}/{int(parts[2]):02d}"
-    except Exception:
+    except Exception as e:
         pass
     return date_str[-5:] if len(date_str) >= 5 else date_str
 

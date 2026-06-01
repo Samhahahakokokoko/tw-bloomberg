@@ -80,7 +80,7 @@ async def _step_summarize(run_id: str, news: list[dict]) -> list[dict]:
                 summary = (msg.content[0].text if msg.content else "").strip()[:30]
                 if summary:
                     item = dict(item, summary=summary)
-            except Exception:
+            except Exception as e:
                 pass
             enriched.append(item)
         await _log(run_id, "summarize", "ok", f"摘要 {len(enriched)} 則")

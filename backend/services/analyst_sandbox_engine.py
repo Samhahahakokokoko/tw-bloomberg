@@ -105,7 +105,7 @@ async def evaluate_sandbox(analyst_id: str) -> Optional[SandboxEvaluation]:
             try:
                 start = datetime.strptime(sandbox.sandbox_start, "%Y-%m-%d")
                 sandbox_days = (datetime.now() - start).days
-            except Exception:
+            except Exception as e:
                 sandbox_days = 0
 
             # 取得沙盒期間的 AnalystCall
@@ -143,7 +143,7 @@ async def evaluate_sandbox(analyst_id: str) -> Optional[SandboxEvaluation]:
             try:
                 last_dt = datetime.strptime(calls[0].date, "%Y-%m-%d")
                 last_call_days_ago = (datetime.now() - last_dt).days
-            except Exception:
+            except Exception as e:
                 pass
 
         # ── 判斷邏輯 ───────────────────────────────────────────────────────────

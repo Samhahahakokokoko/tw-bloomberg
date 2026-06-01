@@ -12,6 +12,7 @@ import httpx
 from loguru import logger
 from backend.models.database import settings
 from line_webhook.rich_menu_image import create_rich_menu_image
+import asyncio
 
 IMAGE_PATH = os.path.join(os.path.dirname(__file__), "..", "data", "rich_menu.png")
 

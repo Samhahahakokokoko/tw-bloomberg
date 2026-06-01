@@ -76,7 +76,7 @@ async def detect_foreign_selling(threshold_billion: float = 5.0) -> list[SmartAl
                         detail      = f"外資今日賣超 {abs(fn)/1e8:.1f}億（異常大量）",
                         action_hint = "注意觀察，評估是否減碼",
                     ))
-            except Exception:
+            except Exception as e:
                 continue
     except Exception as e:
         logger.warning(f"[smart_alert] foreign_selling scan failed: {e}")

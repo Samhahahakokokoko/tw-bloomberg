@@ -57,7 +57,7 @@ async def update_call_results():
                     curr   = q.get("price", 0) or 0
                     ret20d = (curr - call.entry_price) / call.entry_price
                     call.result_20d = round(ret20d, 4)
-            except Exception:
+            except Exception as e:
                 pass
 
         await db.commit()

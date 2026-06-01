@@ -299,7 +299,7 @@ async def start_review(url: str) -> tuple[Optional[ChannelPreview], str]:
             )
             if r.scalar_one_or_none():
                 return None, f"此頻道已在追蹤清單中（{channel_id}）"
-    except Exception:
+    except Exception as e:
         pass
 
     preview = await fetch_channel_preview(channel_id, raw_url=url)

@@ -8,7 +8,7 @@ from .twse_service import fetch_realtime_quote
 def _parse_int(val) -> int:
     try:
         return int(str(val).replace(",", ""))
-    except Exception:
+    except Exception as e:
         return 0
 
 
@@ -67,7 +67,7 @@ async def generate_weekly_picks(top_n: int = 5) -> dict:
             })
             if len(picks) >= top_n:
                 break
-        except Exception:
+        except Exception as e:
             continue
 
     # AI 分析

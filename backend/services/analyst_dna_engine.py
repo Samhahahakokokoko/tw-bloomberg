@@ -222,7 +222,7 @@ async def compute_dna(analyst_id: str) -> Optional[AnalystDNA]:
                     days  = (ex - entry).days
                     if 0 < days <= 90:
                         holding_days_list.append(days)
-            except Exception:
+            except Exception as e:
                 pass
 
         median_days = int(sorted(holding_days_list)[len(holding_days_list) // 2]) if holding_days_list else 15
@@ -317,7 +317,7 @@ async def load_dna(analyst_id: str) -> Optional[AnalystDNA]:
                 confidence          = rec.confidence or 0.3,
                 last_updated        = rec.last_updated or "",
             )
-    except Exception:
+    except Exception as e:
         pass
 
     return await compute_dna(analyst_id)

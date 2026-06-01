@@ -213,7 +213,7 @@ async def save_analyst_calls(analyses: list[VideoAnalysis]):
                 try:
                     q = await fetch_realtime_quote(stock_id)
                     entry_price = q.get("price", 0) if q else 0
-                except Exception:
+                except Exception as e:
                     pass
 
                 # 避免重複

@@ -169,7 +169,7 @@ def _detect_silence(
 ) -> Optional[DriftAlert]:
     try:
         last_dt = datetime.fromisoformat(last_mention_date)
-    except Exception:
+    except Exception as e:
         return None
     days_silent = (datetime.now() - last_dt).days
     if days_silent > max(14, avg_mention_interval_days * 2.5):

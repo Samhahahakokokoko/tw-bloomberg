@@ -637,7 +637,7 @@ async def _fetch_rt_cache() -> dict:
                             "name":       str(item.get("Name", "") or ""),
                         }
                         _valid_ticker_cache.add(code)
-                    except Exception:
+                    except Exception as e:
                         pass
                 _log.info("[RT] STOCK_DAY_ALL loaded %d stocks", len(prices))
             except Exception as e:
@@ -674,7 +674,7 @@ async def _fetch_rt_cache() -> dict:
                                 "dealer_net":  _pi(item.get("Dealer_Diff")),
                             }
                             loaded += 1
-                        except Exception:
+                        except Exception as e:
                             pass
                     _log.info("[RT] %s loaded %d stocks", _inst_url, loaded)
                     if loaded > 0:
@@ -717,7 +717,7 @@ async def _fetch_rt_cache() -> dict:
                                 "name":       str(item.get("CompanyName", "") or ""),
                             }
                             _valid_ticker_cache.add(code)
-                        except Exception:
+                        except Exception as e:
                             pass
                     _log.info("[RT] TPEX added %d OTC stocks", len(prices) - tpex_before)
             except Exception as e:

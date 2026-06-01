@@ -21,6 +21,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from typing import Optional
+import asyncio
 
 logger = logging.getLogger(__name__)
 
@@ -317,7 +318,7 @@ class AlphaRegistry:
                     notes=d.get("notes", ""),
                 )
             return result
-        except Exception:
+        except Exception as e:
             return None
 
 

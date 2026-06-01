@@ -17,6 +17,7 @@ from __future__ import annotations
 import logging
 import urllib.parse
 from typing import Callable, Awaitable
+import asyncio
 
 logger = logging.getLogger(__name__)
 

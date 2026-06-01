@@ -761,7 +761,7 @@ class WalkForwardEngine:
                 )
                 train_sharpe = train_rpt.sharpe_ratio
                 train_return = train_rpt.total_return
-            except Exception:
+            except Exception as e:
                 train_sharpe = 0.0; train_return = 0.0
 
             # 測試期回測（核心）

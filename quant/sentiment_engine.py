@@ -178,7 +178,7 @@ class SentimentEngine:
                             r.text
                         )
                         titles.extend([t.strip() for t in found if t.strip() and t.strip() != "(本文已被刪除)"])
-                    except Exception:
+                    except Exception as e:
                         pass
         except Exception as e:
             logger.debug("[Sentiment] PTT fetch failed: %s", e)

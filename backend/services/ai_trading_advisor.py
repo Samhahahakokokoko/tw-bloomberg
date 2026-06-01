@@ -134,7 +134,7 @@ async def analyze_stock_for_line(stock_code: str) -> str:
     # 報價
     try:
         q = await fetch_realtime_quote(stock_code)
-    except Exception:
+    except Exception as e:
         q = {}
 
     name  = q.get("name", stock_code)
@@ -205,7 +205,7 @@ async def analyze_stock_for_line(stock_code: str) -> str:
                 f"籌:{score['chip_score']:.0f} "
                 f"技:{score['technical_score']:.0f})"
             )
-    except Exception:
+    except Exception as e:
         pass
 
     # 操作建議（AI 生成）
@@ -278,7 +278,7 @@ async def _get_regime() -> dict:
     try:
         from backtest.market_regime import get_market_regime
         return await get_market_regime()
-    except Exception:
+    except Exception as e:
         return {"current": "unknown"}
 
 

@@ -101,7 +101,7 @@ async def calc_and_save_score(stock_code: str, today: str) -> bool:
             from .recommendation_tracker import get_current_weights
             w = await get_current_weights()
             weights = (w["fundamental"], w["chip"], w["technical"])
-        except Exception:
+        except Exception as e:
             weights = (0.35, 0.35, 0.30)
 
         total = calc_total_score(fund_score, chip_score_val, tech_score, weights)
@@ -111,7 +111,7 @@ async def calc_and_save_score(stock_code: str, today: str) -> bool:
         try:
             q = await fetch_realtime_quote(stock_code)
             stock_name = q.get("name", "")
-        except Exception:
+        except Exception as e:
             stock_name = ""
 
         # Upsert

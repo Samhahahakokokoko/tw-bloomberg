@@ -49,7 +49,7 @@ async def save_recommendations(top_stocks: list[dict], today: str):
             try:
                 q = await fetch_realtime_quote(s["stock_code"])
                 rec_price = q.get("price")
-            except Exception:
+            except Exception as e:
                 pass
 
             db.add(RecommendationResult(

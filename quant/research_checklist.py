@@ -174,7 +174,7 @@ class ResearchChecklist:
                     "name":       q.get("name", stock_code),
                     "close":      float(q.get("price", 0)),
                 })
-        except Exception:
+        except Exception as e:
             pass
         try:
             from backend.services.report_screener import all_screener
@@ -195,7 +195,7 @@ class ResearchChecklist:
                         "sector":          getattr(row, "sector", ""),
                     })
                     break
-        except Exception:
+        except Exception as e:
             pass
         return data
 

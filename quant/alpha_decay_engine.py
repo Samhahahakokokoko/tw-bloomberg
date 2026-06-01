@@ -361,7 +361,7 @@ class AlphaDecayEngine:
                 }
                 self._cache[alpha_name] = state
                 return state
-        except Exception:
+        except Exception as e:
             pass
         default = {
             "status": STATUS_ACTIVE, "ic_history": [],

@@ -161,7 +161,7 @@ async def _fetch_yt_mentions() -> dict[str, int]:
                 .group_by(AnalystTopicStats.topic)
             )
             return {row[0]: int(row[1] or 0) for row in r.all()}
-    except Exception:
+    except Exception as e:
         return {}
 
 
@@ -196,7 +196,7 @@ async def _fetch_news_mentions(days: int = 7) -> dict[str, int]:
                 if any(kw in text for kw in keywords):
                     counts[narrative] = counts.get(narrative, 0) + 1
         return counts
-    except Exception:
+    except Exception as e:
         return {}
 
 
@@ -215,7 +215,7 @@ async def _fetch_consensus_scores() -> dict[str, float]:
                 .group_by(AnalystConsensusDaily.stock_id)
             )
             return {row[0]: float(row[1] or 0) for row in r.all()}
-    except Exception:
+    except Exception as e:
         return {}
 
 
@@ -240,7 +240,7 @@ async def compute_narrative_heatmap() -> NarrativeHeatmap:
             for row in r.scalars().all():
                 if row.narrative not in prev_scores:
                     prev_scores[row.narrative] = row.score
-    except Exception:
+    except Exception as e:
         pass
 
     scores: list[NarrativeScore] = []
@@ -310,7 +310,7 @@ async def compute_narrative_heatmap() -> NarrativeHeatmap:
                     stage     = s.stage,
                 ))
             await db.commit()
-    except Exception:
+    except Exception as e:
         pass
 
     return heatmap

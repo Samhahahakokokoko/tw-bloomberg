@@ -16,7 +16,7 @@ async def get_watchlist(db: AsyncSession, user_id: str = "") -> list[dict]:
     for item in items:
         try:
             quote = await fetch_realtime_quote(item.stock_code)
-        except Exception:
+        except Exception as e:
             quote = {}
 
         current_price = quote.get("price", 0)
@@ -74,7 +74,7 @@ async def add_to_watchlist(
             try:
                 q = await fetch_realtime_quote(stock_code)
                 stock_name = q.get("name", "")
-            except Exception:
+            except Exception as e:
                 pass
 
         item = Watchlist(

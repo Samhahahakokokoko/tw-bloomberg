@@ -136,7 +136,7 @@ class FactorICEngine:
                 rho, _ = scipy_stats.spearmanr(x_win[mask], y_win[mask])
                 if not np.isnan(rho):
                     ic_vals[t] = float(rho)
-            except Exception:
+            except Exception as e:
                 pass
 
         return pd.Series(ic_vals, dtype=float)

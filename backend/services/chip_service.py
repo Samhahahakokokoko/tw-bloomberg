@@ -16,7 +16,7 @@ from .twse_service import fetch_kline
 def _parse_int(v) -> int:
     try:
         return int(str(v).replace(",", ""))
-    except Exception:
+    except Exception as e:
         return 0
 
 
@@ -26,7 +26,7 @@ def _tw_to_iso(raw_date: str) -> str:
         parts = raw_date.split("/")
         if len(parts) == 3:
             return f"{int(parts[0]) + 1911}-{parts[1]}-{parts[2]}"
-    except Exception:
+    except Exception as e:
         pass
     return raw_date
 

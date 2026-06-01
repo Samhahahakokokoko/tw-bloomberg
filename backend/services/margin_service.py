@@ -83,7 +83,7 @@ def _normalize_margin(code: str, row: list, date: str) -> dict:
 def _int(v) -> int:
     try:
         return int(str(v).replace(",", "").replace("+", "") or 0)
-    except Exception:
+    except Exception as e:
         return 0
 
 
@@ -93,6 +93,6 @@ def _tw_date(s: str) -> str:
         if "/" in s:
             parts = s.split("/")
             return f"{int(parts[0])+1911}-{parts[1].zfill(2)}-{parts[2].zfill(2)}"
-    except Exception:
+    except Exception as e:
         pass
     return s

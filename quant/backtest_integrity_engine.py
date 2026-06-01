@@ -14,6 +14,7 @@ from datetime import datetime
 from typing import Optional
 
 import numpy as np
+import json
 
 logger = logging.getLogger(__name__)
 
@@ -88,7 +89,7 @@ def check_lookahead_bias(
         try:
             if ft >= tt:
                 violations.append(f"row_{i}: feature_ts={ft} >= target_ts={tt}")
-        except Exception:
+        except Exception as e:
             pass
     return len(violations) > 0, violations[:10]  # 最多回報 10 個
 
@@ -138,7 +139,7 @@ def check_data_leakage(
         if train_end_date >= test_start_date:
             leakage = True
             warnings.append(f"train_end={train_end_date} overlaps test_start={test_start_date}")
-    except Exception:
+    except Exception as e:
         pass
 
     if scaler_fitted_on in ("full", "test"):

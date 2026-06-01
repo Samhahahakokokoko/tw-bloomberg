@@ -125,7 +125,7 @@ class PortfolioOverlay:
                         # 快取無此代碼（可能上櫃），改用即時查詢
                         q = await fetch_realtime_quote(code)
                         current = float(q.get("price", cost)) if q else cost
-                except Exception:
+                except Exception as e:
                     pass
 
                 pnl_pct = (current - cost) / cost * 100 if cost > 0 else 0.0
@@ -157,7 +157,7 @@ class PortfolioOverlay:
                         "vol_ratio":    vol_r,
                         "ret_1m":       float(getattr(row, "momentum_score",   50) or 50) / 50 - 1,
                     }
-        except Exception:
+        except Exception as e:
             pass
         return {}
 

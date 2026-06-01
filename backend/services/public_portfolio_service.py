@@ -49,7 +49,7 @@ async def get_top_portfolios(limit: int = 10) -> list[dict]:
             holdings = await get_holdings(rec.user_id)
             sectors  = list({h.get("sector", "其他") for h in holdings if h.get("sector")})[:3]
             style    = "、".join(sectors[:2]) if sectors else "多元配置"
-        except Exception:
+        except Exception as e:
             style = rec.style_tag or "未知"
 
         result.append({
@@ -97,7 +97,7 @@ async def update_weekly_returns():
                     rec.total_return  = (total_val - total_cost) / total_cost * 100
                     rec.weekly_return = rec.total_return * 0.15   # 近似週報酬
                 rec.updated_at = datetime.utcnow()
-            except Exception:
+            except Exception as e:
                 pass
         await db.commit()
 

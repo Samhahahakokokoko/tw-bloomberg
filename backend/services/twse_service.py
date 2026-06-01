@@ -374,7 +374,7 @@ def _normalize_kline(row: list) -> dict:
     def _to_float(val):
         try:
             return float(str(val).replace(",", ""))
-        except Exception:
+        except Exception as e:
             return 0.0
 
     raw_date = row[0] if len(row) > 0 else ""
@@ -384,7 +384,7 @@ def _normalize_kline(row: list) -> dict:
         if len(parts) == 3:
             western_year = int(parts[0]) + 1911
             raw_date = f"{western_year}-{parts[1]}-{parts[2]}"
-    except Exception:
+    except Exception as e:
         pass
 
     return {
@@ -400,7 +400,7 @@ def _normalize_kline(row: list) -> dict:
 def _parse_int(val) -> int:
     try:
         return int(str(val).replace(",", ""))
-    except Exception:
+    except Exception as e:
         return 0
 
 
@@ -408,7 +408,7 @@ def _calc_change_pct(price, yesterday) -> float:
     try:
         p, y = float(price), float(yesterday)
         return round((p - y) / y * 100, 2) if y else 0.0
-    except Exception:
+    except Exception as e:
         return 0.0
 
 
@@ -417,5 +417,5 @@ def _calc_pct(closing, change) -> float:
         c, ch = float(str(closing).replace(",", "")), float(str(change).replace(",", ""))
         prev = c - ch
         return round(ch / prev * 100, 2) if prev else 0.0
-    except Exception:
+    except Exception as e:
         return 0.0

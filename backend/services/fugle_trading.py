@@ -8,6 +8,7 @@ from typing import Optional
 
 import httpx
 from loguru import logger
+import json
 
 FUGLE_API_KEY    = os.getenv("FUGLE_API_KEY", "")
 FUGLE_API_SECRET = os.getenv("FUGLE_API_SECRET", "")
@@ -148,7 +149,7 @@ async def _get_today_order_count(uid: str) -> int:
                 .where(func.date(TradingOrder.created_at) == date.today())
             )
             return r.scalar() or 0
-    except Exception:
+    except Exception as e:
         return 0
 
 

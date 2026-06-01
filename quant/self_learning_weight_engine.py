@@ -138,7 +138,7 @@ async def _load_current_weights() -> dict[str, float]:
             rows = r.scalars().all()
         if rows:
             return {row.factor_name: row.weight for row in rows}
-    except Exception:
+    except Exception as e:
         pass
     return dict(DEFAULT_WEIGHTS)
 
@@ -166,7 +166,7 @@ async def _fetch_factor_ic(factor_name: str, weeks: int = 4) -> tuple[float, flo
             )
             ic_hist = float(r2.scalar() or 0)
         return ic_4w, ic_hist
-    except Exception:
+    except Exception as e:
         return 0.0, 0.0
 
 

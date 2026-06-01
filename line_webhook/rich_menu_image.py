@@ -5,6 +5,7 @@
 from __future__ import annotations
 from PIL import Image, ImageDraw, ImageFont
 import os, math
+import math
 
 W, H  = 2500, 1686
 ROWS  = 2

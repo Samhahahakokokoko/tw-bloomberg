@@ -155,6 +155,6 @@ async def update_topics_from_calls():
                     was_correct=call.was_correct,
                     result_5d=call.result_5d,
                 )
-        except Exception:
+        except Exception as e:
             pass
     logger.info(f"[topic_engine] updated topics from {len(calls)} calls")

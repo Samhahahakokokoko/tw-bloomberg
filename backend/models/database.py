@@ -142,6 +142,6 @@ async def init_db():
         for sql in migrations:
             try:
                 await conn.execute(text(sql))
-            except Exception:
+            except Exception as e:
                 pass
     logger.info(f"Database ready ({'SQLite' if _is_sqlite else 'PostgreSQL'})")

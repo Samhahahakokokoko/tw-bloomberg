@@ -112,7 +112,7 @@ def calc_efficient_frontier(returns_matrix: np.ndarray, n_points: int = 60) -> l
     # 如果有 scipy 就用精確解，否則用 Monte Carlo
     try:
         return _efficient_frontier_exact(mean_ret, cov, n_points)
-    except Exception:
+    except Exception as e:
         return _efficient_frontier_mc(mean_ret, cov, n_points)
 
 

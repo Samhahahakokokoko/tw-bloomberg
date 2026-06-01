@@ -27,6 +27,7 @@ from sqlalchemy.ext.asyncio import (
     AsyncEngine, AsyncSession, create_async_engine, async_sessionmaker,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+import asyncio
 
 
 class Base(DeclarativeBase):

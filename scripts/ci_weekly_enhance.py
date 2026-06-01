@@ -50,7 +50,7 @@ async def probe(session, label: str, path: str, method: str) -> dict:
         if ok and r.headers.get("content-type", "").startswith("application/json"):
             try:
                 body = r.json()
-            except Exception:
+            except Exception as e:
                 pass
         return {"label": label, "status": r.status_code, "ok": ok,
                 "detail": detail, "body": body}

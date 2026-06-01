@@ -124,7 +124,7 @@ async def _fetch_sector_flows() -> list[SectorFlow]:
                 rs_change    = 0,
             ))
         return flows
-    except Exception:
+    except Exception as e:
         pass
 
     # Mock fallback

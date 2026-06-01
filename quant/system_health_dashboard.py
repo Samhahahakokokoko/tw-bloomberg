@@ -11,6 +11,8 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Optional
+import asyncio
+import json
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +41,7 @@ class ModuleStatus:
         try:
             dt = datetime.fromisoformat(self.last_run_at)
             return (datetime.now() - dt).total_seconds() / 60
-        except Exception:
+        except Exception as e:
             return None
 
     def format_row(self) -> str:
@@ -196,7 +198,7 @@ async def collect_health() -> SystemHealth:
             last_run_at=str(last_run) if last_run else None,
             data_quality=0.90,
         ))
-    except Exception:
+    except Exception as e:
         modules.append(ModuleStatus(name="Decision Engine", status="unknown"))
 
     # ── 整體指標 ──────────────────────────────────────────────────────────────
@@ -228,7 +230,7 @@ async def collect_health() -> SystemHealth:
                 kill_switch_active  = health.kill_switch_active,
             ))
             await db.commit()
-    except Exception:
+    except Exception as e:
         pass
 
     # 若有紅色模組 → 推送 LINE
@@ -273,5 +275,5 @@ def _push_health_alert(red_modules: list[ModuleStatus]):
         loop = asyncio.get_event_loop()
         if loop.is_running():
             loop.create_task(_send())
-    except Exception:
+    except Exception as e:
         pass

@@ -127,7 +127,7 @@ class AdaptiveWeightEngine:
                 corr, _ = scipy_stats.spearmanr(paired["f"], paired["r"])
                 if not np.isnan(corr):
                     raw_ic[factor] = float(corr)
-            except Exception:
+            except Exception as e:
                 pass
 
         if not raw_ic:
@@ -225,7 +225,7 @@ class AdaptiveWeightEngine:
                 total_count=d.get("total_count", 0),
                 updated_at=d.get("updated_at", ""),
             )
-        except Exception:
+        except Exception as e:
             return None
 
     @property

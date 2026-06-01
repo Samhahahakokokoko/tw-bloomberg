@@ -72,7 +72,7 @@ class DataRecord:
         try:
             fetched = datetime.fromisoformat(self.fetched_at)
             age_sec = (datetime.now() - fetched).total_seconds()
-        except Exception:
+        except Exception as e:
             age_sec = threshold * 2
 
         if age_sec > threshold:
@@ -105,7 +105,7 @@ class DataRecord:
     def age_seconds(self) -> float:
         try:
             return (datetime.now() - datetime.fromisoformat(self.fetched_at)).total_seconds()
-        except Exception:
+        except Exception as e:
             return 9999.0
 
     def to_dict(self) -> dict:
@@ -198,5 +198,5 @@ async def log_quality(
                 stale_reason = stale_reason,
             ))
             await db.commit()
-    except Exception:
+    except Exception as e:
         pass

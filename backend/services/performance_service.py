@@ -51,7 +51,7 @@ async def _calc_user_performance(user_id: str) -> dict | None:
         try:
             quote = await fetch_realtime_quote(h.stock_code)
             price = quote.get("price", h.cost_price) or h.cost_price
-        except Exception:
+        except Exception as e:
             price = h.cost_price
 
         mv   = price * h.shares

@@ -70,7 +70,7 @@ async def lifespan(app: FastAPI):
     if scheduler:
         try:
             scheduler.shutdown()
-        except Exception:
+        except Exception as e:
             pass
 
 
@@ -134,12 +134,12 @@ async def ws_market(ws: WebSocket):
                 ov = await fetch_market_overview()
                 if ov:
                     await ws.send_json({"type": "market", "data": ov})
-            except Exception:
+            except Exception as e:
                 pass
             await asyncio.sleep(60)
     except WebSocketDisconnect:
         _ws_clients.remove(ws)
-    except Exception:
+    except Exception as e:
         if ws in _ws_clients:
             _ws_clients.remove(ws)
 

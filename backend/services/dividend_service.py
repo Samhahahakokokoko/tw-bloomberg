@@ -64,7 +64,7 @@ def _tw_date(s: str) -> str:
         if len(s) == 7:
             y = int(s[:3]) + 1911
             return f"{y}-{s[3:5]}-{s[5:7]}"
-    except Exception:
+    except Exception as e:
         pass
     return s
 
@@ -72,5 +72,5 @@ def _tw_date(s: str) -> str:
 def _f(v) -> float:
     try:
         return float(str(v).replace(",", "") or 0)
-    except Exception:
+    except Exception as e:
         return 0.0

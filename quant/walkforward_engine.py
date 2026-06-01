@@ -232,7 +232,7 @@ class WalkForwardAnalyzer:
                                 stop_loss_pct=stop_loss_pct,
                                 take_profit_pct=take_profit_pct)
                 train_sharpe = tr.sharpe_ratio
-            except Exception:
+            except Exception as e:
                 train_sharpe = 0.0
 
             # 測試期回測（核心績效）
@@ -367,7 +367,7 @@ class WalkForwardAnalyzer:
         try:
             from .feature_engine import FeatureEngine
             feat_df = FeatureEngine(df).compute_all()
-        except Exception:
+        except Exception as e:
             feat_df = df
         return self.run(feat_df)
 
@@ -380,7 +380,7 @@ def _default_signal_fn(train_df: pd.DataFrame) -> pd.Series:
         return pd.Series([
             alpha.evaluate(row).signal.value for _, row in train_df.iterrows()
         ])
-    except Exception:
+    except Exception as e:
         return pd.Series(["hold"] * len(train_df))
 
 

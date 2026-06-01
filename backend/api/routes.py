@@ -9,6 +9,7 @@ from ..models.models import Alert, NewsArticle, Subscriber
 from ..services import twse_service, portfolio_service
 from sqlalchemy import select
 from loguru import logger
+import asyncio
 
 router = APIRouter()
 
@@ -682,7 +683,7 @@ async def get_financials(stock_code: str, limit: int = Query(8, ge=1, le=20)):
             from ..services.finmind_service import fetch_financials
             data = await fetch_financials(stock_code)
             return {"source": "finmind_live", "data": data[-limit:]}
-        except Exception:
+        except Exception as e:
             raise HTTPException(404, f"No financial data for {stock_code}")
     return {
         "source": "cache",
@@ -720,7 +721,7 @@ async def get_revenue(stock_code: str, months: int = Query(13, ge=3, le=36)):
             from ..services.finmind_service import fetch_monthly_revenue
             data = await fetch_monthly_revenue(stock_code)
             return {"source": "finmind_live", "data": data[-months:]}
-        except Exception:
+        except Exception as e:
             raise HTTPException(404, f"No revenue data for {stock_code}")
     return {
         "source": "cache",

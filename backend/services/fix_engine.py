@@ -191,7 +191,7 @@ def load_plan() -> dict | None:
         return None
     try:
         return json.loads(_PLAN_PATH.read_text(encoding="utf-8"))
-    except Exception:
+    except Exception as e:
         return None
 
 

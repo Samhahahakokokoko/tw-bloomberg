@@ -123,7 +123,7 @@ async def _dispatch_event(event) -> None:
                             messages=[TextMessage(text=f"系統錯誤: {type(e).__name__}")]
                         )
                     )
-            except Exception:
+            except Exception as e:
                 pass
 
 
@@ -435,7 +435,7 @@ async def _handle_postback_inner(data: str, uid: str) -> list:
             db.add(CallbackLog(user_id=uid, action=act,
                                params=str(params)[:500], error="undefined"))
             await db.commit()
-    except Exception:
+    except Exception as e:
         pass
     return [_text(
         "收到你的請求，處理中...\n\n如持續無回應請試試：",
@@ -889,7 +889,7 @@ async def _cmd_market() -> list:
             f"漲跌：{sign}{abs(change):.2f}點 ({sign}{abs(pct):.2f}%)"
         )
         return [TextMessage(text=text)]
-    except Exception:
+    except Exception as e:
         return [TextMessage(text="功能暫時無法使用，請稍後再試")]
 
 
@@ -910,7 +910,7 @@ async def _cmd_market_card(uid) -> list:
                 "trust_net":   d.get("investment_trust_net", 0),
                 "dealer_net":  d.get("dealer_net", 0),
             }
-    except Exception:
+    except Exception as e:
         pass
 
     # 族群熱度 Top3（可選）
@@ -920,7 +920,7 @@ async def _cmd_market_card(uid) -> list:
         engine    = SectorRotationEngine()
         strengths = engine.scan_mock()   # 用 mock 避免等待
         sectors   = [(s.name, s.composite_score) for s in strengths[:3]]
-    except Exception:
+    except Exception as e:
         pass
 
     card = flex_market_card(ov, inst=inst, sectors=sectors)
@@ -950,7 +950,7 @@ async def _cmd_portfolio(uid: str) -> list:
                 f"損益：{h.get('pnl', 0):+,.0f} ({h.get('pnl_pct', 0):+.1f}%)"
             )
         return [TextMessage(text="\n".join(lines)[:5000])]
-    except Exception:
+    except Exception as e:
         return [TextMessage(text="功能暫時無法使用，請稍後再試")]
 
 
@@ -1089,7 +1089,7 @@ async def _cmd_pe(code: str) -> list:
                 f"殖利率：{item.get('DividendYield','N/A')}%",
                 qr_items(("📈 報價", f"/quote {code}"))
             )]
-    except Exception:
+    except Exception as e:
         pass
     return [_text(f"❌ 查無 {code} 估值資料")]
 
@@ -1124,7 +1124,7 @@ async def _cmd_morning() -> list:
         ov   = await fetch_market_overview()
         card = flex_morning_report(report, ov)
         return [_flex("台股早報", card, qr_items(("💼 庫存", "/portfolio"), ("🤖 AI", "/ai_guide")))]
-    except Exception:
+    except Exception as e:
         return [_text(report, _home_qr())]
 
 
@@ -1680,7 +1680,7 @@ async def _cmd_news_feed(uid: str) -> list:
         from scraper.news_scraper import get_recent_news, format_news_for_line
         news = await get_recent_news(limit=6)
         msg  = format_news_for_line(news)
-    except Exception:
+    except Exception as e:
         return [TextMessage(text="功能暫時無法使用，請稍後再試")]
     return [TextMessage(text=msg[:5000])]
 
@@ -2110,13 +2110,13 @@ async def _daily_bg(uid: str) -> None:
         logger.error("[daily_bg] Timeout：engine.run() 超過 150 秒")
         try:
             await _push("❌ 決策報告逾時（超過 150 秒），請稍後再試 /daily")
-        except Exception:
+        except Exception as e:
             pass
     except Exception as e:
         logger.error("[daily_bg] 失敗：%s", e, exc_info=True)
         try:
             await _push(f"❌ 決策報告失敗：{type(e).__name__}: {e}")
-        except Exception:
+        except Exception as e:
             pass
 
 
@@ -2247,7 +2247,7 @@ async def _cmd_conviction(code: str, uid: str) -> list:
             try:
                 checker  = ResearchChecklist()
                 research = checker.check_sync(code, {"name": code, "close": mover.close})
-            except Exception:
+            except Exception as e:
                 pass
             result = engine.compute_from_pipeline(
                 mover=mover, scan_rec=scan_rec,
@@ -2454,7 +2454,7 @@ async def _fetch_kline_df(code: str, start_date: str, end_date: str = "") -> "pd
             df["date"] = pd.to_datetime(df["date"])
             df = df[df["date"] <= pd.Timestamp(end_date)].reset_index(drop=True)
         return df
-    except Exception:
+    except Exception as e:
         return _mock_kline_90d(code)
 
 
@@ -2509,7 +2509,7 @@ async def _fetch_benchmark_return(start_date: str, end_date: str = "") -> float 
         if len(df) < 2:
             return None
         return round(float((df["close"].iloc[-1] / df["close"].iloc[0] - 1) * 100), 1)
-    except Exception:
+    except Exception as e:
         return None
 
 
@@ -2525,7 +2525,7 @@ async def _run_backtest_single(
     try:
         from quant.feature_engine import FeatureEngine
         feat_df = FeatureEngine(df).compute_all()
-    except Exception:
+    except Exception as e:
         feat_df = df
 
     signals = _gen_strategy_signals_v2(feat_df, strategy)
@@ -2537,7 +2537,7 @@ async def _run_backtest_single(
     try:
         d0 = str(feat_df.iloc[0].get("date",""))[:7].replace("-","/")
         d1 = str(feat_df.iloc[-1].get("date",""))[:7].replace("-","/")
-    except Exception:
+    except Exception as e:
         d0 = d1 = "─"
 
     monthly = _compute_monthly_returns(report.equity_curve)
@@ -2660,7 +2660,7 @@ async def _backtest_multi_bg(codes: list[str], strategy: str,
                 try:
                     from quant.feature_engine import FeatureEngine
                     feat_df = FeatureEngine(df).compute_all()
-                except Exception:
+                except Exception as e:
                     feat_df = df
                 signals = _gen_strategy_signals_v2(feat_df, strategy)
                 from quant.backtest_engine import BacktestEngine
@@ -2709,7 +2709,7 @@ async def _backtest_compare_bg(code: str, uid: str) -> None:
         df = await _fetch_kline_df(code, start_date)
         try:
             feat_df = FeatureEngine(df).compute_all()
-        except Exception:
+        except Exception as e:
             feat_df = df
 
         results = []
@@ -2766,12 +2766,12 @@ async def _run_backtest(strategy: str, label: str) -> list:
                     df[c] = pd.to_numeric(df[c], errors="coerce")
         else:
             raise ValueError("kline too short")
-    except Exception:
+    except Exception as e:
         df = _mock_kline_90d(stock_code)
     try:
         from quant.feature_engine import FeatureEngine
         feat_df = FeatureEngine(df).compute_all()
-    except Exception:
+    except Exception as e:
         feat_df = df
     signals = _gen_strategy_signals(feat_df, strategy)
     from quant.backtest_engine import BacktestEngine
@@ -2780,7 +2780,7 @@ async def _run_backtest(strategy: str, label: str) -> list:
     try:
         d0 = str(feat_df.iloc[0].get("date",""))[:7].replace("-","/")
         d1 = str(feat_df.iloc[-1].get("date",""))[:7].replace("-","/")
-    except Exception:
+    except Exception as e:
         d0 = d1 = "近3個月"
     detail_data = f"act=backtest_image&strategy={strategy}&stock={stock_code}"
     flex_msg = _build_backtest_result_flex(
@@ -2812,14 +2812,14 @@ async def _backtest_bg(strategy: str, label: str, uid: str) -> None:
                         df[c] = pd.to_numeric(df[c], errors="coerce")
             else:
                 raise ValueError("kline too short")
-        except Exception:
+        except Exception as e:
             df = _mock_kline_90d(stock_code)
 
         # ── 計算特徵 ─────────────────────────────────────────────────
         try:
             from quant.feature_engine import FeatureEngine
             feat_df = FeatureEngine(df).compute_all()
-        except Exception:
+        except Exception as e:
             feat_df = df
 
         # ── 產生訊號 ─────────────────────────────────────────────────
@@ -2840,7 +2840,7 @@ async def _backtest_bg(strategy: str, label: str, uid: str) -> None:
         try:
             d0 = str(feat_df.iloc[0].get("date", ""))[:7].replace("-", "/")
             d1 = str(feat_df.iloc[-1].get("date", ""))[:7].replace("-", "/")
-        except Exception:
+        except Exception as e:
             d0 = d1 = "近3個月"
 
         # ── 格式化文字 ────────────────────────────────────────────────
@@ -3076,7 +3076,7 @@ async def _cmd_risk_report(uid: str) -> list:
                         r = await db2.execute(select(Stock).where(Stock.code == code))
                         s = r.scalar_one_or_none()
                         sector = (s.industry or "其他") if s else "其他"
-                except Exception:
+                except Exception as e:
                     sector = "其他"
             sector_mv[sector] = sector_mv.get(sector, 0.0) + float(mv)
 
@@ -3095,7 +3095,7 @@ async def _cmd_risk_report(uid: str) -> list:
             if var_data:
                 max_daily_loss = abs(var_data.get("hist_var_amount") or var_data.get("param_var_amount", 0))
                 var_95         = abs(var_data.get("param_var_amount", 0))
-        except Exception:
+        except Exception as e:
             max_daily_loss = total_mv * 0.025   # fallback ~2.5%
             var_95         = total_mv * 0.018
 
@@ -3120,7 +3120,7 @@ async def _cmd_risk_report(uid: str) -> list:
                               "sideways": ("盤整", 50), "volatile": ("高波動", 40)}
                 market_note, hold_pct = regime_map.get(
                     reg.regime.value, ("未知", 50))
-        except Exception:
+        except Exception as e:
             pass
 
         # ── 組合訊息 ─────────────────────────────────────────────────
@@ -3283,7 +3283,7 @@ async def _cmd_report(screen_type: str, uid: str, sector: str = "") -> list:
                           "screen_type": screen_type, "sector": sector}
     try:
         batch_record(page_rows, screen_type=screen_type)
-    except Exception:
+    except Exception as e:
         pass
 
     return [_build_stock_list_msg(page_rows, label, 1, total_pages, screen_type)]
@@ -3357,7 +3357,7 @@ async def _report_bg(
         if page == 1:
             try:
                 batch_record(page_rows, screen_type=screen_type)
-            except Exception:
+            except Exception as e:
                 pass
 
         base_url = os.getenv("BASE_URL", "")
@@ -3441,7 +3441,7 @@ async def _cmd_save_fav(code: str, uid: str) -> list:
     try:
         q = await fetch_realtime_quote(code)
         name = q.get("name", code) if q else code
-    except Exception:
+    except Exception as e:
         name = code
     ok, msg = save_favorite(uid, code, name)
     qr = qr_items(("我的最愛", "/myfav"), ("選股圖", "/myfav report"), ("移除", f"/unsave {code}"))
@@ -3599,7 +3599,7 @@ async def _cmd_recommend(regime: str = "unknown") -> list:
                 params={"regime": regime, "min_confidence": 60, "limit": 5},
             )
             data = resp.json()
-    except Exception:
+    except Exception as e:
         from quant.strategy_engine import StrategyEngine, MOCK_STOCKS
         # 用 TWSE 即時收盤覆蓋 MOCK_STOCKS 硬編碼舊價格
         try:
@@ -3616,7 +3616,7 @@ async def _cmd_recommend(regime: str = "unknown") -> list:
                     d["close"] = c
                     d["atr14"] = round(c * 0.02, 1)
                 enriched.append(d)
-        except Exception:
+        except Exception as e:
             enriched = MOCK_STOCKS
         sigs = StrategyEngine().batch_evaluate(enriched, regime=regime, min_confidence=60)
         data = {"regime": regime, "signals": [s.to_dict() for s in sigs[:5]]}
@@ -3659,7 +3659,7 @@ async def _cmd_odd(budget_str: str, code: str | None, uid: str) -> list:
             quote = await fetch_realtime_quote(code)
             price = float(quote.get("close") or quote.get("price") or 0)
             name  = quote.get("name", code)
-        except Exception:
+        except Exception as e:
             price = 0.0
             name  = code
         if price <= 0:
@@ -3676,14 +3676,14 @@ async def _cmd_odd(budget_str: str, code: str | None, uid: str) -> list:
             try:
                 q = await fetch_realtime_quote(sig.stock_id)
                 p = float(q.get("close") or q.get("price") or 0)
-            except Exception:
+            except Exception as e:
                 p = 0.0
             if p <= 0:
                 try:
                     from backend.services.report_screener import _rt_cache
                     cached_p = _rt_cache.get("prices", {}).get(sig.stock_id, {})
                     p = float(cached_p.get("close", 0) or 0)
-                except Exception:
+                except Exception as e:
                     p = 0.0
             stocks.append({"stock_id": sig.stock_id, "name": sig.name,
                            "price": p, "confidence": sig.confidence})
@@ -3736,7 +3736,7 @@ async def _cmd_compare(code_a: str, code_b: str) -> list:
                 d["atr14"]  = round(c * 0.02, 1)   # ATR ≈ 2% 估算
                 d.setdefault("ma20", round(c * 0.97, 1))
                 d.setdefault("ma60", round(c * 0.94, 1))
-        except Exception:
+        except Exception as e:
             pass
         return d
 
@@ -3813,7 +3813,7 @@ async def _cmd_strategy_analyze(code: str) -> list:
             data["atr14"] = round(c * 0.02, 1)   # ATR ≈ 2% 估算
             data.setdefault("ma20", round(c * 0.97, 1))
             data.setdefault("ma60", round(c * 0.94, 1))
-    except Exception:
+    except Exception as e:
         pass
 
     sig = StrategyEngine().evaluate(data, strategy="composite")
@@ -4994,7 +4994,7 @@ async def _cmd_compare_v2(code_a: str, code_b: str, uid: str) -> list:
         )
         qa = qa if isinstance(qa, dict) else {}
         qb = qb if isinstance(qb, dict) else {}
-    except Exception:
+    except Exception as e:
         qa, qb = {}, {}
 
     def _get(q, *keys, default=0.0):
@@ -5031,7 +5031,7 @@ async def _cmd_compare_v2(code_a: str, code_b: str, uid: str) -> list:
                 c1 = float(kl[-1].get("close") or 0)
                 if c0 > 0:
                     return (c1 - c0) / c0 * 100
-        except Exception:
+        except Exception as e:
             pass
         return None
 
@@ -5111,7 +5111,7 @@ async def _cmd_odd_v2(code: str, budget_str: str, uid: str) -> list:
         quote = await fetch_realtime_quote(code)
         price = float(quote.get("close") or quote.get("price") or 0)
         name  = quote.get("name") or code
-    except Exception:
+    except Exception as e:
         price, name = 0.0, code
 
     if price <= 0:

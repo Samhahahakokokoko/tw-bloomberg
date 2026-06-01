@@ -53,7 +53,7 @@ class Prediction:
         try:
             deadline_dt = datetime.fromisoformat(self.deadline)
             return max(0, (deadline_dt - datetime.now()).days)
-        except Exception:
+        except Exception as e:
             return 0
 
     @property

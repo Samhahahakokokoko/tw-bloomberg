@@ -55,7 +55,7 @@ async def fetch_sector_changes() -> dict[str, float]:
                     chg = q.get("change_pct", 0) if q else 0
                     if chg is not None:
                         changes.append(float(chg))
-                except Exception:
+                except Exception as e:
                     pass
             sector_chg[sector] = sum(changes) / len(changes) if changes else 0.0
     except Exception as e:

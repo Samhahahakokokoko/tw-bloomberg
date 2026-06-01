@@ -26,7 +26,7 @@ async def scan_user_watchlist(uid: str) -> list[dict]:
             chg   = q.get("change_pct", 0) if q else 0
             name  = item.stock_name or (q.get("name", code) if q else code)
             vol   = q.get("volume", 0) if q else 0
-        except Exception:
+        except Exception as e:
             price, chg, name, vol = 0, 0, item.stock_name or code, 0
 
         # 判斷訊號

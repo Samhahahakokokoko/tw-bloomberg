@@ -18,6 +18,7 @@ import os
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Optional
+import asyncio
 
 logger = logging.getLogger(__name__)
 
@@ -152,7 +153,7 @@ def _persist_state(state: KillSwitchState):
         loop = asyncio.get_event_loop()
         if loop.is_running():
             loop.create_task(_write())
-    except Exception:
+    except Exception as e:
         pass
 
 
@@ -212,7 +213,7 @@ def _push_line(text: str):
         loop = asyncio.get_event_loop()
         if loop.is_running():
             loop.create_task(_send())
-    except Exception:
+    except Exception as e:
         pass
 
 

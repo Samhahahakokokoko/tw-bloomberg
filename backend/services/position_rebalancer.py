@@ -97,7 +97,7 @@ async def calculate_rebalance(uid: str) -> RebalanceReport:
                     from .report_screener import _rt_cache
                     _p = _rt_cache.get("prices", {}).get(code, {})
                     price = float(_p.get("close", 0) or 0)
-                except Exception:
+                except Exception as e:
                     pass
             if price <= 0:
                 continue   # 無法取得股價，跳過此持股的再平衡計算

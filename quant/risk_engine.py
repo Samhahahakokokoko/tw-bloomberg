@@ -494,6 +494,7 @@ if __name__ == "__main__":
 
 from dataclasses import dataclass as _dc
 from typing import Optional as _Opt
+import re
 
 @_dc
 class PositionSizeResult:
