@@ -145,5 +145,8 @@ async def _ai_pick_analysis(picks: list[dict]) -> str:
         )
         return msg.content[0].text.strip()
     except Exception as e:
-        logger.error(f"AI pick analysis error: {e}")
+        if "credit balance is too low" in str(e):
+            logger.warning("[StockPick] Anthropic API 額度不足")
+        else:
+            logger.error(f"AI pick analysis error: {e}")
         return ""

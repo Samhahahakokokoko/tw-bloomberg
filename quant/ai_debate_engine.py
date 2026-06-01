@@ -158,7 +158,10 @@ async def run_ai_debate(
         )
 
     except Exception as e:
-        logger.warning("[debate] Claude API failed for %s: %s", stock_id, e)
+        if "credit balance is too low" in str(e):
+            logger.warning("[debate] Anthropic API 額度不足，使用預設辯論結果")
+        else:
+            logger.warning("[debate] Claude API failed for %s: %s", stock_id, e)
         fb = _FALLBACK_DEBATES.get(stock_id, _FALLBACK_DEBATES["default"])
         return DebateResult(
             stock_id       = stock_id,

@@ -96,5 +96,7 @@ async def _weekly_ai_comment(summary: str) -> str:
             }],
         )
         return msg.content[0].text.strip()
-    except Exception:
+    except Exception as e:
+        if "credit balance is too low" in str(e):
+            logger.warning("[WeeklyReport] Anthropic API 額度不足")
         return ""

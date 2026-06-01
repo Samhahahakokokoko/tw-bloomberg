@@ -216,5 +216,8 @@ async def _ai_industry_summary(industry: str, news: list, net: float) -> str:
         )
         return msg.content[0].text.strip()
     except Exception as e:
-        logger.error(f"[IndustrySentiment] AI summary error: {e}")
+        if "credit balance is too low" in str(e):
+            logger.warning("[IndustrySentiment] Anthropic API 額度不足")
+        else:
+            logger.error(f"[IndustrySentiment] AI summary error: {e}")
         return ""

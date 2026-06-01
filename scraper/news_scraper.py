@@ -218,6 +218,8 @@ async def _analyze_sentiment(text: str, api_key: str) -> tuple[str, float]:
             return sentiment, score
         except Exception as e:
             logger.warning(f"[Scraper] 情緒分析 attempt {attempt+1}/3 失敗: {e}")
+            if "credit balance is too low" in str(e):
+                break
             if attempt < 2:
                 await asyncio.sleep(1)
 

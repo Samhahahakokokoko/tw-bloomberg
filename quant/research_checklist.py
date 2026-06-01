@@ -343,7 +343,9 @@ class ResearchChecklist:
                 timeout=8.0,
             )
             return msg.content[0].text.strip()[:120] if msg.content else ""
-        except Exception:
+        except Exception as e:
+            if "credit balance is too low" in str(e):
+                logger.warning("[ResearchChecklist] Anthropic API 額度不足")
             return ""
 
 

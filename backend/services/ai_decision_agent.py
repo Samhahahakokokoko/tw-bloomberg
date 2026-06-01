@@ -71,7 +71,10 @@ async def _generate_batch_reasons(stocks: list[dict]) -> dict[str, tuple[str, fl
         return results
 
     except Exception as e:
-        logger.error(f"[AgentC] Claude error: {e}")
+        if "credit balance is too low" in str(e):
+            logger.warning("[AgentC] Anthropic API 額度不足，回傳空結果")
+        else:
+            logger.error(f"[AgentC] Claude error: {e}")
         return {}
 
 
@@ -161,5 +164,8 @@ async def generate_nl_recommendation(query: str, results: list[dict]) -> str:
         )
         return msg.content[0].text.strip()
     except Exception as e:
-        logger.error(f"[AgentC] NL recommendation error: {e}")
+        if "credit balance is too low" in str(e):
+            logger.warning("[AgentC] Anthropic API 額度不足，回傳空建議")
+        else:
+            logger.error(f"[AgentC] NL recommendation error: {e}")
         return ""

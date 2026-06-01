@@ -149,12 +149,18 @@ async def analyze_with_claude(errors: list[dict], api_key: str) -> list[dict[str
     """).strip()
 
     client = anthropic.AsyncAnthropic(api_key=api_key)
-    message = await client.messages.create(
-        model="claude-haiku-4-5-20251001",
-        max_tokens=2000,
-        system=system,
-        messages=[{"role": "user", "content": f"以下是 Railway 日誌中的錯誤：\n\n{error_text}"}],
-    )
+    try:
+        message = await client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=2000,
+            system=system,
+            messages=[{"role": "user", "content": f"以下是 Railway 日誌中的錯誤：\n\n{error_text}"}],
+        )
+    except Exception as e:
+        if "credit balance is too low" in str(e):
+            logger.warning("[FixEngine] Anthropic API 額度不足，回傳空修復清單")
+            return []
+        raise
 
     raw = message.content[0].text.strip()
     # 移除可能的 markdown code block

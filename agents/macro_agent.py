@@ -61,7 +61,10 @@ async def run(stock_id: str = "", sector: str = "") -> AgentVote:
         return AgentVote(AGENT_NAME, opinion, conf, reasons, data_quality=0.8)
 
     except Exception as e:
-        logger.warning("[MacroAgent] Claude failed: %s", e)
+        if "credit balance is too low" in str(e):
+            logger.warning("[MacroAgent] Anthropic API 額度不足，使用預設值")
+        else:
+            logger.warning("[MacroAgent] Claude failed: %s", e)
         return _fallback_macro_vote()
 
 

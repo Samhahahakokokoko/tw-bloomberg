@@ -188,6 +188,8 @@ async def ai_ask(payload: AskRequest):
         return {"answer": msg.content[0].text}
     except Exception as e:
         logger.error(f"AI ask error: {e}")
+        if "credit balance is too low" in str(e):
+            raise HTTPException(503, "AI 服務額度不足，請稍後再試")
         raise HTTPException(500, str(e))
 
 
@@ -235,6 +237,8 @@ async def ai_portfolio_analysis(db: AsyncSession = Depends(get_db)):
         return {"analysis": msg.content[0].text, "portfolio_summary": holdings}
     except Exception as e:
         logger.error(f"AI portfolio analysis error: {e}")
+        if "credit balance is too low" in str(e):
+            raise HTTPException(503, "AI 服務額度不足，請稍後再試")
         raise HTTPException(500, str(e))
 
 

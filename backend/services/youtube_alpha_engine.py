@@ -123,7 +123,10 @@ async def analyze_with_claude(title: str, description: str) -> dict:
         text = re.sub(r"```json|```", "", text).strip()
         return json.loads(text)
     except Exception as e:
-        logger.warning(f"[youtube] claude analysis failed: {e}, using rule-based")
+        if "credit balance is too low" in str(e):
+            logger.warning("[youtube] Anthropic API 額度不足，使用規則式分析")
+        else:
+            logger.warning(f"[youtube] claude analysis failed: {e}, using rule-based")
         return _rule_based_analysis(title, description)
 
 

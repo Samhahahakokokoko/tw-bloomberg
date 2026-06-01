@@ -151,6 +151,9 @@ async def _ai_summary(report_body: str) -> str:
         )
         return msg.content[0].text.strip()
     except Exception as e:
+        if "credit balance is too low" in str(e):
+            logger.warning("[MorningReport] Anthropic API 額度不足")
+            return "AI 簡評暫時無法使用（額度不足）"
         logger.error(f"AI summary error: {e}")
         return "AI 簡評暫時無法使用"
 

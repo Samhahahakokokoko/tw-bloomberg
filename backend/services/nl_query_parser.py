@@ -69,7 +69,10 @@ async def parse_nl_to_filter(query: str) -> ScreenerFilter:
                 data = json.loads(m.group())
                 return _dict_to_filter(data)
         except Exception as e:
-            logger.error(f"[NLParser] Claude parse error: {e}")
+            if "credit balance is too low" in str(e):
+                logger.warning("[NLParser] Anthropic API 額度不足，使用關鍵字 fallback")
+            else:
+                logger.error(f"[NLParser] Claude parse error: {e}")
 
     # Fallback：關鍵字比對
     return _keyword_fallback(query)

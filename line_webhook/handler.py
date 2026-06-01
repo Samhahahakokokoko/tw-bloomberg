@@ -489,6 +489,8 @@ _NL_TAX = {
 async def _handle_text(text: str, uid: str) -> list:
     parts = text.split()
     cmd   = parts[0].lower() if parts else ""
+    args  = parts[1:]
+    print(f"[DEBUG] 收到指令 cmd={cmd} args={args}", flush=True)
 
     logger.info(f"[route] cmd={cmd!r} text={text[:60]!r}")
 
@@ -1238,6 +1240,8 @@ async def _cmd_ai_ask(question: str, uid: str = "") -> TextMessage:
 
         return TextMessage(text=answer[:5000])
     except Exception as e:
+        if "credit balance is too low" in str(e):
+            logger.warning("[AI] Anthropic API 額度不足")
         return TextMessage(text="功能暫時無法使用，請稍後再試")
 
 
@@ -1267,6 +1271,9 @@ async def _cmd_ai_portfolio(uid: str) -> TextMessage:
         return _text(msg.content[0].text,
                      qr_items(("💼 庫存", "/portfolio"), ("📋 策略推薦", "/rec")))
     except Exception as e:
+        if "credit balance is too low" in str(e):
+            logger.warning("[AI] Anthropic API 額度不足")
+            return _text("❌ AI 分析暫時無法使用（額度不足），請稍後再試")
         return _text(f"❌ AI 錯誤：{e}")
 
 

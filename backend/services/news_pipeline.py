@@ -86,7 +86,10 @@ async def _step_summarize(run_id: str, news: list[dict]) -> list[dict]:
         await _log(run_id, "summarize", "ok", f"摘要 {len(enriched)} 則")
         return enriched
     except Exception as e:
-        logger.warning("[pipeline] summarize 失敗: %s", e)
+        if "credit balance is too low" in str(e):
+            logger.warning("[pipeline] Anthropic API 額度不足，使用原標題")
+        else:
+            logger.warning("[pipeline] summarize 失敗: %s", e)
         await _log(run_id, "summarize", "fail", str(e)[:200])
         return news
 
