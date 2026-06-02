@@ -246,9 +246,14 @@ async def fetch_channel_preview(channel_id: str, raw_url: str = "") -> Optional[
         except Exception as e:
             logger.warning("[onboarding] fetch_channel_preview API failed: %s", e)
 
-    # fallback：channel_id 就是名稱
+    # fallback：從 handle 推導 @handle，或直接用 channel_id 縮寫
     if not title:
-        title = f"YouTube 頻道 {channel_id[:12]}..."
+        if channel_id.startswith("handle_"):
+            title = f"@{channel_id[7:]}"
+        elif channel_id.startswith("UC"):
+            title = f"@{channel_id[2:10]}"
+        else:
+            title = f"@{channel_id}"
 
     auto_specialty, auto_style = infer_specialty_and_style(recent_titles, description)
 
@@ -386,3 +391,102 @@ async def reject_channel(channel_id: str, reason: str = "") -> str:
 
 def list_pending() -> list[ChannelPreview]:
     return list(_pending_reviews.values())
+
+
+async def refresh_analyst_names() -> int:
+    """
+    用 YouTube Data API 補回所有名稱仍是佔位符的分析師真實頻道名。
+    回傳更新筆數。
+    """
+    api_key = os.getenv("YOUTUBE_API_KEY", "")
+    if not api_key:
+        logger.info("[onboarding] no YOUTUBE_API_KEY, skipping name refresh")
+        return 0
+
+    try:
+        from ..models.database import AsyncSessionLocal
+        from ..models.models import Analyst
+        from sqlalchemy import select
+        import httpx
+
+        BAD_PREFIXES = ("YouTube 頻道", "@UC", "@handle_")
+
+        async with AsyncSessionLocal() as db:
+            r = await db.execute(select(Analyst))
+            all_analysts = r.scalars().all()
+
+        # 篩選名稱仍是佔位符的分析師
+        to_fix = [
+            a for a in all_analysts
+            if any(a.name.startswith(p) for p in BAD_PREFIXES)
+            or a.name == ""
+        ]
+        if not to_fix:
+            logger.info("[onboarding] all analyst names already look good")
+            return 0
+
+        # 分批查詢：UC ID 一次最多 50 個
+        uc_analysts  = [a for a in to_fix if a.channel_id.startswith("UC")]
+        hdl_analysts = [a for a in to_fix if not a.channel_id.startswith("UC")]
+
+        name_map: dict[str, str] = {}  # channel_id → real title
+
+        base = "https://www.googleapis.com/youtube/v3"
+        async with httpx.AsyncClient(timeout=20) as c:
+            # UC channel IDs — 批次查詢
+            for i in range(0, len(uc_analysts), 50):
+                batch = uc_analysts[i:i + 50]
+                ids   = ",".join(a.channel_id for a in batch)
+                r = await c.get(f"{base}/channels", params={
+                    "part": "snippet", "id": ids, "key": api_key,
+                })
+                for item in r.json().get("items", []):
+                    cid   = item["id"]
+                    title = item["snippet"].get("title", "")
+                    if title:
+                        name_map[cid] = title
+
+            # handle 型 channel_id（fallback 路徑）
+            for a in hdl_analysts:
+                handle = a.channel_id[7:] if a.channel_id.startswith("handle_") else a.channel_id
+                try:
+                    r = await c.get(f"{base}/channels", params={
+                        "part": "snippet,id", "forHandle": handle, "key": api_key,
+                    })
+                    items = r.json().get("items", [])
+                    if items:
+                        real_cid = items[0]["id"]
+                        title    = items[0]["snippet"].get("title", "")
+                        if title:
+                            name_map[a.channel_id] = title
+                            # 同時更新 channel_id 為真實 UC ID
+                            name_map[f"__cid__{a.channel_id}"] = real_cid
+                except Exception as e:
+                    logger.warning("[onboarding] handle lookup failed %s: %s", handle, e)
+
+        if not name_map:
+            logger.info("[onboarding] YouTube API returned no titles")
+            return 0
+
+        # 寫回 DB
+        updated = 0
+        async with AsyncSessionLocal() as db:
+            r = await db.execute(select(Analyst))
+            analysts = r.scalars().all()
+            for a in analysts:
+                new_title = name_map.get(a.channel_id)
+                if new_title:
+                    a.name = new_title
+                    # 若有對應的真實 UC ID 也一起更新
+                    real_cid = name_map.get(f"__cid__{a.channel_id}")
+                    if real_cid:
+                        a.channel_id = real_cid
+                    updated += 1
+            await db.commit()
+
+        logger.info("[onboarding] refreshed %d analyst names", updated)
+        return updated
+
+    except Exception as e:
+        logger.error("[onboarding] refresh_analyst_names failed: %s", e)
+        return 0

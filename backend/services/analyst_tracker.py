@@ -75,6 +75,15 @@ async def init_default_analysts():
             await db.commit()
             logger.info("[analyst_tracker] sandbox upgrade: all analysts → tier=A win_rate=0.70")
 
+    # 補回 YouTube 真實頻道名稱
+    try:
+        from .analyst_onboarding import refresh_analyst_names
+        updated = await refresh_analyst_names()
+        if updated:
+            logger.info(f"[analyst_tracker] refreshed {updated} analyst names from YouTube API")
+    except Exception as e:
+        logger.warning(f"[analyst_tracker] name refresh skipped: {e}")
+
 
 async def get_all_analysts(active_only: bool = True) -> list[dict]:
     """取得所有分析師列表"""
