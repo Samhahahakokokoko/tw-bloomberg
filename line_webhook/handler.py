@@ -535,11 +535,15 @@ async def _handle_text(text: str, uid: str) -> list:
             return await _cmd_odd_v2(arg1, arg2, uid)
         return await _cmd_odd(arg1, arg2, uid)
 
+    # ── 分析 / 庫存：同時支援含斜線與不含斜線寫法 ──────────────────────────
+    if cmd in ("/analysis", "analysis", "/perf", "perf"):
+        return await _cmd_analysis(uid)
+    if cmd in ("/portfolio", "portfolio", "/p", "p"):
+        return await _cmd_portfolio(uid)
+
     # ── 斜線指令（精確比對）──────────────────────────────────────────────────
     if cmd == "/quote"    and len(parts) >= 2: return await _cmd_quote(parts[1])
     if cmd in ("/market", "/market_overview"):  return await _cmd_market()
-    if cmd in ("/portfolio", "/p"):             return await _cmd_portfolio(uid)
-    if cmd in ("/analysis", "/perf"):           return await _cmd_analysis(uid)
     if cmd == "/buy"      and len(parts) >= 4:  return await _cmd_buy(parts, uid)
     if cmd == "/sell"     and len(parts) >= 4:  return await _cmd_sell(parts, uid)
     if cmd == "/setcost"  and len(parts) == 3:  return await _cmd_setcost(int(parts[1]), float(parts[2]), uid)
