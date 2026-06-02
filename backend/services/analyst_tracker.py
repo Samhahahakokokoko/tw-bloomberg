@@ -6,49 +6,9 @@ from datetime import datetime
 from loguru import logger
 from sqlalchemy import select, desc
 
-# ── 預設追蹤名單 ───────────────────────────────────────────────────────────────
-DEFAULT_ANALYSTS = [
-    {
-        "analyst_id":  "tsmc_bull",
-        "name":        "半導體老王",
-        "channel_url": "https://www.youtube.com/@example1",
-        "channel_id":  "",
-        "specialty":   "半導體,IC設計",
-        "reliability_score": 70.0,
-    },
-    {
-        "analyst_id":  "ai_server_fan",
-        "name":        "AI伺服器達人",
-        "channel_url": "https://www.youtube.com/@example2",
-        "channel_id":  "",
-        "specialty":   "AI Server,散熱",
-        "reliability_score": 65.0,
-    },
-    {
-        "analyst_id":  "value_investor",
-        "name":        "存股研究室",
-        "channel_url": "https://www.youtube.com/@example3",
-        "channel_id":  "",
-        "specialty":   "存股,高股息",
-        "reliability_score": 72.0,
-    },
-    {
-        "analyst_id":  "chip_tracker",
-        "name":        "籌碼觀察家",
-        "channel_url": "https://www.youtube.com/@example4",
-        "channel_id":  "",
-        "specialty":   "籌碼,法人",
-        "reliability_score": 68.0,
-    },
-    {
-        "analyst_id":  "macro_view",
-        "name":        "總經視角",
-        "channel_url": "https://www.youtube.com/@example5",
-        "channel_id":  "",
-        "specialty":   "總經,ETF",
-        "reliability_score": 60.0,
-    },
-]
+# 舊測試分析師 ID / 名稱（部署時一次性清除）
+_MOCK_ANALYST_IDS   = ["tsmc_bull", "ai_server_fan", "value_investor", "chip_tracker", "macro_view"]
+_MOCK_ANALYST_NAMES = ["半導體老王", "財經老師", "AI伺服器達人", "存股研究室", "籌碼觀察家", "總經視角"]
 
 RELIABILITY_TIERS = {
     "high":    (65, "⭐⭐⭐ 高可信"),
@@ -75,21 +35,38 @@ def get_tier_label(win_rate: float) -> str:
 
 
 async def init_default_analysts():
-    """初始化預設分析師清單（若表為空）；沙盒期統一升為 tier=A, win_rate=0.70"""
+    """清除舊測試資料；沙盒期把現有分析師統一升為 tier=A, win_rate=0.70"""
     from ..models.database import AsyncSessionLocal
-    from ..models.models import Analyst
-    from sqlalchemy import update
+    from ..models.models import Analyst, AnalystCall
+    from sqlalchemy import update, delete, or_
 
     async with AsyncSessionLocal() as db:
-        r     = await db.execute(select(Analyst).limit(1))
-        exist = r.scalar_one_or_none()
-        if not exist:
-            for a in DEFAULT_ANALYSTS:
-                db.add(Analyst(**a, total_calls=0, win_rate=0.70, avg_return=0.0, tier="A"))
-            await db.commit()
-            logger.info(f"[analyst_tracker] initialized {len(DEFAULT_ANALYSTS)} analysts tier=A")
-        else:
-            # 沙盒期：把所有非 S 的分析師升為 A tier + win_rate=0.70（確保高可信）
+        # 清除測試用 analyst_calls（TSMC entry_price < 1000 的假資料）
+        await db.execute(
+            delete(AnalystCall)
+            .where(AnalystCall.stock_id == "2330")
+            .where(AnalystCall.entry_price < 1000)
+            .where(AnalystCall.entry_price > 0)
+        )
+        # 清除屬於測試分析師的所有 calls
+        await db.execute(
+            delete(AnalystCall).where(AnalystCall.analyst_id.in_(_MOCK_ANALYST_IDS))
+        )
+        # 清除測試分析師本身
+        await db.execute(
+            delete(Analyst).where(
+                or_(
+                    Analyst.analyst_id.in_(_MOCK_ANALYST_IDS),
+                    Analyst.name.in_(_MOCK_ANALYST_NAMES),
+                )
+            )
+        )
+        await db.commit()
+        logger.info("[analyst_tracker] cleaned up mock analyst data")
+
+        # 沙盒期：把所有非 S 的分析師升為 A tier + win_rate=0.70（確保高可信）
+        r = await db.execute(select(Analyst).limit(1))
+        if r.scalar_one_or_none():
             await db.execute(
                 update(Analyst)
                 .where(Analyst.tier.notin_(["S"]))

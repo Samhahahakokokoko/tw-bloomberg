@@ -10,7 +10,7 @@ analyst_drift_detector.py — 分析師觀點飄移偵測器
 觸發條件：
   - 方向逆轉：最近2則 vs 前3則，情緒均值翻轉
   - 沉默飄移：原本每週提及，突然停止 > 14 天
-  - 目標價調降 > 15%
+  - 目標價調降 > 30%
 """
 from __future__ import annotations
 
@@ -148,7 +148,7 @@ def _detect_target_cut(
     if old_target <= 0 or new_target <= 0:
         return None
     change = (new_target - old_target) / old_target
-    if change < -0.15:
+    if change < -0.30:
         return DriftAlert(
             analyst_id   = analyst_id,
             analyst_name = analyst_name,
@@ -200,26 +200,7 @@ async def run_drift_detection(analyst_calls: list[dict] | None = None) -> DriftR
     }]
     """
     if not analyst_calls:
-        analyst_calls = [
-            {
-                "analyst_id": "tsmc_bull", "analyst_name": "半導體老王",
-                "stock_id": "2330", "stock_name": "台積電",
-                "sentiments_recent": ["bearish"],
-                "sentiments_old": ["strong_bullish", "bullish", "bullish"],
-                "target_old": 1100.0, "target_new": 880.0,
-                "last_mention": (datetime.now() - timedelta(days=3)).isoformat(),
-                "avg_interval_days": 5,
-            },
-            {
-                "analyst_id": "ai_server", "analyst_name": "AI伺服器達人",
-                "stock_id": "6669", "stock_name": "緯穎",
-                "sentiments_recent": ["bullish", "strong_bullish"],
-                "sentiments_old": ["neutral", "bearish"],
-                "target_old": 2200.0, "target_new": 2800.0,
-                "last_mention": (datetime.now() - timedelta(days=1)).isoformat(),
-                "avg_interval_days": 7,
-            },
-        ]
+        return DriftReport()
 
     all_alerts: list[DriftAlert] = []
 
