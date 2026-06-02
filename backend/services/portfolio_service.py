@@ -1,4 +1,5 @@
 """庫存服務 — 完全 user_id 隔離，每個 LINE 用戶看到自己的資料"""
+from datetime import date, datetime
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from ..models.models import Portfolio
@@ -14,6 +15,7 @@ async def get_portfolio(db: AsyncSession, user_id: str = "") -> list[dict]:
     holdings = result.scalars().all()
 
     output = []
+    today = date.today()
     for h in holdings:
         quote = await fetch_realtime_quote(h.stock_code)
         current_price = quote.get("price", h.cost_price)
@@ -21,17 +23,34 @@ async def get_portfolio(db: AsyncSession, user_id: str = "") -> list[dict]:
         cost          = h.cost_price * h.shares
         pnl           = market_value - cost
         pnl_pct       = round(pnl / cost * 100, 2) if cost else 0
+        pnl_per_share = round(current_price - h.cost_price, 2)
+
+        # Holding days from buy_date; fallback to created_at
+        holding_days = 0
+        raw_buy_date = getattr(h, "buy_date", None)
+        if raw_buy_date:
+            try:
+                holding_days = (today - datetime.strptime(raw_buy_date, "%Y-%m-%d").date()).days
+            except Exception:
+                pass
+        if holding_days == 0 and h.created_at:
+            holding_days = max(0, (today - h.created_at.date()).days)
+
         output.append({
-            "id":            h.id,
-            "user_id":       h.user_id,
-            "stock_code":    h.stock_code,
-            "stock_name":    h.stock_name or quote.get("name", ""),
-            "shares":        h.shares,
-            "cost_price":    h.cost_price,
-            "current_price": current_price,
-            "market_value":  round(market_value, 2),
-            "pnl":           round(pnl, 2),
-            "pnl_pct":       pnl_pct,
+            "id":               h.id,
+            "user_id":          h.user_id,
+            "stock_code":       h.stock_code,
+            "stock_name":       h.stock_name or quote.get("name", ""),
+            "shares":           h.shares,
+            "cost_price":       h.cost_price,
+            "current_price":    current_price,
+            "market_value":     round(market_value, 2),
+            "pnl":              round(pnl, 2),
+            "pnl_pct":          pnl_pct,
+            "pnl_per_share":    pnl_per_share,
+            "holding_days":     holding_days,
+            "buy_date":         raw_buy_date or (h.created_at.strftime("%Y-%m-%d") if h.created_at else ""),
+            "market_condition": getattr(h, "market_condition", "") or "",
         })
     return output
 
@@ -42,9 +61,15 @@ async def add_holding(
     shares: int,
     cost_price: float,
     user_id: str = "",
+    buy_date: str = None,
+    market_condition: str = None,
 ) -> Portfolio:
     quote = await fetch_realtime_quote(stock_code)
-    # 同一 user 若已有此股，累加
+    from datetime import date as _date
+    if not buy_date:
+        buy_date = _date.today().strftime("%Y-%m-%d")
+
+    # 同一 user 若已有此股，累加（加碼）
     result = await db.execute(
         select(Portfolio).where(
             Portfolio.user_id == user_id,
@@ -58,6 +83,12 @@ async def add_holding(
         existing.shares     = total_shares
         existing.cost_price = round(total_cost / total_shares, 4)
         existing.stock_name = quote.get("name", existing.stock_name)
+        # Keep earliest buy_date
+        existing_bd = getattr(existing, "buy_date", None)
+        if not existing_bd or (buy_date and buy_date < existing_bd):
+            existing.buy_date = buy_date
+        if market_condition:
+            existing.market_condition = market_condition
         await db.commit()
         await db.refresh(existing)
         return existing
@@ -68,6 +99,8 @@ async def add_holding(
         stock_name=quote.get("name", ""),
         shares=shares,
         cost_price=cost_price,
+        buy_date=buy_date,
+        market_condition=market_condition or "unknown",
     )
     db.add(holding)
     await db.commit()

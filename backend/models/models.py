@@ -23,6 +23,8 @@ class Portfolio(Base):
     stock_name = Column(String(50))
     shares = Column(Integer, nullable=False)
     cost_price = Column(Float, nullable=False)
+    buy_date = Column(String(10), nullable=True)          # YYYY-MM-DD 首次買進日期
+    market_condition = Column(String(20), nullable=True)  # bull/bear/neutral
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

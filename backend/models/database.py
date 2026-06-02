@@ -74,6 +74,8 @@ async def get_db():
 
 _SQLITE_MIGRATIONS = [
     "ALTER TABLE portfolio  ADD COLUMN user_id VARCHAR(100) NOT NULL DEFAULT ''",
+    "ALTER TABLE portfolio  ADD COLUMN buy_date VARCHAR(10)",
+    "ALTER TABLE portfolio  ADD COLUMN market_condition VARCHAR(20)",
     "ALTER TABLE alerts     ADD COLUMN user_id VARCHAR(100) NOT NULL DEFAULT ''",
     "CREATE INDEX IF NOT EXISTS ix_portfolio_user_id  ON portfolio(user_id)",
     "CREATE INDEX IF NOT EXISTS ix_alerts_user_id     ON alerts(user_id)",
@@ -104,6 +106,8 @@ _PG_MIGRATIONS = [
     """DO $$ BEGIN
          ALTER TABLE portfolio  ADD COLUMN user_id VARCHAR(100) NOT NULL DEFAULT '';
        EXCEPTION WHEN duplicate_column THEN NULL; END $$""",
+    """DO $$ BEGIN ALTER TABLE portfolio ADD COLUMN buy_date VARCHAR(10); EXCEPTION WHEN duplicate_column THEN NULL; END $$""",
+    """DO $$ BEGIN ALTER TABLE portfolio ADD COLUMN market_condition VARCHAR(20); EXCEPTION WHEN duplicate_column THEN NULL; END $$""",
     """DO $$ BEGIN
          ALTER TABLE alerts     ADD COLUMN user_id VARCHAR(100) NOT NULL DEFAULT '';
        EXCEPTION WHEN duplicate_column THEN NULL; END $$""",

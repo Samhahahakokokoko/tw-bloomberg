@@ -231,6 +231,34 @@ async def _handle_postback_inner(data: str, uid: str) -> list:
     if act == "ai":
         return [await _cmd_ai_ask(f"{code} 現在的技術面和基本面如何？值得持有嗎？", uid)]
 
+    # ── 庫存 互動按鈕 ──────────────────────────────────────────────────────────
+    if act == "portfolio_buy":
+        cost_hint = params.get("price", "")
+        hint_line = f"\n例：/buy {code} 5 {cost_hint}" if cost_hint else f"\n例：/buy {code} 5 成本價"
+        return [_text(
+            f"➕ 加碼 {code}\n\n輸入買進指令：\n/buy {code} 張數 成本價{hint_line}",
+            qr_items((f"加碼 {code}", f"/buy {code} 1 {cost_hint or '0'}"),
+                     ("💼 庫存", "/p"))
+        )]
+
+    if act == "portfolio_sell":
+        all_shares = params.get("shares", "")
+        curr_price = params.get("price", "")
+        hint_all   = f"/sell {code} {all_shares} {curr_price}" if all_shares and curr_price else f"/sell {code} 張數 賣出價"
+        return [_text(
+            f"💰 賣出 {code}\n\n輸入賣出指令：\n{hint_all}\n\n或部分出清：\n/sell {code} 5 {curr_price or '賣出價'}",
+            qr_items((f"全部賣出", hint_all), ("💼 庫存", "/p"))
+        )]
+
+    if act == "portfolio_analysis":
+        return await _cmd_analysis(uid)
+
+    if act == "analysis":
+        return await _cmd_analysis(uid)
+
+    if act == "history":
+        return await _cmd_history(uid)
+
     if act == "profile":
         field = params.get("field", "")
         val   = params.get("val", "")
@@ -510,9 +538,10 @@ async def _handle_text(text: str, uid: str) -> list:
     # ── 斜線指令（精確比對）──────────────────────────────────────────────────
     if cmd == "/quote"    and len(parts) >= 2: return await _cmd_quote(parts[1])
     if cmd in ("/market", "/market_overview"):  return await _cmd_market()
-    if cmd == "/portfolio":                     return await _cmd_portfolio(uid)
-    if cmd == "/buy"      and len(parts) == 4:  return await _cmd_buy(parts[1], parts[2], parts[3], uid)
-    if cmd == "/sell"     and len(parts) == 4:  return await _cmd_sell(parts[1], parts[2], parts[3], uid)
+    if cmd in ("/portfolio", "/p"):             return await _cmd_portfolio(uid)
+    if cmd in ("/analysis", "/perf"):           return await _cmd_analysis(uid)
+    if cmd == "/buy"      and len(parts) >= 4:  return await _cmd_buy(parts, uid)
+    if cmd == "/sell"     and len(parts) >= 4:  return await _cmd_sell(parts, uid)
     if cmd == "/setcost"  and len(parts) == 3:  return await _cmd_setcost(int(parts[1]), float(parts[2]), uid)
     if cmd == "/history":                       return await _cmd_history(uid, parts[1] if len(parts)>1 else None)
     if cmd == "/tax":                           return await _cmd_tax(uid)
@@ -538,7 +567,7 @@ async def _handle_text(text: str, uid: str) -> list:
         return [await _cmd_ai_ask(" ".join(parts[1:]), uid)]
     if cmd in ("/news", "/news_guide"):         return await _cmd_news_feed(uid)
     if cmd == "/n":                             return await _cmd_news_feed(uid)
-    if cmd == "/p":                             return await _cmd_portfolio(uid)
+    # /p already handled above in the combined "/portfolio" check
     if cmd == "/r":                             return [_flex_screen_menu()]
     if cmd == "/strategy":
         sub = parts[1].lower() if len(parts) > 1 else ""
@@ -938,67 +967,286 @@ async def _cmd_portfolio(uid: str) -> list:
         async with AsyncSessionLocal() as db:
             holdings = await portfolio_service.get_portfolio(db, uid)
         if not holdings:
-            return [TextMessage(text="📂 庫存為空\n輸入 /buy 代碼 股數 成本 新增持股")]
-        total_mv = sum(h.get("market_value", 0) or 0 for h in holdings)
-        total_pnl = sum(h.get("pnl", 0) or 0 for h in holdings)
-        lines = [f"💼 我的庫存\n總市值：{total_mv:,.0f}元\n總損益：{total_pnl:+,.0f}元"]
-        for h in holdings[:10]:
-            lines.append(
-                f"\n{h.get('stock_code', '')} {h.get('stock_name', '')}\n"
-                f"股數：{h.get('shares', 0):,}\n"
-                f"現價：{h.get('current_price', 0):,.2f}\n"
-                f"損益：{h.get('pnl', 0):+,.0f} ({h.get('pnl_pct', 0):+.1f}%)"
-            )
-        return [TextMessage(text="\n".join(lines)[:5000])]
+            return [_text(
+                "📂 庫存為空\n\n新增持股：\n/buy 代碼 張數 成本價\n例：/buy 2330 10 850",
+                qr_items(("📊 分析大盤", "/market"), ("📈 看報價", "2330")),
+            )]
+        carousel = flex_portfolio_carousel(holdings)
+        return [_flex("💼 我的持股", carousel, qr_items(
+            ("📊 效益分析", "/analysis"),
+            ("📋 交易紀錄", "/history"),
+            ("💰 稅務摘要", "/tax"),
+        ))]
     except Exception as e:
+        logger.error("[cmd_portfolio] %s", e)
         return [TextMessage(text="功能暫時無法使用，請稍後再試")]
 
 
-async def _cmd_buy(code: str, shares_str: str, cost_str: str, uid: str) -> list:
+def _parse_buy_args(parts: list) -> tuple:
+    """解析 /buy 參數：code shares cost [YYYY-MM-DD] [sl=X] [tp=X]"""
+    code  = parts[1].upper()
+    shares = int(parts[2])
+    cost   = float(parts[3])
+    from datetime import date as _d
+    buy_date     = _d.today().strftime("%Y-%m-%d")
+    stop_loss    = None
+    target_price = None
+    for p in parts[4:]:
+        pl = p.lower()
+        if re.match(r"^\d{4}-\d{2}-\d{2}$", p):
+            buy_date = p
+        elif pl.startswith("sl="):
+            try: stop_loss = float(p[3:])
+            except ValueError: pass
+        elif pl.startswith("tp="):
+            try: target_price = float(p[3:])
+            except ValueError: pass
+    return code, shares, cost, buy_date, stop_loss, target_price
+
+
+async def _cmd_buy(parts: list, uid: str) -> list:
     try:
-        shares = int(shares_str); cost = float(cost_str)
-        async with AsyncSessionLocal() as db:
-            h = await portfolio_service.add_holding(db, code, shares, cost, uid)
+        code, shares, cost, buy_date, stop_loss, target_price = _parse_buy_args(parts)
+    except (ValueError, IndexError) as e:
         return [_text(
-            f"✅ {h.stock_code} {h.stock_name}\n{shares:,}股 @ {cost}\n已加入庫存",
-            qr_items(("💼 查庫存", "/portfolio"), ("🔔 設警報", f"/alert {code} price_above {int(cost*1.1)}"))
+            f"❌ 格式錯誤：{e}\n\n"
+            "用法：/buy 代碼 張數 成本價 [日期] [sl=停損] [tp=停利]\n"
+            "例：/buy 2330 10 850 sl=800 tp=950"
         )]
-    except Exception as e:
-        return [_text(f"❌ 失敗：{e}")]
 
-
-async def _cmd_sell(code: str, shares_str: str, price_str: str, uid: str) -> list:
     try:
-        shares = int(shares_str); price = float(price_str)
+        # Detect market condition from today's quote
+        market_cond = "unknown"
+        try:
+            q = await fetch_realtime_quote(code)
+            chg = float(q.get("change", 0) or 0)
+            prev = float(q.get("price", cost) or cost) - chg
+            chg_pct = chg / prev * 100 if prev else 0
+            market_cond = "bull" if chg_pct >= 0 else "bear"
+        except Exception:
+            pass
+
+        async with AsyncSessionLocal() as db:
+            h = await portfolio_service.add_holding(
+                db, code, shares, cost, uid,
+                buy_date=buy_date, market_condition=market_cond,
+            )
+            # If sl/tp provided, sync to watchlist for alert monitoring
+            if stop_loss is not None or target_price is not None:
+                from backend.services.watchlist_service import add_to_watchlist
+                await add_to_watchlist(
+                    db, uid, code,
+                    stock_name=h.stock_name or "",
+                    target_price=target_price,
+                    stop_loss=stop_loss,
+                )
+
+        sl_tp = ""
+        if stop_loss    is not None: sl_tp += f"\n🔻 停損：{stop_loss:,.0f}"
+        if target_price is not None: sl_tp += f"\n🚀 停利：{target_price:,.0f}"
+        mkt_icon = "📈" if market_cond == "bull" else "📉" if market_cond == "bear" else "📊"
+
+        confirm = (
+            f"✅ 買進成功\n"
+            f"{h.stock_code} {h.stock_name}\n"
+            f"─────────────\n"
+            f"買進：{shares:,}張 @ {cost:,.0f}元\n"
+            f"日期：{buy_date}\n"
+            f"市況：{mkt_icon} {'多頭' if market_cond=='bull' else '空頭' if market_cond=='bear' else '未知'}"
+            f"{sl_tp}"
+        )
+        return [_text(confirm, qr_items(
+            ("💼 查庫存", "/p"),
+            ("📊 效益分析", "/analysis"),
+            ("📋 交易紀錄", "/history"),
+        ))]
+    except Exception as e:
+        return [_text(f"❌ 買進失敗：{e}")]
+
+
+async def _cmd_sell(parts: list, uid: str) -> list:
+    if len(parts) < 4:
+        return [_text("用法：/sell 代碼 張數 賣出價\n例：/sell 2330 5 950")]
+    try:
+        code   = parts[1].upper()
+        shares = int(parts[2])
+        price  = float(parts[3])
+    except (ValueError, IndexError) as e:
+        return [_text(f"❌ 格式錯誤：{e}")]
+
+    try:
         async with AsyncSessionLocal() as db:
             holdings = await portfolio_service.get_portfolio(db, uid)
-            h = next((h for h in holdings if h["stock_code"] == code), None)
+            h = next((x for x in holdings if x["stock_code"] == code), None)
             if not h:
-                return [_text(f"❌ 庫存中無 {code}，請先 /buy 新增")]
-            avg_cost = h["cost_price"]
-            # 更新庫存
+                return [_text(
+                    f"❌ 庫存中無 {code}\n請先用 /buy {code} 張數 成本 新增"
+                )]
+            avg_cost     = h["cost_price"]
+            holding_days = h.get("holding_days", 0)
+            stock_name   = h.get("stock_name", code)
+
             updated = await portfolio_service.adjust_shares(db, h["id"], -shares, uid)
-            # 記錄交易日誌
             log = await log_trade(
-                db, uid, code, h.get("stock_name", ""), "SELL",
+                db, uid, code, stock_name, "SELL",
                 price, shares, avg_cost,
             )
-        pnl_str = f"{log.realized_pnl:+,.0f}"
-        return [_text(
-            f"🔴 賣出成交\n{code} {shares:,}股 @{price}\n"
-            f"已實現損益：{pnl_str}\n"
-            f"手續費：{log.commission:,.0f}  稅：{log.tax:,.0f}",
-            qr_items(("💼 庫存", "/portfolio"), ("📋 紀錄", "/history"), ("💰 稅務", "/tax"))
-        )]
+
+        pnl_per   = price - avg_cost
+        pnl_pct   = (price / avg_cost - 1) * 100 if avg_cost else 0
+        pnl_icon  = "🟢" if log.realized_pnl >= 0 else "🔴"
+
+        result_msg = (
+            f"{pnl_icon} 賣出成交\n"
+            f"{code} {stock_name}\n"
+            f"─────────────\n"
+            f"賣出：{shares:,}張 @ {price:,.0f}元\n"
+            f"成本：{avg_cost:,.0f}元/張\n"
+            f"每張損益：{pnl_per:+,.0f}元 ({pnl_pct:+.1f}%)\n"
+            f"持有：{holding_days}天\n"
+            f"已實現損益：{log.realized_pnl:+,.0f}元\n"
+            f"手續費：{log.commission:,.0f}  稅：{log.tax:,.0f}"
+        )
+        if updated:
+            result_msg += f"\n\n剩餘持股：{updated.shares:,}張"
+        else:
+            result_msg += f"\n\n✅ {code} 持股已全數出清"
+
+        return [_text(result_msg, qr_items(
+            ("💼 庫存", "/p"),
+            ("📋 紀錄", "/history"),
+            ("💰 稅務", "/tax"),
+        ))]
     except Exception as e:
         return [_text(f"❌ 賣出失敗：{e}")]
 
 
 async def _cmd_history(uid: str, code: str = None) -> list:
     async with AsyncSessionLocal() as db:
-        logs = await get_history(db, uid, limit=15, stock_code=code)
-    text = format_trade_history(logs)
-    return [_text(text, qr_items(("💰 稅務", "/tax"), ("💼 庫存", "/portfolio")))]
+        logs = await get_history(db, uid, limit=20, stock_code=code)
+    title = f"📋 {code} 交易紀錄" if code else "📋 全部交易紀錄"
+    text  = f"{title}\n{'─'*22}\n" + format_trade_history(logs)
+    return [_text(text[:5000], qr_items(
+        ("💼 庫存", "/p"),
+        ("💰 稅務", "/tax"),
+        ("📊 效益分析", "/analysis"),
+    ))]
+
+
+async def _cmd_analysis(uid: str) -> list:
+    """投資效益分析：績效 vs 大盤、集中度、持倉分析、AI建議"""
+    try:
+        async with AsyncSessionLocal() as db:
+            holdings = await portfolio_service.get_portfolio(db, uid)
+        if not holdings:
+            return [_text("📂 庫存為空，請先用 /buy 新增持股")]
+
+        total_cost = sum(h["cost_price"] * h["shares"] for h in holdings)
+        total_mv   = sum(h["market_value"] for h in holdings)
+        total_pnl  = total_mv - total_cost
+        total_pct  = total_pnl / total_cost * 100 if total_cost else 0
+
+        by_pct   = sorted(holdings, key=lambda x: x["pnl_pct"], reverse=True)
+        best     = by_pct[0]
+        worst    = by_pct[-1]
+        avg_days = sum(h.get("holding_days", 0) for h in holdings) / len(holdings)
+        longest  = max(holdings, key=lambda x: x.get("holding_days", 0))
+
+        # Benchmark: 0050 from earliest buy_date
+        start_dates = [h.get("buy_date", "") for h in holdings if h.get("buy_date")]
+        start_date  = min(start_dates) if start_dates else ""
+        bench_return = None
+        if start_date:
+            try:
+                bench_return = await _fetch_benchmark_return(start_date)
+            except Exception:
+                pass
+
+        # Sector concentration
+        SECTOR = {
+            "2330":"半導體","2454":"半導體","2379":"半導體","2303":"半導體",
+            "3034":"半導體","6770":"半導體","3711":"半導體",
+            "2317":"電子零組件","3231":"電子零組件","2308":"電子零組件",
+            "2882":"金融","2884":"金融","2886":"金融","2885":"金融",
+            "2912":"民生消費","1216":"民生消費","2207":"汽車",
+            "0050":"ETF","00878":"ETF","006208":"ETF",
+        }
+        sector_mv: dict[str, float] = {}
+        for h in holdings:
+            s = SECTOR.get(h["stock_code"], "其他")
+            sector_mv[s] = sector_mv.get(s, 0) + h["market_value"]
+        top_sector     = max(sector_mv, key=sector_mv.get)
+        top_pct        = sector_mv[top_sector] / total_mv * 100 if total_mv else 0
+        conc_warn      = "（⚠️偏高）" if top_pct > 70 else ("（適中）" if top_pct > 50 else "（分散）")
+
+        # AI advisory
+        ai_advice = ""
+        try:
+            from backend.models.database import settings as _s
+            if _s.anthropic_api_key:
+                import anthropic as _ant
+                client = _ant.AsyncAnthropic(api_key=_s.anthropic_api_key)
+                hold_summary = "; ".join([
+                    f"{h['stock_code']}{h.get('stock_name','')} {h['pnl_pct']:+.1f}% 持{h.get('holding_days',0)}天"
+                    for h in holdings[:5]
+                ])
+                msg = await asyncio.wait_for(
+                    client.messages.create(
+                        model="claude-haiku-4-5-20251001",
+                        max_tokens=120,
+                        messages=[{"role": "user", "content": (
+                            f"台股持倉：{hold_summary}\n"
+                            "請給出2~3條最重要的操作建議，每條20字以內，直接列出。"
+                        )}],
+                    ),
+                    timeout=8.0,
+                )
+                ai_advice = msg.content[0].text.strip()[:200] if msg.content else ""
+        except Exception as e:
+            if "credit balance is too low" in str(e):
+                logger.warning("[cmd_analysis] Anthropic 額度不足")
+
+        # Format
+        bench_block = ""
+        if bench_return is not None:
+            alpha = total_pct - bench_return
+            a_icon = "✅" if alpha >= 0 else "⚠️"
+            bench_block = (
+                f"\n📈 與大盤比較\n"
+                f"我的報酬：{total_pct:+.1f}%\n"
+                f"同期大盤：{bench_return:+.1f}%\n"
+                f"超額報酬：{alpha:+.1f}% {a_icon}"
+            )
+
+        text = (
+            f"📊 投資效益分析\n{'─'*22}\n"
+            f"持股績效\n"
+            f"最佳：{best.get('stock_name', best['stock_code'])} {best['pnl_pct']:+.1f}%\n"
+            f"最差：{worst.get('stock_name', worst['stock_code'])} {worst['pnl_pct']:+.1f}%\n"
+            f"{bench_block}\n"
+            f"\n⚖️ 風險分析\n"
+            f"集中度：{top_sector} {top_pct:.0f}%{conc_warn}\n"
+        )
+        if top_pct > 70:
+            text += "建議：適當分散至其他族群\n"
+
+        text += (
+            f"\n⏱ 持倉分析\n"
+            f"平均持有：{avg_days:.0f}天\n"
+            f"持有最久：{longest.get('stock_name', longest['stock_code'])} {longest.get('holding_days',0)}天\n"
+        )
+
+        if ai_advice:
+            text += f"\n🤖 AI建議\n{ai_advice}"
+
+        return [_text(text[:5000], qr_items(
+            ("💼 庫存", "/p"),
+            ("📋 歷史", "/history"),
+            ("🔄 回測", "/backtest"),
+        ))]
+    except Exception as e:
+        logger.error("[cmd_analysis] %s", e)
+        return [_text(f"❌ 分析失敗：{e}")]
 
 
 async def _cmd_tax(uid: str) -> list:

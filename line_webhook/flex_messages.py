@@ -468,13 +468,17 @@ def _postback_btn(label: str, data: str, color: str, style: str = "primary") -> 
 # ── 互動式單股庫存卡片（Postback 操作）────────────────────────────────────────
 
 def flex_holding_card(h: dict) -> dict:
-    """單筆持股的互動卡片，含 +100/-100/修改成本/刪除 按鈕"""
+    """單筆持股的互動卡片，含加碼/賣出/分析按鈕"""
     is_up  = h["pnl"] >= 0
     clr    = C_GREEN if is_up else C_RED
     arrow  = "▲" if is_up else "▼"
     hid    = h["id"]
     code   = h["stock_code"]
     w_pct  = h.get("weight_pct", 0)
+    hold_d = h.get("holding_days", 0)
+    pnl_ps = h.get("pnl_per_share", h["current_price"] - h["cost_price"])
+    pnl_ps_clr = C_GREEN if pnl_ps >= 0 else C_RED
+    curr_p = int(h.get("current_price", 0))
 
     return {
         "type": "bubble",
@@ -547,36 +551,26 @@ def flex_holding_card(h: dict) -> dict:
                     ],
                 },
                 _separator(),
-                _row_4cols("持股數", f"{h['shares']:,}股",
-                           "成本價", f"{h['cost_price']:,.1f}"),
-                _row_4cols("倉位佔比", f"{w_pct:.1f}%",
-                           "總成本",  f"{h['cost_price']*h['shares']:,.0f}"),
+                _row_4cols("持有", f"{h['shares']:,}張",
+                           "成本", f"{h['cost_price']:,.0f}元"),
+                _row_4cols("現價", f"{h['current_price']:,.0f}元",
+                           "每張損益", f"{pnl_ps:+,.0f}元", None, pnl_ps_clr),
+                _row_4cols("持有天數", f"{hold_d}天",
+                           "倉位佔比", f"{w_pct:.1f}%"),
             ],
         },
         "footer": {
             "type": "box",
-            "layout": "vertical",
+            "layout": "horizontal",
             "paddingAll": "10px",
             "spacing": "sm",
             "contents": [
-                # 股數增減
-                {
-                    "type": "box", "layout": "horizontal", "spacing": "sm",
-                    "contents": [
-                        _postback_btn("+100股", f"act=add&id={hid}&delta=100&code={code}", C_GREEN),
-                        _postback_btn("-100股", f"act=sub&id={hid}&delta=100&code={code}", C_RED),
-                        _postback_btn("+1000股",f"act=add&id={hid}&delta=1000&code={code}", "#228844"),
-                    ],
-                },
-                # 管理操作
-                {
-                    "type": "box", "layout": "horizontal", "spacing": "sm",
-                    "contents": [
-                        _postback_btn("✏️修改成本", f"act=editcost&id={hid}&code={code}", C_YELLOW),
-                        _postback_btn("🤖AI分析",  f"act=ai&id={hid}&code={code}", "#8866ff"),
-                        _postback_btn("🗑️刪除",   f"act=del&id={hid}&code={code}", "#884422"),
-                    ],
-                },
+                _postback_btn("➕加碼",
+                    f"act=portfolio_buy&code={code}&price={int(h['cost_price'])}", C_GREEN),
+                _postback_btn("💰賣出",
+                    f"act=portfolio_sell&code={code}&shares={h['shares']}&price={curr_p}", C_RED),
+                _postback_btn("📊分析",
+                    f"act=portfolio_analysis&code={code}", "#8866ff"),
             ],
         },
     }
