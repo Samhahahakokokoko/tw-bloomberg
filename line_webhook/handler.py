@@ -2748,20 +2748,22 @@ def _compute_best_worst_trades(trades: list) -> dict:
 async def _fetch_benchmark_return(start_date: str, end_date: str = "") -> float | None:
     """取同期 0050 ETF 報酬率作為大盤基準（失敗回傳 None）"""
     try:
-        from backend.services.twse_service import fetch_kline
+        from backend.services.yfinance_service import fetch_price_history
         import pandas as pd
-        kline = await fetch_kline("0050", start_date)
-        if not kline or len(kline) < 5:
+        # fetch_price_history fetches from start_date onwards (adjusted for splits/dividends)
+        kline = await fetch_price_history("0050", start_date=start_date)
+        if not kline or len(kline) < 2:
             return None
         df = pd.DataFrame(kline)
         df["close"] = pd.to_numeric(df["close"], errors="coerce")
-        if end_date and "date" in df.columns:
-            df["date"] = pd.to_datetime(df["date"])
+        df["date"] = pd.to_datetime(df["date"])
+        df = df.sort_values("date").dropna(subset=["close"])
+        if end_date:
             df = df[df["date"] <= pd.Timestamp(end_date)]
         if len(df) < 2:
             return None
         return round(float((df["close"].iloc[-1] / df["close"].iloc[0] - 1) * 100), 1)
-    except Exception as e:
+    except Exception:
         return None
 
 
