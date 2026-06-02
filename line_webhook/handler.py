@@ -1027,7 +1027,7 @@ async def _cmd_buy(parts: list, uid: str) -> list:
             prev = float(q.get("price", cost) or cost) - chg
             chg_pct = chg / prev * 100 if prev else 0
             market_cond = "bull" if chg_pct >= 0 else "bear"
-        except Exception:
+        except Exception as e:
             pass
 
         async with AsyncSessionLocal() as db:
@@ -1163,7 +1163,7 @@ async def _cmd_analysis(uid: str) -> list:
         if start_date:
             try:
                 bench_return = await _fetch_benchmark_return(start_date)
-            except Exception:
+            except Exception as e:
                 pass
 
         # Sector concentration
@@ -2763,7 +2763,7 @@ async def _fetch_benchmark_return(start_date: str, end_date: str = "") -> float 
         if len(df) < 2:
             return None
         return round(float((df["close"].iloc[-1] / df["close"].iloc[0] - 1) * 100), 1)
-    except Exception:
+    except Exception as e:
         return None
 
 
