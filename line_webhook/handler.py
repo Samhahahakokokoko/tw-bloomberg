@@ -989,8 +989,14 @@ async def _cmd_portfolio(uid: str) -> list:
             pct    = h["pnl_pct"]
             days   = h.get("holding_days", 0)
             icon   = "🟢" if pnl >= 0 else "🔴"
+            if shares >= 1000 and shares % 1000 == 0:
+                qty_str = f"{shares // 1000}張"
+            elif shares >= 1000:
+                qty_str = f"{shares // 1000}張{shares % 1000}股"
+            else:
+                qty_str = f"{shares}股"
             lines.append(
-                f"{icon} {code} {name}  {shares}張\n"
+                f"{icon} {code} {name}  {qty_str}\n"
                 f"   成本{cost:.0f} 現價{price:.0f}"
                 f"  損益：{pnl:+,.0f} ({pct:+.1f}%)\n"
                 f"   持有：{days}天"
