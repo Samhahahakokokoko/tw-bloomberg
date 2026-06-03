@@ -967,6 +967,7 @@ async def _cmd_market_card(uid) -> list:
 
 
 async def _cmd_portfolio(uid: str) -> list:
+    print(f"[portfolio] uid={uid}", flush=True)
     try:
         async with AsyncSessionLocal() as db:
             holdings = await portfolio_service.get_portfolio(db, uid)
