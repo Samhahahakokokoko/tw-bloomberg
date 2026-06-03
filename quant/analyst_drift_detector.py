@@ -286,8 +286,8 @@ async def get_drift_from_db() -> DriftReport:
                 "stock_name":        sorted_calls[0].stock_name or sid,
                 "sentiments_recent": recent,
                 "sentiments_old":    old,
-                "target_old":        float(sorted_calls[-1].target_price or 0),
-                "target_new":        float(sorted_calls[0].target_price or 0),
+                "target_old":        float(getattr(sorted_calls[-1], "entry_price", 0) or 0),
+                "target_new":        float(getattr(sorted_calls[0],  "entry_price", 0) or 0),
                 "last_mention":      sorted_calls[0].date,
                 "avg_interval_days": 7,
             })
