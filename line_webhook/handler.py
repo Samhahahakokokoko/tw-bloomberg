@@ -973,18 +973,46 @@ async def _cmd_portfolio(uid: str) -> list:
             holdings = await portfolio_service.get_portfolio(db, uid)
         if not holdings:
             return [_text(
-                "📂 庫存為空\n\n新增持股：\n/buy 代碼 張數 成本價\n例：/buy 2330 10 850",
-                qr_items(("📊 分析大盤", "/market"), ("📈 看報價", "2330")),
+                "📂 庫存為空，請用 /buy 新增持股\n\n例：/buy 2330 10 850",
+                qr_items(("📊 大盤", "/market"), ("📈 報價", "2330")),
             )]
-        carousel = flex_portfolio_carousel(holdings)
-        return [_flex("💼 我的持股", carousel, qr_items(
+
+        lines = ["💼 我的持股", "─" * 20]
+        total_cost = total_mv = total_pnl = 0.0
+        for h in holdings:
+            code   = h["stock_code"]
+            name   = h.get("stock_name") or code
+            shares = h["shares"]
+            cost   = h["cost_price"]
+            price  = h["current_price"]
+            pnl    = h["pnl"]
+            pct    = h["pnl_pct"]
+            days   = h.get("holding_days", 0)
+            icon   = "🟢" if pnl >= 0 else "🔴"
+            lines.append(
+                f"{icon} {code} {name}  {shares}張\n"
+                f"   成本{cost:.0f} 現價{price:.0f}"
+                f"  損益：{pnl:+,.0f} ({pct:+.1f}%)\n"
+                f"   持有：{days}天"
+            )
+            total_cost += cost * shares
+            total_mv   += price * shares
+            total_pnl  += pnl
+
+        total_pct = total_pnl / total_cost * 100 if total_cost else 0
+        lines += [
+            "─" * 20,
+            f"總損益：{total_pnl:+,.0f} ({total_pct:+.1f}%)",
+        ]
+
+        return [_text("\n".join(lines), qr_items(
             ("📊 效益分析", "/analysis"),
             ("📋 交易紀錄", "/history"),
-            ("💰 稅務摘要", "/tax"),
+            ("💰 稅務", "/tax"),
         ))]
     except Exception as e:
-        logger.error("[cmd_portfolio] %s", e)
-        return [TextMessage(text="功能暫時無法使用，請稍後再試")]
+        logger.error("[cmd_portfolio] %s", e, exc_info=True)
+        return [_text(f"❌ 庫存讀取失敗：{type(e).__name__}")]
 
 
 def _parse_buy_args(parts: list) -> tuple:
