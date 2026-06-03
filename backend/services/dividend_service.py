@@ -1,6 +1,7 @@
 """除權息服務 — TWSE 除權息資料 + DB 同步 + LINE 提醒"""
 from __future__ import annotations
 
+import calendar
 import httpx
 from datetime import datetime, date, timedelta
 from loguru import logger
@@ -9,31 +10,114 @@ from loguru import logger
 # ── TWSE API 抓取 ──────────────────────────────────────────────────────────────
 
 async def fetch_upcoming_dividends(days_ahead: int = 60) -> list[dict]:
-    """抓近期除權息日期（TWSE OpenAPI TWT49U）"""
-    url = "https://openapi.twse.com.tw/v1/exchangeReport/TWT49U"
+    """抓近期除權息日期（OpenAPI → 傳統 TWSE 雙重 fallback）"""
+    # ── Try 1: OpenAPI endpoint ──────────────────────────────────────────────
     try:
         async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
-            resp = await client.get(url)
-            resp.raise_for_status()
-            data = resp.json()
-            results = []
-            for item in data:
-                ex_date = _tw_date(item.get("ExRightDate", ""))
-                if not ex_date:
-                    continue
-                results.append({
-                    "stock_code":           item.get("Code", ""),
-                    "stock_name":           item.get("Name", ""),
-                    "ex_dividend_date":     ex_date,
-                    "ex_dividend_ref_price": _f(item.get("ExRightReferencePrice")),
-                    "cash_dividend":        _f(item.get("CashDividend")),
-                    "stock_dividend":       _f(item.get("StockDividend")),
-                    "total_dividend":       _f(item.get("TotalDividend")),
-                })
-            return results
+            resp = await client.get("https://openapi.twse.com.tw/v1/exchangeReport/TWT49U")
+            ct = resp.headers.get("content-type", "")
+            if resp.status_code == 200 and "json" in ct:
+                data = resp.json()
+                if isinstance(data, list) and data:
+                    results = []
+                    for item in data:
+                        ex_date = _tw_date(item.get("ExRightDate", "") or item.get("ExDividendDate", ""))
+                        if not ex_date:
+                            continue
+                        results.append({
+                            "stock_code":            item.get("Code", ""),
+                            "stock_name":            item.get("Name", ""),
+                            "ex_dividend_date":      ex_date,
+                            "ex_dividend_ref_price": _f(item.get("ExRightReferencePrice")),
+                            "cash_dividend":         _f(item.get("CashDividend")),
+                            "stock_dividend":        _f(item.get("StockDividend")),
+                            "total_dividend":        _f(item.get("TotalDividend")),
+                        })
+                    if results:
+                        logger.info(f"[dividend] openapi: {len(results)} records")
+                        return results
     except Exception as e:
-        logger.error(f"Dividend fetch error: {e}")
-    return []
+        logger.warning(f"[dividend] openapi failed: {e}")
+
+    # ── Try 2: Traditional TWSE endpoint (按月查詢) ──────────────────────────
+    return await _fetch_twse_traditional(days_ahead)
+
+
+async def _fetch_twse_traditional(days_ahead: int = 60) -> list[dict]:
+    """TWSE 傳統端點 fallback：按月份分批查詢 TWT49U"""
+    today = date.today()
+    months: dict[tuple, tuple] = {}
+    for offset in range(0, days_ahead + 1, 15):
+        d = today + timedelta(days=offset)
+        key = (d.year, d.month)
+        if key not in months:
+            last = calendar.monthrange(d.year, d.month)[1]
+            months[key] = (f"{d.year}{d.month:02d}01", f"{d.year}{d.month:02d}{last:02d}")
+
+    results: list[dict] = []
+    seen: set[tuple] = set()
+
+    for (year, month), (start, end) in sorted(months.items()):
+        url = (
+            f"https://www.twse.com.tw/exchangeReport/TWT49U"
+            f"?response=json&strDate={start}&endDate={end}"
+        )
+        try:
+            async with httpx.AsyncClient(timeout=20, follow_redirects=True) as client:
+                resp = await client.get(url)
+                data = resp.json()
+            if data.get("stat") != "OK":
+                continue
+            fields = data.get("fields", [])
+            col = {f: i for i, f in enumerate(fields)}
+            for row in data.get("data", []):
+                item = _parse_traditional_row(row, col)
+                if item:
+                    key = (item["stock_code"], item["ex_dividend_date"])
+                    if key not in seen:
+                        seen.add(key)
+                        results.append(item)
+        except Exception as e:
+            logger.warning(f"[dividend] traditional {year}/{month} error: {e}")
+
+    logger.info(f"[dividend] traditional fallback: {len(results)} records")
+    return results
+
+
+def _parse_traditional_row(row: list, col: dict) -> dict | None:
+    """解析 TWSE 傳統格式（fields 對應動態列索引）"""
+    if not row:
+        return None
+
+    def gc(*names: str, pos: int | None = None) -> str:
+        for n in names:
+            if n in col and col[n] < len(row):
+                return str(row[col[n]]).strip()
+        if pos is not None and pos < len(row):
+            return str(row[pos]).strip()
+        return ""
+
+    code  = gc("股票代號", "代號", "證券代號", pos=0)
+    name  = gc("股票名稱", "名稱", "證券名稱", pos=1)
+    # prefer 除息日（配息），fallback to 除權日（配股）
+    ex_raw = gc("除息日", "除權日", "除權息日", pos=2)
+    ex_date = _tw_date(ex_raw)
+    if not ex_date or not code:
+        return None
+
+    cash  = _f(gc("現金股利", "每股現金股利", pos=5))
+    stock = _f(gc("股票股利", "每股股票股利", pos=6))
+    ref   = _f(gc("除權息參考價", "填息參考價", "除息參考價", pos=7))
+
+    return {
+        "stock_code":            code,
+        "stock_name":            name,
+        "ex_dividend_date":      ex_date,
+        "ex_dividend_ref_price": ref,
+        "cash_dividend":         cash,
+        "stock_dividend":        stock,
+        "total_dividend":        cash + stock,
+    }
 
 
 async def fetch_dividend_by_code(stock_code: str) -> list[dict]:
@@ -397,12 +481,23 @@ def format_exdiv_list(items: list[dict]) -> str:
 # ── 工具函式 ──────────────────────────────────────────────────────────────────
 
 def _tw_date(s: str) -> str:
-    """民國年 1140301 → 2025-03-01"""
+    """民國日期轉西元 → YYYY-MM-DD（支援 1140301 / 114/03/01 / 114-03-01）"""
     try:
         s = str(s).strip()
-        if len(s) == 7:
-            y = int(s[:3]) + 1911
-            return f"{y}-{s[3:5]}-{s[5:7]}"
+        if not s:
+            return s
+        # slash/dash separated: 114/03/01 or 114-03-01
+        for sep in ("/", "-"):
+            if sep in s:
+                parts = s.split(sep)
+                if len(parts) == 3 and len(parts[0]) in (3, 4):
+                    y = int(parts[0]) + 1911
+                    return f"{y}-{parts[1].zfill(2)}-{parts[2].zfill(2)}"
+        # compact 7-digit: 1140301
+        digits = s.replace("/", "").replace("-", "")
+        if len(digits) == 7 and digits.isdigit():
+            y = int(digits[:3]) + 1911
+            return f"{y}-{digits[3:5]}-{digits[5:7]}"
     except Exception:
         pass
     return s
