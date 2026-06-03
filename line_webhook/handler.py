@@ -581,7 +581,10 @@ async def _handle_text(text: str, uid: str) -> list:
     if cmd == "/alert_list":                    return await _cmd_alert_list(uid)
     if cmd in ("/inst", "/institutional") and len(parts) >= 2: return await _cmd_inst(parts[1])
     if cmd == "/pe"       and len(parts) >= 2:  return await _cmd_pe(parts[1])
-    if cmd == "/dividend" and len(parts) >= 2:  return await _cmd_dividend(parts[1])
+    if cmd == "/dividend":
+        code = parts[1].upper() if len(parts) >= 2 else ""
+        return await _cmd_dividend(code, uid) if code else await _cmd_exdiv(uid)
+    if cmd == "/exdiv":                           return await _cmd_exdiv(uid)
     if cmd == "/margin"   and len(parts) >= 2:  return await _cmd_margin(parts[1])
     if cmd == "/morning":                       return await _cmd_morning()
     if cmd in ("/week", "/weekly"):             return await _cmd_weekly(uid)
@@ -1527,15 +1530,37 @@ async def _cmd_pe(code: str) -> list:
     return [_text(f"❌ 查無 {code} 估值資料")]
 
 
-async def _cmd_dividend(code: str) -> list:
-    from backend.services.dividend_service import fetch_dividend_by_code
-    divs = await fetch_dividend_by_code(code)
-    if not divs:
-        return [_text(f"❌ 查無 {code} 除權息資料")]
-    lines = [f"💰 {code} 除權息"]
-    for d in divs[:4]:
-        lines.append(f"日期：{d.get('ex_dividend_date','')}\n現金：{d.get('cash_dividend',0)}")
-    return [_text("\n".join(lines), qr_items(("📈 報價", f"/quote {code}")))]
+async def _cmd_dividend(code: str, uid: str = "") -> list:
+    """/dividend 代碼 — 查詢個股近期除權息"""
+    try:
+        from backend.services.dividend_service import fetch_dividend_by_code, format_dividend_for_line
+        divs = await fetch_dividend_by_code(code)
+        quote = await fetch_realtime_quote(code)
+        name  = quote.get("name", code)
+        msg   = format_dividend_for_line(code, divs)
+        return [_text(msg, qr_items(
+            ("📈 報價",   f"/quote {code}"),
+            ("📋 我的配息清單", "/exdiv"),
+            ("💼 庫存",   "/p"),
+        ))]
+    except Exception as e:
+        logger.error("[cmd_dividend] %s", e)
+        return [_text(f"❌ 查詢失敗：{type(e).__name__}")]
+
+
+async def _cmd_exdiv(uid: str) -> list:
+    """/exdiv — 查看持股中近期除權息清單"""
+    try:
+        from backend.services.dividend_service import get_exdiv_for_user, format_exdiv_list
+        items = await get_exdiv_for_user(uid, days_ahead=30)
+        msg   = format_exdiv_list(items)
+        return [_text(msg, qr_items(
+            ("💼 庫存",    "/p"),
+            ("📅 大盤新聞", "/news"),
+        ))]
+    except Exception as e:
+        logger.error("[cmd_exdiv] %s", e)
+        return [_text(f"❌ 查詢失敗：{type(e).__name__}")]
 
 
 async def _cmd_margin(code: str) -> list:

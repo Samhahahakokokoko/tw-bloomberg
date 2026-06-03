@@ -500,6 +500,13 @@ def start_scheduler() -> AsyncIOScheduler:
         id="stop_loss_scanner", replace_existing=True,
     )
 
+    # 除權息提醒 — 週一到週五 08:15（早於早報，先提醒再出早報）
+    scheduler.add_job(
+        _scan_dividend_reminders,
+        CronTrigger(day_of_week="mon-fri", hour=8, minute=15, timezone="Asia/Taipei"),
+        id="dividend_reminder", replace_existing=True,
+    )
+
     _apply_line_quota_safe_mode(scheduler)
     scheduler.start()
     logger.info("Scheduler started (morning report 08:30 / weekly report Fri 14:30)")
@@ -601,11 +608,22 @@ async def _run_monthly_report():
 
 async def _refresh_dividends():
     try:
-        from ..services.dividend_service import fetch_upcoming_dividends
-        await fetch_upcoming_dividends()
-        logger.info("Dividend data refreshed")
+        from ..services.dividend_service import sync_to_db
+        n = await sync_to_db()
+        logger.info(f"Dividend data refreshed: {n} new records")
     except Exception as e:
         logger.error(f"Dividend refresh failed: {e}")
+
+
+async def _scan_dividend_reminders():
+    """08:15 每日掃描：持股 7天/1天 前除權息 → 推播 LINE"""
+    try:
+        from ..services.dividend_service import scan_dividend_reminders
+        n = await scan_dividend_reminders()
+        if n:
+            logger.info("[Dividend] %d 筆除權息提醒已推播", n)
+    except Exception as e:
+        logger.error(f"[Dividend] scan_dividend_reminders failed: {e}")
 
 
 async def _check_market_anomaly():

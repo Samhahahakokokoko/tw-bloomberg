@@ -1073,6 +1073,35 @@ class FactorWeightLog(Base):
     created_at   = Column(DateTime, default=datetime.utcnow, index=True)
 
 
+class DividendCalendar(Base):
+    """除權息日曆 — 從 TWSE API 每日同步"""
+    __tablename__ = "dividend_calendar"
+    __table_args__ = (UniqueConstraint("stock_code", "ex_date"),)
+
+    id             = Column(Integer, primary_key=True, index=True)
+    stock_code     = Column(String(10),  nullable=False, index=True)
+    stock_name     = Column(String(50),  default="")
+    ex_date        = Column(String(10),  nullable=False, index=True)  # YYYY-MM-DD
+    cash_dividend  = Column(Float, default=0.0)
+    stock_dividend = Column(Float, default=0.0)
+    ref_price      = Column(Float, default=0.0)
+    created_at     = Column(DateTime, default=datetime.utcnow)
+    updated_at     = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class DividendNotification(Base):
+    """已推送通知記錄 — 防止重複提醒"""
+    __tablename__ = "dividend_notifications"
+    __table_args__ = (UniqueConstraint("user_id", "stock_code", "ex_date", "days_before"),)
+
+    id          = Column(Integer, primary_key=True, index=True)
+    user_id     = Column(String(100), nullable=False, index=True)
+    stock_code  = Column(String(10),  nullable=False)
+    ex_date     = Column(String(10),  nullable=False)
+    days_before = Column(Integer,     nullable=False)   # 7 or 1
+    created_at  = Column(DateTime, default=datetime.utcnow)
+
+
 class StopAlert(Base):
     """停損停利設定 — 每用戶每股唯一，掃描時觸發 LINE 推播"""
     __tablename__ = "stop_alerts"
