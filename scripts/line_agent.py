@@ -95,25 +95,34 @@ async def ask_claude(task: str, logs: str) -> str:
 
 回覆用繁體中文，長度控制在 400 字以內，格式適合 LINE 訊息顯示。"""
 
-    try:
-        async with httpx.AsyncClient(timeout=60) as client:
-            resp = await client.post(
-                "https://api.anthropic.com/v1/messages",
-                headers={
-                    "x-api-key": ANTHROPIC_API_KEY,
-                    "anthropic-version": "2023-06-01",
-                    "content-type": "application/json",
-                },
-                json={
-                    "model": "claude-opus-4-7",
-                    "max_tokens": 2048,
-                    "messages": [{"role": "user", "content": prompt}],
-                },
-            )
+    for model in ("claude-opus-4-5", "claude-sonnet-4-5", "claude-3-5-sonnet-20241022"):
+        try:
+            async with httpx.AsyncClient(timeout=60) as client:
+                resp = await client.post(
+                    "https://api.anthropic.com/v1/messages",
+                    headers={
+                        "x-api-key": ANTHROPIC_API_KEY,
+                        "anthropic-version": "2023-06-01",
+                        "content-type": "application/json",
+                    },
+                    json={
+                        "model": model,
+                        "max_tokens": 2048,
+                        "messages": [{"role": "user", "content": prompt}],
+                    },
+                )
             data = resp.json()
-            return data["content"][0]["text"]
-    except Exception as e:
-        return f"（Claude API 呼叫失敗：{e}）"
+            print(f"[line_agent] Claude {model} HTTP {resp.status_code}")
+            if "content" in data:
+                return data["content"][0]["text"]
+            err = data.get("error", {})
+            print(f"[line_agent] API error: {err.get('type')} — {err.get('message','')[:200]}")
+            if err.get("type") == "not_found_error":
+                continue  # try next model
+            return f"（Claude API 錯誤：{err.get('type','unknown')}：{err.get('message','')[:200]}）"
+        except Exception as e:
+            print(f"[line_agent] exception with {model}: {e}")
+    return "（Claude API：所有模型均失敗）"
 
 
 def apply_fixes(ai_response: str) -> list[str]:
