@@ -13,6 +13,7 @@ import sys
 from datetime import datetime
 
 import httpx
+import re
 
 ANTHROPIC_API_KEY  = os.environ.get("ANTHROPIC_API_KEY", "")
 LINE_TOKEN         = os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "")
@@ -34,7 +35,7 @@ async def fetch_railway_logs(lines: int = 150) -> str:
         )
         if result.returncode == 0 and result.stdout.strip():
             return result.stdout[-8000:]
-    except Exception:
+    except Exception as e:
         pass
 
     # Fallback: Railway GraphQL API

@@ -81,7 +81,7 @@ async def get_stops(user_id: str) -> list[dict]:
         try:
             q = await fetch_realtime_quote(a.stock_code)
             price = q.get("price", 0)
-        except Exception:
+        except Exception as e:
             price = 0
 
         result.append({

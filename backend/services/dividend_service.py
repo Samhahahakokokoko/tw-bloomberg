@@ -442,7 +442,7 @@ def format_dividend_for_line(code: str, divs: list[dict]) -> str:
         try:
             days_left = (date.fromisoformat(ex_date) - today).days
             day_str = f"（還有{days_left}天）" if days_left > 0 else "（今日）" if days_left == 0 else f"（{abs(days_left)}天前）"
-        except Exception:
+        except Exception as e:
             day_str = ""
         cash_str  = f"現金：{cash:.2f}元" if cash else ""
         stock_str = f"　股票：{stock:.2f}股" if stock else ""
@@ -498,7 +498,7 @@ def _tw_date(s: str) -> str:
         if len(digits) == 7 and digits.isdigit():
             y = int(digits[:3]) + 1911
             return f"{y}-{digits[3:5]}-{digits[5:7]}"
-    except Exception:
+    except Exception as e:
         pass
     return s
 
@@ -506,7 +506,7 @@ def _tw_date(s: str) -> str:
 def _f(v) -> float:
     try:
         return float(str(v).replace(",", "") or 0)
-    except Exception:
+    except Exception as e:
         return 0.0
 
 
