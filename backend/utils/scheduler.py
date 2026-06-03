@@ -493,6 +493,13 @@ def start_scheduler() -> AsyncIOScheduler:
         id="auto_improve", replace_existing=True,
     )
 
+    # 停損停利掃描 — 週一到週五 09:00-13:30，每 30 分鐘
+    scheduler.add_job(
+        _scan_stop_loss,
+        CronTrigger(day_of_week="mon-fri", hour="9-13", minute="*/30", timezone="Asia/Taipei"),
+        id="stop_loss_scanner", replace_existing=True,
+    )
+
     _apply_line_quota_safe_mode(scheduler)
     scheduler.start()
     logger.info("Scheduler started (morning report 08:30 / weekly report Fri 14:30)")
@@ -538,6 +545,17 @@ def _apply_line_quota_safe_mode(scheduler: AsyncIOScheduler) -> None:
         f"[Scheduler] LINE quota safe mode removed {len(removed)} optional push jobs: "
         f"{','.join(sorted(removed))}"
     )
+
+
+async def _scan_stop_loss():
+    """盤中每 30 分鐘掃描停損停利，觸發時推播 LINE"""
+    try:
+        from ..services.stop_loss_service import scan_and_alert
+        n = await scan_and_alert()
+        if n:
+            logger.info("[StopLoss] %d 個停損/停利提醒已推播", n)
+    except Exception as e:
+        logger.error("[StopLoss] scan job failed: %s", e)
 
 
 async def _run_morning_report():

@@ -569,6 +569,10 @@ async def _handle_text(text: str, uid: str) -> list:
     if cmd == "/buy"      and len(parts) >= 4:  return await _cmd_buy(parts, uid)
     if cmd == "/sell"     and len(parts) >= 4:  return await _cmd_sell(parts, uid)
     if cmd == "/setcost"  and len(parts) == 3:  return await _cmd_setcost(int(parts[1]), float(parts[2]), uid)
+    if cmd == "/sl" and len(parts) >= 3:        return await _cmd_set_sl(parts[1].upper(), parts[2], uid)
+    if cmd == "/tp" and len(parts) >= 3:        return await _cmd_set_tp(parts[1].upper(), parts[2], uid)
+    if cmd in ("/stops", "/sltp"):              return await _cmd_stops(uid)
+    if cmd == "/rmstop" and len(parts) >= 2:    return await _cmd_rm_stop(parts[1].upper(), uid)
     if cmd == "/history":                       return await _cmd_history(uid, parts[1] if len(parts)>1 else None)
     if cmd == "/tax":                           return await _cmd_tax(uid)
     if cmd == "/profile":                       return await _cmd_profile(uid)
@@ -1104,6 +1108,13 @@ async def _cmd_buy(parts: list, uid: str) -> list:
                     target_price=target_price,
                     stop_loss=stop_loss,
                 )
+                # 同步寫入 StopAlert（掃描引擎使用）
+                from backend.services.stop_loss_service import set_stop
+                await set_stop(
+                    uid, code, h.stock_name or "",
+                    sl_price=stop_loss,
+                    tp_price=target_price,
+                )
 
         sl_tp = ""
         if stop_loss    is not None: sl_tp += f"\n🔻 停損：{stop_loss:,.0f}"
@@ -1126,6 +1137,116 @@ async def _cmd_buy(parts: list, uid: str) -> list:
         ))]
     except Exception as e:
         return [_text(f"❌ 買進失敗：{e}")]
+
+
+# ── 停損停利指令 ──────────────────────────────────────────────────────────────
+
+async def _cmd_set_sl(code: str, price_str: str, uid: str) -> list:
+    """/sl 代碼 價格 — 設定停損"""
+    try:
+        price = float(price_str.replace(",", ""))
+    except ValueError:
+        return [_text("❌ 價格格式錯誤\n例：/sl 2330 2100")]
+    try:
+        from backend.services.stop_loss_service import set_stop
+        quote = await fetch_realtime_quote(code)
+        name  = quote.get("name", code)
+        await set_stop(uid, code, name, sl_price=price)
+        cur   = quote.get("price", 0)
+        gap   = f"  距現價 {abs(cur - price):,.0f}（{'已觸發' if cur <= price else '未觸發'}）" if cur else ""
+        return [_text(
+            f"🔻 停損已設定\n"
+            f"{code} {name}\n"
+            f"停損價：{price:,.0f}{gap}\n\n"
+            f"觸發時立刻推播 LINE\n"
+            f"查看所有設定：/stops",
+            qr_items(
+                ("設停利", f"/tp {code} "),
+                ("查設定", "/stops"),
+                ("看庫存", "/p"),
+            )
+        )]
+    except Exception as e:
+        logger.error("[cmd_set_sl] %s", e)
+        return [_text(f"❌ 設定失敗：{e}")]
+
+
+async def _cmd_set_tp(code: str, price_str: str, uid: str) -> list:
+    """/tp 代碼 價格 — 設定停利"""
+    try:
+        price = float(price_str.replace(",", ""))
+    except ValueError:
+        return [_text("❌ 價格格式錯誤\n例：/tp 2330 2500")]
+    try:
+        from backend.services.stop_loss_service import set_stop
+        quote = await fetch_realtime_quote(code)
+        name  = quote.get("name", code)
+        await set_stop(uid, code, name, tp_price=price)
+        cur   = quote.get("price", 0)
+        gap   = f"  距現價 {abs(cur - price):,.0f}（{'已觸發' if cur >= price else '未觸發'}）" if cur else ""
+        return [_text(
+            f"🚀 停利已設定\n"
+            f"{code} {name}\n"
+            f"停利價：{price:,.0f}{gap}\n\n"
+            f"觸發時立刻推播 LINE\n"
+            f"查看所有設定：/stops",
+            qr_items(
+                ("設停損", f"/sl {code} "),
+                ("查設定", "/stops"),
+                ("看庫存", "/p"),
+            )
+        )]
+    except Exception as e:
+        logger.error("[cmd_set_tp] %s", e)
+        return [_text(f"❌ 設定失敗：{e}")]
+
+
+async def _cmd_stops(uid: str) -> list:
+    """/stops — 查看所有停損停利設定"""
+    try:
+        from backend.services.stop_loss_service import get_stops
+        stops = await get_stops(uid)
+        if not stops:
+            return [_text(
+                "📋 尚無停損停利設定\n\n"
+                "設定方式：\n"
+                "/sl 2330 2100　→ 設停損\n"
+                "/tp 2330 2500　→ 設停利\n"
+                "買進時：/buy 2330 10 2270 sl=2100 tp=2500",
+                qr_items(("💼 庫存", "/p"), ("📰 新聞", "/news"))
+            )]
+        lines = [f"📋 停損停利設定（{len(stops)} 檔）", "─" * 20]
+        for s in stops:
+            code  = s["stock_code"]
+            name  = s["stock_name"]
+            price = s["price"]
+            sl    = s["sl_price"]
+            tp    = s["tp_price"]
+            lines.append(f"【{code} {name}】  現價 {price:,.0f}")
+            if sl:
+                lines.append(f"  🔻 停損 {sl:,.0f}  {s['sl_status']}")
+            if tp:
+                lines.append(f"  🚀 停利 {tp:,.0f}  {s['tp_status']}")
+        lines.append("\n移除：/rmstop 代碼")
+        return [_text("\n".join(lines), qr_items(
+            ("💼 庫存", "/p"),
+            ("📰 新聞", "/news"),
+        ))]
+    except Exception as e:
+        logger.error("[cmd_stops] %s", e)
+        return [_text(f"❌ 查詢失敗：{e}")]
+
+
+async def _cmd_rm_stop(code: str, uid: str) -> list:
+    """/rmstop 代碼 — 移除停損停利設定"""
+    try:
+        from backend.services.stop_loss_service import remove_stop
+        ok = await remove_stop(uid, code)
+        if ok:
+            return [_text(f"✅ 已移除 {code} 停損停利設定", qr_items(("查設定", "/stops"), ("💼 庫存", "/p")))]
+        return [_text(f"❌ 找不到 {code} 的設定")]
+    except Exception as e:
+        return [_text(f"❌ 移除失敗：{e}")]
 
 
 async def _cmd_sell(parts: list, uid: str) -> list:

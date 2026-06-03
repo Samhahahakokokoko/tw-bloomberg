@@ -1073,6 +1073,24 @@ class FactorWeightLog(Base):
     created_at   = Column(DateTime, default=datetime.utcnow, index=True)
 
 
+class StopAlert(Base):
+    """停損停利設定 — 每用戶每股唯一，掃描時觸發 LINE 推播"""
+    __tablename__ = "stop_alerts"
+    __table_args__ = (UniqueConstraint("user_id", "stock_code"),)
+
+    id                = Column(Integer, primary_key=True, index=True)
+    user_id           = Column(String(100), nullable=False, index=True)
+    stock_code        = Column(String(10),  nullable=False, index=True)
+    stock_name        = Column(String(50),  default="")
+    sl_price          = Column(Float, nullable=True)   # 停損價
+    tp_price          = Column(Float, nullable=True)   # 停利價
+    sl_triggered_date = Column(String(10), nullable=True)  # 最後觸發 YYYY-MM-DD
+    tp_triggered_date = Column(String(10), nullable=True)
+    is_active         = Column(Boolean, default=True)
+    created_at        = Column(DateTime, default=datetime.utcnow)
+    updated_at        = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
 class UserPermission(Base):
     """用戶權限管理 — admin/premium/basic/blocked"""
     __tablename__ = "user_permissions"
