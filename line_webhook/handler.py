@@ -18,6 +18,10 @@ from loguru import logger
 
 from backend.models.database import settings, AsyncSessionLocal
 from backend.services.line_push import push_line_messages
+from backend.services.permission_service import (
+    check_permission, log_usage, set_user_role, remove_user,
+    get_all_users, get_usage_stats, ADMIN_UID,
+)
 from backend.services.twse_service import (
     fetch_realtime_quote, fetch_institutional, fetch_market_overview,
 )
@@ -523,6 +527,24 @@ async def _handle_text(text: str, uid: str) -> list:
 
     logger.info(f"[route] cmd={cmd!r} text={text[:60]!r}")
 
+    # ── 權限 & 用量檢查 ──────────────────────────────────────────────────────
+    _SKIP_PERM = {"", "/help", "help", "/start", "start"}
+    if cmd not in _SKIP_PERM:
+        _ok, _err = await check_permission(uid, cmd)
+        if not _ok:
+            return [_text(_err)]
+        await log_usage(uid, cmd)
+
+    # ── 管理員指令（最高優先）────────────────────────────────────────────────
+    if cmd == "/adduser" and len(parts) >= 3:
+        return await _cmd_adduser(parts[1], parts[2], uid)
+    if cmd == "/removeuser" and len(parts) >= 2:
+        return await _cmd_removeuser(parts[1], uid)
+    if cmd == "/userlist":
+        return await _cmd_userlist(uid)
+    if cmd == "/userstats":
+        return await _cmd_userstats(uid)
+
     # ── 圖表 / 比較 / 零股：必須在所有 fallback 之前攔截 ─────────────────────
     if cmd in ("/chart", "chart") and len(parts) >= 2:
         return await _cmd_chart(parts[1].upper(), uid)
@@ -651,7 +673,9 @@ async def _handle_text(text: str, uid: str) -> list:
         sub = parts[1].lower() if len(parts) > 1 else ""
         return await _cmd_public(sub, uid)
     if cmd == "/top":                   return await _cmd_top_portfolios()
-    if cmd == "/agent":                 return await _cmd_agent(uid)
+    if cmd == "/agent":
+        task = " ".join(parts[1:]).strip()
+        return await _cmd_gh_agent(task, uid) if task else await _cmd_agent(uid)
     if cmd == "/order":                 return await _cmd_order_guide(uid)
     if cmd == "/auto":
         sub = parts[1].lower() if len(parts) > 1 else "status"
@@ -4391,6 +4415,93 @@ async def _cmd_strategy_subscribe(strategy_id: str, uid: str) -> list:
         f"✅ 已訂閱策略 #{strategy_id}\n\n每天將收到該策略的選股推薦",
         qr_items(("策略市集", "/strategy list"), ("今日選股", "/r"))
     )]
+
+
+# ── 管理員指令實作 ──────────────────────────────────────────────────────────
+
+
+async def _cmd_adduser(target_uid: str, role: str, admin_uid: str) -> list:
+    """/adduser [LINE_ID] [role] — 新增/更新用戶角色（admin only）"""
+    result = await set_user_role(target_uid, role.lower(), admin_uid)
+    if result["ok"]:
+        role_map = {"admin": "管理員", "premium": "Premium", "basic": "Basic", "blocked": "封鎖"}
+        return [_text(
+            f"✅ 已設定用戶\n\n"
+            f"ID：{target_uid[:20]}...\n"
+            f"角色：{role_map.get(role.lower(), role)}"
+        )]
+    return [_text(f"❌ 失敗：{result['error']}")]
+
+
+async def _cmd_removeuser(target_uid: str, admin_uid: str) -> list:
+    """/removeuser [LINE_ID] — 移除用戶（admin only）"""
+    result = await remove_user(target_uid, admin_uid)
+    if result["ok"]:
+        return [_text(f"✅ 已移除用戶\nID：{target_uid[:20]}...")]
+    return [_text(f"❌ 失敗：{result['error']}")]
+
+
+async def _cmd_userlist(admin_uid: str) -> list:
+    """/userlist — 查看所有用戶（admin only）"""
+    users = await get_all_users()
+    if not users:
+        return [_text("📋 用戶清單為空")]
+    icon = {"admin": "👑", "premium": "⭐", "basic": "👤", "blocked": "🚫"}
+    lines = [f"📋 用戶清單（{len(users)} 位）", "─" * 20]
+    for u in users:
+        lines.append(
+            f"{icon.get(u['role'], '?')} {u['role'].upper()}\n"
+            f"  {u['user_id'][:24]}...\n"
+            f"  加入：{u['created_at']}"
+        )
+    return [_text("\n".join(lines))]
+
+
+async def _cmd_userstats(admin_uid: str) -> list:
+    """/userstats — 今日各用戶使用次數（admin only）"""
+    stats = await get_usage_stats()
+    if not stats:
+        return [_text("📊 今日尚無使用紀錄")]
+    lines = [f"📊 今日使用統計（前20）", "─" * 20]
+    for i, s in enumerate(stats, 1):
+        lines.append(f"{i:2}. {s['user_id'][:16]}...  {s['count']} 次")
+    return [_text("\n".join(lines))]
+
+
+async def _cmd_gh_agent(task: str, uid: str) -> list:
+    """/agent [任務] — 觸發 GitHub Actions LINE Agent workflow（admin only）"""
+    import httpx, os
+    token = os.environ.get("GITHUB_TOKEN", "")
+    repo  = "Samhahahakokokoko/tw-bloomberg"
+    if not token:
+        return [_text("❌ 未設定 GITHUB_TOKEN，無法觸發 workflow")]
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.post(
+                f"https://api.github.com/repos/{repo}/dispatches",
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "Accept": "application/vnd.github+json",
+                },
+                json={
+                    "event_type": "line-agent",
+                    "client_payload": {"task": task, "user_id": uid},
+                },
+            )
+        if resp.status_code == 204:
+            return [_text(
+                f"🚀 任務已啟動\n\n"
+                f"任務：{task}\n\n"
+                f"GitHub Actions 正在執行：\n"
+                f"1. 抓取 Railway 日誌\n"
+                f"2. Claude AI 分析\n"
+                f"3. 自動修復（如需要）\n\n"
+                f"約 3-5 分鐘後推送結果",
+                qr_items(("📊 庫存", "/p"), ("❓ 說明", "/help"))
+            )]
+        return [_text(f"❌ GitHub API 回應 {resp.status_code}：{resp.text[:200]}")]
+    except Exception as e:
+        return [_text(f"❌ 觸發失敗：{e}")]
 
 
 async def _cmd_agent(uid: str) -> list:

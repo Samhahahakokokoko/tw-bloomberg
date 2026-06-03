@@ -1,0 +1,98 @@
+name: LINE Agent
+
+on:
+  repository_dispatch:
+    types: [line-agent]
+
+permissions:
+  contents: write
+
+jobs:
+  agent:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    env:
+      TASK:    ${{ github.event.client_payload.task }}
+      USER_ID: ${{ github.event.client_payload.user_id }}
+
+    steps:
+      # ── 1. Checkout ──────────────────────────────────────────────────────────
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      # ── 2. Python ────────────────────────────────────────────────────────────
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install httpx anthropic --quiet
+
+      # ── 3. Railway CLI（選填）───────────────────────────────────────────────
+      - name: Install Railway CLI
+        run: |
+          curl -fsSL https://railway.app/install.sh | sh 2>/dev/null \
+            || echo "Railway CLI 不可用，改用 API"
+
+      # ── 4. 執行 LINE Agent 腳本 ──────────────────────────────────────────────
+      - name: Run line_agent
+        id: agent
+        env:
+          ANTHROPIC_API_KEY:         ${{ secrets.ANTHROPIC_API_KEY }}
+          LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
+          RAILWAY_TOKEN:             ${{ secrets.RAILWAY_TOKEN }}
+          RAILWAY_PROJECT_ID:        ${{ secrets.RAILWAY_PROJECT_ID }}
+          RAILWAY_SERVICE_ID:        ${{ secrets.RAILWAY_SERVICE_ID }}
+          GITHUB_TOKEN:              ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY:         ${{ github.repository }}
+        run: python scripts/line_agent.py "$TASK" "$USER_ID"
+
+      # ── 5. 偵測程式碼變更 ────────────────────────────────────────────────────
+      - name: Check for code changes
+        id: diff
+        run: |
+          if git diff --quiet && git diff --cached --quiet; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true"  >> "$GITHUB_OUTPUT"
+            git diff --stat
+          fi
+
+      # ── 6. 語法檢查 ──────────────────────────────────────────────────────────
+      - name: Syntax check
+        if: steps.diff.outputs.changed == 'true'
+        id: syntax
+        run: |
+          PASS=true
+          find backend quant line_webhook -name "*.py" -exec python -m py_compile {} + || PASS=false
+          echo "passed=${PASS}" >> "$GITHUB_OUTPUT"
+
+      # ── 7. Commit + push ─────────────────────────────────────────────────────
+      - name: Commit and push fixes
+        if: steps.diff.outputs.changed == 'true' && steps.syntax.outputs.passed == 'true'
+        run: |
+          git config user.name  "line-agent[bot]"
+          git config user.email "line-agent[bot]@users.noreply.github.com"
+          DATE=$(date -u '+%Y-%m-%d_%H%M')
+          git add backend/ quant/ line_webhook/ scripts/ .github/
+          git commit -m "fix: line-agent ${DATE} — ${TASK:0:60}"
+          git push origin main
+          echo "✅ 修復已 commit + push"
+
+      # ── 8. 摘要 ──────────────────────────────────────────────────────────────
+      - name: Summary
+        if: always()
+        run: |
+          echo "================================="
+          echo "LINE Agent 執行結果"
+          echo "================================="
+          echo "任務   : $TASK"
+          echo "用戶   : $USER_ID"
+          echo "有變更 : ${{ steps.diff.outputs.changed }}"
+          echo "語法OK : ${{ steps.syntax.outputs.passed }}"
+          echo "================================="

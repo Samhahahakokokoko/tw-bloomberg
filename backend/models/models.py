@@ -1071,3 +1071,15 @@ class FactorWeightLog(Base):
     factor_name  = Column(String(50), nullable=False, index=True)
     weight       = Column(Float, nullable=False)
     created_at   = Column(DateTime, default=datetime.utcnow, index=True)
+
+
+class UserPermission(Base):
+    """用戶權限管理 — admin/premium/basic/blocked"""
+    __tablename__ = "user_permissions"
+
+    id         = Column(Integer, primary_key=True, index=True)
+    user_id    = Column(String(100), unique=True, nullable=False, index=True)
+    role       = Column(String(20), nullable=False, default="basic")
+    note       = Column(String(200), default="")
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
