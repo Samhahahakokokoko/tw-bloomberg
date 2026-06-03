@@ -227,6 +227,125 @@ async def _analyze_sentiment(text: str, api_key: str) -> tuple[str, float]:
     return _DEFAULT_SENTIMENT, _DEFAULT_SCORE                 # [FIX-3] fallback
 
 
+_BULLISH_KW = frozenset([
+    "上修", "買超", "創高", "突破", "法說正面", "看好", "利多", "漲停", "轉機",
+    "獲利成長", "上調", "正面", "強勁", "優於預期", "大幅成長", "創新高", "連漲",
+])
+_BEARISH_KW = frozenset([
+    "下修", "賣超", "跌破", "警示", "獲利下滑", "利空", "調降目標", "虧損", "停損",
+    "下調", "負面", "疲軟", "低於預期", "大幅衰退", "連跌", "外資賣超", "減資",
+])
+
+
+def analyze_sentiment_local(text: str) -> tuple[str, str]:
+    """
+    本地關鍵字情緒分析，回傳 (sentiment_label, icon)。
+    sentiment_label: bullish / bearish / neutral
+    """
+    bull = sum(1 for kw in _BULLISH_KW if kw in text)
+    bear = sum(1 for kw in _BEARISH_KW if kw in text)
+    if bull > bear:
+        return "bullish", "🟢"
+    if bear > bull:
+        return "bearish", "🔴"
+    return "neutral", "⚪"
+
+
+def _relative_time(dt) -> str:
+    """將 datetime 轉成「X小時前」形式"""
+    if not dt:
+        return ""
+    try:
+        now   = datetime.utcnow()
+        delta = now - dt
+        mins  = int(delta.total_seconds() / 60)
+        if mins < 60:
+            return f"{max(mins, 1)}分鐘前"
+        hours = mins // 60
+        if hours < 24:
+            return f"{hours}小時前"
+        days = hours // 24
+        return f"{days}天前"
+    except Exception:
+        return ""
+
+
+async def get_stock_news(code: str, stock_name: str, limit: int = 5) -> list[dict]:
+    """搜尋包含股票代碼或名稱的新聞"""
+    try:
+        from backend.models.database import AsyncSessionLocal
+        from backend.models.models import NewsArticle
+        from sqlalchemy import select, or_
+
+        async with AsyncSessionLocal() as db:
+            r = await db.execute(
+                select(NewsArticle)
+                .where(
+                    or_(
+                        NewsArticle.related_stocks.contains(code),
+                        NewsArticle.title.contains(code),
+                        NewsArticle.title.contains(stock_name),
+                        NewsArticle.content.contains(stock_name),
+                    )
+                )
+                .order_by(
+                    NewsArticle.published_at.desc().nullslast(),
+                    NewsArticle.id.desc(),
+                )
+                .limit(limit)
+            )
+            rows = r.scalars().all()
+            return [
+                {
+                    "title":      row.title,
+                    "source":     row.source,
+                    "sentiment":  row.sentiment,
+                    "score":      row.sentiment_score,
+                    "published":  row.published_at,
+                    "stocks":     row.related_stocks or "",
+                }
+                for row in rows
+            ]
+    except Exception as e:
+        logger.warning(f"[Scraper] get_stock_news 失敗: {e}")
+        return []
+
+
+def format_stock_news_for_line(code: str, name: str, news_list: list[dict]) -> str:
+    """格式化個股新聞為 LINE 文字"""
+    header = f"📰 {code} {name} 相關新聞"
+    sep    = "─" * 18
+
+    if not news_list:
+        return (
+            f"{header}\n{sep}\n"
+            "目前無相關新聞\n\n"
+            "新聞每 30 分鐘自動更新"
+        )
+
+    lines = [header, sep]
+    for n in news_list:
+        title = n["title"]
+        # 本地情緒分析（覆寫 DB 儲存的 positive/negative）
+        sentiment_db = n.get("sentiment", "neutral")
+        if sentiment_db == "positive":
+            icon = "🟢"
+        elif sentiment_db == "negative":
+            icon = "🔴"
+        else:
+            _, icon = analyze_sentiment_local(title)
+
+        source  = n.get("source", "")
+        rel_time = _relative_time(n.get("published"))
+        src_line = " · ".join(filter(None, [source, rel_time]))
+
+        lines.append(f"{icon} {title[:44]}")
+        if src_line:
+            lines.append(f"   {src_line}")
+
+    return "\n".join(lines)
+
+
 def format_news_for_line(news_list: list[dict], limit: int = 6) -> str:
     """
     格式化新聞為 LINE 文字訊息。

@@ -591,8 +591,9 @@ async def _handle_text(text: str, uid: str) -> list:
         if arg.isdigit() and 4 <= len(arg) <= 6:
             return await _cmd_ai_stock(arg)
         return [await _cmd_ai_ask(" ".join(parts[1:]), uid)]
-    if cmd in ("/news", "/news_guide"):         return await _cmd_news_feed(uid)
-    if cmd == "/n":                             return await _cmd_news_feed(uid)
+    if cmd in ("/news", "/news_guide", "/n"):
+        code = parts[1].upper() if len(parts) > 1 and parts[1].isdigit() and len(parts[1]) in (4, 5, 6) else ""
+        return await _cmd_news_stock(code, uid) if code else await _cmd_news_feed(uid)
     # /p already handled above in the combined "/portfolio" check
     if cmd == "/r":                             return [_flex_screen_menu()]
     if cmd == "/strategy":
@@ -1994,6 +1995,24 @@ async def _cmd_news_feed(uid: str) -> list:
     except Exception as e:
         return [TextMessage(text="功能暫時無法使用，請稍後再試")]
     return [TextMessage(text=msg[:5000])]
+
+
+async def _cmd_news_stock(code: str, uid: str) -> list:
+    """/news [股票代碼] — 個股相關新聞"""
+    try:
+        from scraper.news_scraper import get_stock_news, format_stock_news_for_line
+        quote = await fetch_realtime_quote(code)
+        name  = quote.get("name", code)
+        news  = await get_stock_news(code, name, limit=5)
+        msg   = format_stock_news_for_line(code, name, news)
+    except Exception as e:
+        logger.warning("[news_stock] %s", e)
+        msg = f"❌ 個股新聞查詢失敗：{type(e).__name__}"
+    return [_text(msg, qr_items(
+        ("📰 市場新聞", "/news"),
+        (f"📊 報價", f"/quote {code}"),
+        ("🤖 AI分析", f"/ai {code} 最新分析"),
+    ))]
 
 
 def _ai_guide() -> TextMessage:
