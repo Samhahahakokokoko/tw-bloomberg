@@ -5,6 +5,8 @@ import time
 from typing import Optional
 from loguru import logger
 
+from ..utils.retry import retry
+
 
 TWSE_BASE = "https://openapi.twse.com.tw/v1"
 TPEX_BASE = "https://www.tpex.org.tw/openapi/v1"
@@ -62,37 +64,82 @@ async def fetch_realtime_quote(stock_code: str) -> dict:
     return await _fetch_tpex_daily_quote(stock_code)
 
 
+# ── 重試包裝的 raw HTTP helpers ────────────────────────────────────────────────
+
+@retry(max_attempts=3, delay=2.0)
+async def _raw_twse_daily_all() -> list:
+    """TWSE STOCK_DAY_ALL — raises on error, retried by decorator"""
+    async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
+        resp = await client.get(
+            f"{TWSE_BASE}/exchangeReport/STOCK_DAY_ALL",
+            params={"_": str(int(time.time() * 1000))},
+            headers={"Cache-Control": "no-cache", "Pragma": "no-cache"},
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+
+@retry(max_attempts=3, delay=2.0)
+async def _raw_tpex_daily_all() -> list:
+    """TPEX 收盤報價 — raises on error, retried by decorator"""
+    async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
+        resp = await client.get(
+            f"{TPEX_BASE}/tpex_mainboard_daily_close_quotes",
+            params={"_": str(int(time.time() * 1000))},
+            headers={"Cache-Control": "no-cache", "Pragma": "no-cache"},
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+
+@retry(max_attempts=3, delay=2.0)
+async def _raw_twse_mi(stock_code: str, market: str) -> dict:
+    """TWSE MIS 即時報價 — raises on error, retried by decorator"""
+    url = f"https://mis.twse.com.tw/stock/api/getStockInfo.jsp?ex_ch={market}_{stock_code}.tw"
+    async with httpx.AsyncClient(timeout=15) as client:
+        resp = await client.get(
+            url,
+            params={"json": "1", "delay": "0", "_": str(int(time.time() * 1000))},
+            headers={
+                "Cache-Control": "no-cache",
+                "Pragma": "no-cache",
+                "Referer": f"https://mis.twse.com.tw/stock/fibest.jsp?stock={stock_code}",
+            },
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+
+@retry(max_attempts=3, delay=2.0)
+async def _raw_kline_month(stock_code: str, date_str: str) -> dict:
+    """TWSE STOCK_DAY 單月 — raises on error, retried by decorator"""
+    url = (
+        f"https://www.twse.com.tw/exchangeReport/STOCK_DAY"
+        f"?response=json&date={date_str}&stockNo={stock_code}"
+    )
+    async with httpx.AsyncClient(timeout=15) as client:
+        resp = await client.get(url)
+        resp.raise_for_status()
+        return resp.json()
+
+
+# ── 公開 / 半公開查詢函式（final-fallback try/except 保留）──────────────────────
+
 async def _fetch_twse_daily_quote(stock_code: str) -> dict:
-    url = f"{TWSE_BASE}/exchangeReport/STOCK_DAY_ALL"
     try:
-        async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
-            resp = await client.get(
-                url,
-                params={"_": str(int(time.time() * 1000))},
-                headers={"Cache-Control": "no-cache", "Pragma": "no-cache"},
-            )
-            resp.raise_for_status()
-            for item in resp.json():
-                if item.get("Code") == stock_code:
-                    return _normalize_twse_quote(item)
+        for item in await _raw_twse_daily_all():
+            if item.get("Code") == stock_code:
+                return _normalize_twse_quote(item)
     except Exception as e:
         logger.error(f"TWSE quote error for {stock_code}: {e}")
     return {}
 
 
 async def _fetch_tpex_daily_quote(stock_code: str) -> dict:
-    url = f"{TPEX_BASE}/tpex_mainboard_daily_close_quotes"
     try:
-        async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
-            resp = await client.get(
-                url,
-                params={"_": str(int(time.time() * 1000))},
-                headers={"Cache-Control": "no-cache", "Pragma": "no-cache"},
-            )
-            resp.raise_for_status()
-            for item in resp.json():
-                if item.get("SecuritiesCompanyCode") == stock_code:
-                    return _normalize_tpex_quote(item)
+        for item in await _raw_tpex_daily_all():
+            if item.get("SecuritiesCompanyCode") == stock_code:
+                return _normalize_tpex_quote(item)
     except Exception as e:
         logger.error(f"TPEX quote error for {stock_code}: {e}")
     return {}
@@ -100,64 +147,52 @@ async def _fetch_tpex_daily_quote(stock_code: str) -> dict:
 
 async def _fetch_twse_mi_single(stock_code: str, market: str) -> dict:
     """Fetch live quote from TWSE MIS for one market: tse or otc."""
-    url = f"https://mis.twse.com.tw/stock/api/getStockInfo.jsp?ex_ch={market}_{stock_code}.tw"
     try:
-        async with httpx.AsyncClient(timeout=15) as client:
-            resp = await client.get(
-                url,
-                params={"json": "1", "delay": "0", "_": str(int(time.time() * 1000))},
-                headers={
-                    "Cache-Control": "no-cache",
-                    "Pragma": "no-cache",
-                    "Referer": f"https://mis.twse.com.tw/stock/fibest.jsp?stock={stock_code}",
-                },
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            msgs = data.get("msgArray", [])
-            if not msgs:
-                return {}
+        data = await _raw_twse_mi(stock_code, market)
+        msgs = data.get("msgArray", [])
+        if not msgs:
+            return {}
 
-            item = msgs[0]
-            name = item.get("n", "")
-            if not name:
-                return {}
+        item = msgs[0]
+        name = item.get("n", "")
+        if not name:
+            return {}
 
-            price = _safe_float(item.get("z")) or _safe_float(item.get("pz"))
-            if price <= 0:
-                best_bid = _first_level(item.get("b", ""))
-                best_ask = _first_level(item.get("a", ""))
-                if best_bid and best_ask:
-                    price = round((best_bid + best_ask) / 2, 2)
-                else:
-                    price = best_bid or best_ask
-            prev_close = _safe_float(item.get("y"))
-            if price <= 0:
-                return {}
+        price = _safe_float(item.get("z")) or _safe_float(item.get("pz"))
+        if price <= 0:
+            best_bid = _first_level(item.get("b", ""))
+            best_ask = _first_level(item.get("a", ""))
+            if best_bid and best_ask:
+                price = round((best_bid + best_ask) / 2, 2)
+            else:
+                price = best_bid or best_ask
+        prev_close = _safe_float(item.get("y"))
+        if price <= 0:
+            return {}
 
-            change = price - prev_close if prev_close else 0.0
-            trade_date = item.get("d") or data.get("queryTime", {}).get("sysDate", "")
-            trade_time = item.get("t") or item.get("%") or data.get("queryTime", {}).get("sysTime", "")
-            return {
-                "code": stock_code,
-                "name": name,
-                "price": price,
-                "open": _safe_float(item.get("o")),
-                "high": _safe_float(item.get("h")),
-                "low": _safe_float(item.get("l")),
-                "volume": int(item.get("v", 0) or 0),
-                "change": round(change, 4),
-                "change_pct": round(change / prev_close * 100, 2) if prev_close else 0.0,
-                "date": trade_date,
-                "time": trade_time,
-                "source": f"twse_mis_{market}",
-                "source_label": "TWSE MIS 即時",
-                "is_realtime": True,
-                "is_stale": not _is_today_yyyymmdd(trade_date),
-                "data_status": "realtime" if _is_today_yyyymmdd(trade_date) else "stale_realtime",
-                "as_of": f"{_twse_date_to_iso(trade_date)} {trade_time}".strip(),
-                "timestamp": f"{trade_date} {trade_time}".strip(),
-            }
+        change = price - prev_close if prev_close else 0.0
+        trade_date = item.get("d") or data.get("queryTime", {}).get("sysDate", "")
+        trade_time = item.get("t") or item.get("%") or data.get("queryTime", {}).get("sysTime", "")
+        return {
+            "code": stock_code,
+            "name": name,
+            "price": price,
+            "open": _safe_float(item.get("o")),
+            "high": _safe_float(item.get("h")),
+            "low": _safe_float(item.get("l")),
+            "volume": int(item.get("v", 0) or 0),
+            "change": round(change, 4),
+            "change_pct": round(change / prev_close * 100, 2) if prev_close else 0.0,
+            "date": trade_date,
+            "time": trade_time,
+            "source": f"twse_mis_{market}",
+            "source_label": "TWSE MIS 即時",
+            "is_realtime": True,
+            "is_stale": not _is_today_yyyymmdd(trade_date),
+            "data_status": "realtime" if _is_today_yyyymmdd(trade_date) else "stale_realtime",
+            "as_of": f"{_twse_date_to_iso(trade_date)} {trade_time}".strip(),
+            "timestamp": f"{trade_date} {trade_time}".strip(),
+        }
     except Exception as e:
         logger.error(f"MI fetch error ({market}_{stock_code}): {e}")
     return {}

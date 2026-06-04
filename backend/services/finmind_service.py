@@ -11,9 +11,19 @@ from datetime import datetime, date, timedelta
 from loguru import logger
 from typing import Any
 
+from ..utils.retry import retry
+
 FINMIND_BASE = "https://api.finmindtrade.com/api/v4/data"
 _SEMAPHORE = asyncio.Semaphore(3)   # 同時最多 3 個並發請求
 _REQUEST_DELAY = 2.2                # 每次請求後的冷卻時間（秒）
+
+
+@retry(max_attempts=3, delay=5.0, delay_429=30.0)
+async def _finmind_http(params: dict) -> dict:
+    async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
+        resp = await client.get(FINMIND_BASE, params=params)
+        resp.raise_for_status()
+        return resp.json()
 
 
 async def _get(dataset: str, stock_id: str, start_date: str, end_date: str = "") -> list[dict]:
@@ -30,31 +40,17 @@ async def _get(dataset: str, stock_id: str, start_date: str, end_date: str = "")
         params["token"] = settings.finmind_token
 
     async with _SEMAPHORE:
-        for attempt in range(3):
-            try:
-                async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
-                    resp = await client.get(FINMIND_BASE, params=params)
-                    resp.raise_for_status()
-                    payload = resp.json()
-                    if payload.get("status") != 200:
-                        msg = payload.get("msg", "unknown error")
-                        logger.warning(f"FinMind {dataset}/{stock_id}: {msg}")
-                        return []
-                    await asyncio.sleep(_REQUEST_DELAY)
-                    return payload.get("data", [])
-            except httpx.HTTPStatusError as e:
-                if e.response.status_code == 429:
-                    wait = 30 * (attempt + 1)
-                    logger.warning(f"FinMind rate limit, waiting {wait}s")
-                    await asyncio.sleep(wait)
-                else:
-                    logger.error(f"FinMind HTTP error {dataset}/{stock_id}: {e}")
-                    return []
-            except Exception as e:
-                logger.error(f"FinMind error {dataset}/{stock_id}: {e}")
-                if attempt < 2:
-                    await asyncio.sleep(5)
-    return []
+        try:
+            payload = await _finmind_http(params)
+            if payload.get("status") != 200:
+                msg = payload.get("msg", "unknown error")
+                logger.warning(f"FinMind {dataset}/{stock_id}: {msg}")
+                return []
+            await asyncio.sleep(_REQUEST_DELAY)
+            return payload.get("data", [])
+        except Exception as e:
+            logger.error(f"FinMind error {dataset}/{stock_id}: {e}")
+            return []
 
 
 # ── 調整後股價（還原除權息）────────────────────────────────────────────────────

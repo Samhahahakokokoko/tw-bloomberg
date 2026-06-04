@@ -21,6 +21,8 @@ import httpx
 from bs4 import BeautifulSoup
 from loguru import logger
 
+from backend.utils.retry import retry
+
 SOURCES = {
     "工商時報": [
         "https://ctee.com.tw/feed",
@@ -137,11 +139,18 @@ async def get_recent_news(limit: int = 10) -> list[dict]:
         return []
 
 
+@retry(max_attempts=3, delay=2.0)
+async def _raw_rss_fetch(url: str) -> str:
+    async with httpx.AsyncClient(timeout=20, follow_redirects=True) as client:
+        resp = await client.get(url)
+        resp.raise_for_status()
+        return resp.text
+
+
 async def _fetch_rss(url: str, source: str) -> list[dict]:
     try:
-        async with httpx.AsyncClient(timeout=20, follow_redirects=True) as client:
-            resp = await client.get(url)
-            feed = feedparser.parse(resp.text)
+        text = await _raw_rss_fetch(url)
+        feed = feedparser.parse(text)
         results: list[dict] = []
         for entry in feed.entries[:10]:
             content = _strip_html(entry.get("summary", ""))

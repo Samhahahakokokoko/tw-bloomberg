@@ -19,6 +19,8 @@ import logging
 from datetime import date, timedelta
 from typing import Optional
 
+from ..utils.retry import retry
+
 logger = logging.getLogger(__name__)
 
 
@@ -134,6 +136,7 @@ def _sync_fetch(code: str, start: str, end: Optional[str] = None) -> list[dict]:
 
 # ── 公開 async API ────────────────────────────────────────────────────────────
 
+@retry(max_attempts=3, delay=2.0)
 async def fetch_kline_yf(stock_code: str, months: int = 6) -> list[dict]:
     """
     歷史 K 線 — 取代 twse_service.fetch_kline。
@@ -152,6 +155,7 @@ async def fetch_kline_yf(stock_code: str, months: int = 6) -> list[dict]:
     return await loop.run_in_executor(None, _sync_fetch, stock_code, start)
 
 
+@retry(max_attempts=3, delay=2.0)
 async def fetch_price_history(
     stock_code: str,
     start_date: str = "",
