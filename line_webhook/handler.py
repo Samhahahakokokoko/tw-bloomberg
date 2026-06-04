@@ -1550,6 +1550,7 @@ async def _cmd_dividend(code: str, uid: str = "") -> list:
 
 async def _cmd_exdiv(uid: str) -> list:
     """/exdiv — 查看持股中近期除權息清單"""
+    print(f"[exdiv] uid={uid}", flush=True)
     try:
         from backend.services.dividend_service import get_exdiv_for_user, format_exdiv_list
         items = await get_exdiv_for_user(uid, days_ahead=30)
