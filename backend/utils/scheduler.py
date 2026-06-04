@@ -493,6 +493,13 @@ def start_scheduler() -> AsyncIOScheduler:
         id="auto_improve", replace_existing=True,
     )
 
+    # 資料庫備份到 Google Drive — 每日 02:00
+    scheduler.add_job(
+        _run_db_backup,
+        CronTrigger(hour=2, minute=0, timezone="Asia/Taipei"),
+        id="db_backup", replace_existing=True,
+    )
+
     # 停損停利掃描 — 週一到週五 09:00-13:30，每 30 分鐘
     scheduler.add_job(
         _scan_stop_loss,
@@ -552,6 +559,19 @@ def _apply_line_quota_safe_mode(scheduler: AsyncIOScheduler) -> None:
         f"[Scheduler] LINE quota safe mode removed {len(removed)} optional push jobs: "
         f"{','.join(sorted(removed))}"
     )
+
+
+async def _run_db_backup():
+    """每日 02:00 — PostgreSQL 備份到 Google Drive"""
+    try:
+        from ..services.backup_service import run_backup
+        result = await run_backup()
+        if result["ok"]:
+            logger.info("[Backup] 成功：%s (%.2f MB)", result["filename"], result.get("size_mb", 0))
+        else:
+            logger.error("[Backup] 失敗：%s", result["error"])
+    except Exception as e:
+        logger.error("[Backup] job 異常：%s", e)
 
 
 async def _scan_stop_loss():

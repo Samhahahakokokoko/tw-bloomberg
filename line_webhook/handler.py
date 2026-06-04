@@ -609,6 +609,11 @@ async def _handle_text(text: str, uid: str) -> list:
         code = parts[1].upper() if len(parts) >= 2 else ""
         return await _cmd_dividend(code, uid) if code else await _cmd_exdiv(uid)
     if cmd == "/exdiv":                           return await _cmd_exdiv(uid)
+    if cmd == "/backup":
+        asyncio.create_task(_backup_bg(uid))
+        return [_text("⏳ 資料庫備份開始執行中...\n\n完成後會自動推送結果（約 1-3 分鐘）",
+                      qr_items(("📋 備份清單", "/backups")))]
+    if cmd == "/backups":                         return await _cmd_backups()
     if cmd == "/margin"   and len(parts) >= 2:  return await _cmd_margin(parts[1])
     if cmd == "/morning":                       return await _cmd_morning()
     if cmd in ("/week", "/weekly"):             return await _cmd_weekly(uid)
@@ -1666,6 +1671,46 @@ async def _cmd_exdiv(uid: str) -> list:
     except Exception as e:
         logger.error("[cmd_exdiv] %s", e, exc_info=True)
         return [_text(f"❌ 配息清單查詢失敗：{type(e).__name__}")]
+
+
+async def _cmd_backups() -> list:
+    """/backups — 查看 Google Drive 備份清單"""
+    try:
+        from backend.services.backup_service import list_backups, format_backup_list
+        backups = await asyncio.wait_for(list_backups(), timeout=20.0)
+        return [_text(format_backup_list(backups),
+                      qr_items(("💾 立即備份", "/backup")))]
+    except Exception as e:
+        logger.error("[cmd_backups] %s", e)
+        return [_text(f"❌ 備份清單查詢失敗：{type(e).__name__}")]
+
+
+async def _backup_bg(uid: str) -> None:
+    """背景：執行備份並 push 結果給使用者"""
+    try:
+        from backend.services.backup_service import run_backup
+        result = await run_backup()
+        if result["ok"]:
+            msg = (
+                f"✅ 資料庫備份成功\n"
+                f"{'─' * 18}\n"
+                f"檔名：{result['filename']}\n"
+                f"大小：{result.get('size_mb', '?')} MB\n"
+                f"已上傳至 Google Drive"
+            )
+        else:
+            msg = (
+                f"❌ 資料庫備份失敗\n"
+                f"{'─' * 18}\n"
+                f"錯誤：{result['error'][:150]}\n"
+                f"請檢查 GOOGLE_SERVICE_ACCOUNT_JSON / DATABASE_URL 設定"
+            )
+        await push_line_messages(uid, [{"type": "text", "text": msg}],
+                                 timeout=30, context="handler.backup_bg")
+    except Exception as e:
+        logger.error("[backup_bg] %s", e)
+        await push_line_messages(uid, [{"type": "text", "text": f"❌ 備份異常：{type(e).__name__}"}],
+                                 timeout=15, context="handler.backup_bg.error")
 
 
 async def _cmd_margin(code: str) -> list:

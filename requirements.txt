@@ -41,6 +41,10 @@ pytz==2024.2
 python-dateutil==2.9.0
 pillow>=10.0.0
 
+# Google Drive backup
+google-api-python-client>=2.100.0
+google-auth>=2.23.0
+
 # Stock price - Yahoo Finance
 yfinance>=0.2.40
 
