@@ -596,6 +596,15 @@ async def _handle_text(text: str, uid: str) -> list:
     if cmd == "/alert_list":                    return await _cmd_alert_list(uid)
     if cmd in ("/inst", "/institutional") and len(parts) >= 2: return await _cmd_inst(parts[1])
     if cmd == "/pe"       and len(parts) >= 2:  return await _cmd_pe(parts[1])
+    if cmd == "/etf":
+        if len(parts) >= 2 and parts[1].lower() == "compare" and len(parts) >= 4:
+            return await _cmd_etf_compare(parts[2].upper(), parts[3].upper())
+        code = parts[1].upper() if len(parts) >= 2 else ""
+        return await _cmd_etf(code) if code else _cmd_etf_list()
+    if cmd == "/dca" and len(parts) >= 2:
+        etf_code = parts[1].upper()
+        amount   = int(parts[2]) if len(parts) >= 3 and parts[2].isdigit() else 3000
+        return await _cmd_dca(etf_code, amount)
     if cmd == "/dividend":
         code = parts[1].upper() if len(parts) >= 2 else ""
         return await _cmd_dividend(code, uid) if code else await _cmd_exdiv(uid)
@@ -1561,6 +1570,87 @@ async def _cmd_dividend(code: str, uid: str = "") -> list:
     except Exception as e:
         logger.error("[cmd_dividend] %s", e)
         return [_text(f"❌ 查詢失敗：{type(e).__name__}")]
+
+
+def _cmd_etf_list() -> list:
+    """/etf（無代碼）— 顯示支援清單"""
+    from backend.services.etf_service import ETF_META
+    lines = ["📋 支援的 ETF 清單\n"]
+    for code, m in sorted(ETF_META.items()):
+        lines.append(f"  {code}  {m['name']}（{m['category']}）")
+    lines.append("\n用法：/etf 0050 或 /etf compare 0050 0056")
+    return [_text("\n".join(lines), qr_items(
+        ("0050 元大台灣50",    "/etf 0050"),
+        ("0056 高股息",        "/etf 0056"),
+        ("00878 國泰永續",     "/etf 00878"),
+        ("比較 0050 vs 0056",  "/etf compare 0050 0056"),
+    ))]
+
+
+async def _cmd_etf(code: str) -> list:
+    """/etf {代碼} — ETF 分析"""
+    try:
+        from backend.services.etf_service import get_etf_analysis, format_etf_analysis, SUPPORTED_ETFS
+        if code not in SUPPORTED_ETFS:
+            return [_text(
+                f"❌ 不支援 {code}\n支援：{' / '.join(sorted(SUPPORTED_ETFS))}",
+                qr_items(("0050", "/etf 0050"), ("0056", "/etf 0056"), ("清單", "/etf")),
+            )]
+        data = await asyncio.wait_for(get_etf_analysis(code), timeout=15.0)
+        msg  = format_etf_analysis(data, dca_amount=3000)
+        return [_text(msg, qr_items(
+            ("定期定額試算",           f"/dca {code} 3000"),
+            ("比較 0050",             f"/etf compare {code} 0050" if code != "0050" else f"/etf compare {code} 0056"),
+            ("💰 配息查詢",            f"/dividend {code}"),
+            ("📈 報價",               f"/quote {code}"),
+        ))]
+    except Exception as e:
+        logger.error("[cmd_etf] %s", e, exc_info=True)
+        return [_text(f"❌ ETF 查詢失敗：{type(e).__name__}")]
+
+
+async def _cmd_etf_compare(code1: str, code2: str) -> list:
+    """/etf compare {代碼1} {代碼2} — 並排比較"""
+    try:
+        from backend.services.etf_service import compare_etfs, format_etf_compare, SUPPORTED_ETFS
+        for c in (code1, code2):
+            if c not in SUPPORTED_ETFS:
+                return [_text(f"❌ 不支援 {c}\n支援：{' / '.join(sorted(SUPPORTED_ETFS))}")]
+        a, b = await asyncio.wait_for(compare_etfs(code1, code2), timeout=20.0)
+        msg  = format_etf_compare(a, b)
+        return [_text(msg, qr_items(
+            (f"分析 {code1}", f"/etf {code1}"),
+            (f"分析 {code2}", f"/etf {code2}"),
+            (f"DCA {code1}",  f"/dca {code1} 3000"),
+            (f"DCA {code2}",  f"/dca {code2} 3000"),
+        ))]
+    except Exception as e:
+        logger.error("[cmd_etf_compare] %s", e, exc_info=True)
+        return [_text(f"❌ 比較失敗：{type(e).__name__}")]
+
+
+async def _cmd_dca(code: str, monthly_amount: int) -> list:
+    """/dca {代碼} {金額} — 定期定額試算"""
+    try:
+        from backend.services.etf_service import (
+            get_etf_analysis, calculate_dca, format_dca, SUPPORTED_ETFS, ETF_META,
+        )
+        if code not in SUPPORTED_ETFS:
+            return [_text(f"❌ 不支援 {code}\n支援：{' / '.join(sorted(SUPPORTED_ETFS))}")]
+        if not (1000 <= monthly_amount <= 1_000_000):
+            return [_text("❌ 金額需介於 1,000～1,000,000 元")]
+        data  = await asyncio.wait_for(get_etf_analysis(code), timeout=15.0)
+        dca   = calculate_dca(data["price"], monthly_amount)
+        msg   = format_dca(code, data["name"], dca)
+        alts  = [500, 1000, 3000, 5000, 10000]
+        nearby = [a for a in alts if a != monthly_amount][:3]
+        return [_text(msg, qr_items(
+            *[(f"每月${a//1000}K", f"/dca {code} {a}") for a in nearby],
+            (f"分析 {code}", f"/etf {code}"),
+        ))]
+    except Exception as e:
+        logger.error("[cmd_dca] %s", e, exc_info=True)
+        return [_text(f"❌ 試算失敗：{type(e).__name__}")]
 
 
 async def _cmd_exdiv(uid: str) -> list:
