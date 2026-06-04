@@ -166,7 +166,7 @@ async def _reply(event, *messages) -> None:
                     await AsyncMessagingApi(c).reply_message(
                         ReplyMessageRequest(reply_token=reply_token, messages=plain[:5])
                     )
-        except Exception:
+        except Exception as e:
             pass
 
 

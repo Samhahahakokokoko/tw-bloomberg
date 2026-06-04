@@ -83,7 +83,7 @@ async def _fetch_history_prices(code: str) -> list[dict]:
                     iso = f"{int(date_parts[0])+1911}-{date_parts[1]}-{date_parts[2]}"
                     close = float(row[6].replace(",", ""))
                     results.append({"date": iso, "close": close})
-                except Exception:
+                except Exception as e:
                     continue
         except Exception as e:
             logger.warning("[etf] TWSE kline %s/%s error: %s", y, m, e)
