@@ -152,7 +152,22 @@ async def _reply(event, *messages) -> None:
                 ReplyMessageRequest(reply_token=reply_token, messages=msg_objects[:5])
             )
     except Exception as e:
-        logger.error(f"Reply exception: {e}")
+        logger.error(f"Reply exception: {e}", exc_info=True)
+        # Fallback: retry with plain-text only (strips quick_reply that may fail validation)
+        try:
+            plain = []
+            for msg in messages:
+                if isinstance(msg, TextMessage):
+                    plain.append(TextMessage(text=msg.text))
+                elif isinstance(msg, dict) and msg.get("type") == "text":
+                    plain.append(TextMessage(text=msg["text"]))
+            if plain:
+                async with AsyncApiClient(configuration) as c:
+                    await AsyncMessagingApi(c).reply_message(
+                        ReplyMessageRequest(reply_token=reply_token, messages=plain[:5])
+                    )
+        except Exception:
+            pass
 
 
 async def _reply_by_token(reply_token: str, messages: list[dict]) -> bool:
@@ -1550,18 +1565,17 @@ async def _cmd_dividend(code: str, uid: str = "") -> list:
 
 async def _cmd_exdiv(uid: str) -> list:
     """/exdiv — 查看持股中近期除權息清單"""
-    print(f"[exdiv] uid={uid}", flush=True)
     try:
         from backend.services.dividend_service import get_exdiv_for_user, format_exdiv_list
-        items = await get_exdiv_for_user(uid, days_ahead=30)
+        items = await asyncio.wait_for(get_exdiv_for_user(uid, days_ahead=30), timeout=8.0)
         msg   = format_exdiv_list(items)
         return [_text(msg, qr_items(
             ("💼 庫存",    "/p"),
             ("📅 大盤新聞", "/news"),
         ))]
     except Exception as e:
-        logger.error("[cmd_exdiv] %s", e)
-        return [_text(f"❌ 查詢失敗：{type(e).__name__}")]
+        logger.error("[cmd_exdiv] %s", e, exc_info=True)
+        return [_text(f"❌ 配息清單查詢失敗：{type(e).__name__}")]
 
 
 async def _cmd_margin(code: str) -> list:
