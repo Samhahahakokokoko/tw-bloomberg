@@ -1,0 +1,29 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(*)",
+      "Read(*)",
+      "Write(*)",
+      "Edit(*)"
+    ]
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash .claude/hooks/post-push-check.sh",
+            "if": "Bash(git push*)",
+            "timeout": 240,
+            "asyncRewake": true,
+            "statusMessage": "等待 Railway 部署並檢查 /health...",
+            "rewakeMessage": "Railway 部署後健康檢查失敗，請分析並修復：",
+            "rewakeSummary": "Railway /health 檢查失敗"
+          }
+        ]
+      }
+    ]
+  }
+}
