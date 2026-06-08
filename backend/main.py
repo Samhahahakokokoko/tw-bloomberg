@@ -18,6 +18,60 @@ from .api.routes import router
 from .models.database import init_db
 from .utils.scheduler import start_scheduler
 
+
+async def _startup_catchup() -> None:
+    """補跑因 deploy 錯過的當日 Agent A/B。
+
+    Railway log 時間戳為 UTC，Agent B 排在台灣 18:30（UTC 10:30）。
+    若容器在 18:30 之後才啟動，APScheduler 不補跑已過時 cron，
+    導致當日 stock_scores 永遠是空的。
+    """
+    import asyncio as _aio
+    from datetime import datetime, timezone, timedelta
+
+    await _aio.sleep(10)          # 等 DB / scheduler 完全就緒
+    try:
+        tw = timezone(timedelta(hours=8))
+        now_tw = datetime.now(tw)
+        today  = now_tw.strftime("%Y-%m-%d")
+        # 僅在平日 18:30 之後才需要補跑
+        if now_tw.weekday() >= 5 or now_tw.hour < 18 or (now_tw.hour == 18 and now_tw.minute < 30):
+            return
+
+        from .models.database import AsyncSessionLocal
+        from .models.models import StockScore
+        from sqlalchemy import select, func
+
+        async with AsyncSessionLocal() as db:
+            r = await db.execute(
+                select(func.count()).where(StockScore.score_date == today)
+            )
+            count = r.scalar() or 0
+
+        if count > 0:
+            logger.info(f"[Catchup] stock_scores for {today} already has {count} rows, skip.")
+            return
+
+        logger.warning(f"[Catchup] {today} stock_scores=0, deployed after 18:30 — running Agent A+B now")
+
+        # Agent A first (data fetch), then Agent B (scoring)
+        try:
+            from .services.data_pipeline import run_daily_pipeline
+            await run_daily_pipeline(trigger_scoring=False)
+            logger.info("[Catchup] Agent A done")
+        except Exception as e:
+            logger.error(f"[Catchup] Agent A failed: {e}")
+
+        try:
+            from .services.score_updater import run_score_update
+            await run_score_update()
+            logger.info("[Catchup] Agent B done")
+        except Exception as e:
+            logger.error(f"[Catchup] Agent B failed: {e}")
+
+    except Exception as e:
+        logger.error(f"[Catchup] startup_catchup error: {e}")
+
 try:
     from backtest.api import router as backtest_router
 except Exception as _e:
@@ -59,6 +113,8 @@ async def lifespan(app: FastAPI):
             logger.info("TWSE cache warm-up scheduled")
         except Exception as _ce:
             logger.warning(f"Cache warm-up failed: {_ce}")
+        # Catch-up: if deployed after 18:30 Taiwan time and today's scores are missing, run Agent B now
+        asyncio.create_task(_startup_catchup())
         logger.info("Startup complete.")
     except asyncio.TimeoutError:
         _startup_error = "Database connection timed out after 30s"
