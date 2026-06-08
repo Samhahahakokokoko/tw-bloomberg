@@ -643,10 +643,10 @@ async def _fetch_rt_cache() -> dict:
             except Exception as e:
                 _log.warning("[RT] STOCK_DAY_ALL failed: %s", e)
 
-            # ── 法人買賣（依序嘗試，T86 為現行有效端點）──────────────────
+            # ── 法人買賣（依序嘗試；OpenAPI 全 302 時用 classic T86）─────
             _inst_urls = [
-                "https://openapi.twse.com.tw/v1/fund/T86",             # 現行三大法人
-                "https://openapi.twse.com.tw/v1/fund/TWT38U",          # 舊端點（備用）
+                "https://openapi.twse.com.tw/v1/fund/T86",
+                "https://openapi.twse.com.tw/v1/fund/TWT38U",
                 "https://openapi.twse.com.tw/v1/exchangeReport/TWT38U",
             ]
             def _pi(v) -> int:
@@ -678,9 +678,50 @@ async def _fetch_rt_cache() -> dict:
                             pass
                     _log.info("[RT] %s loaded %d stocks", _inst_url, loaded)
                     if loaded > 0:
-                        break  # 成功就不再嘗試備用
+                        break
                 except Exception as e:
                     _log.warning("[RT] %s failed: %s", _inst_url, e)
+
+            # OpenAPI 全失敗 → fallback 到 classic www.twse.com.tw/fund/T86
+            if not chips:
+                try:
+                    from datetime import datetime as _dt
+                    _date = _dt.now().strftime("%Y%m%d")
+                    r = await client.get(
+                        "https://www.twse.com.tw/fund/T86",
+                        params={"response": "json", "date": _date},
+                        follow_redirects=False, timeout=15,
+                    )
+                    if r.status_code == 200 and "json" in r.headers.get("content-type", ""):
+                        d = r.json()
+                        if d.get("stat") == "OK" and d.get("data"):
+                            fields = d.get("fields", [])
+                            def _fi(kw):
+                                for i, f in enumerate(fields):
+                                    if kw in f: return i
+                                return None
+                            f_i = _fi("外陸資淨") or _fi("外資淨") or 4
+                            t_i = _fi("投信淨") or 10
+                            dc  = [i for i, f in enumerate(fields) if "自營商淨" in f]
+                            d_i = dc[-1] if dc else 16
+                            loaded = 0
+                            for row in d["data"]:
+                                code = unify_ticker_format(row[0].strip())
+                                if not code:
+                                    continue
+                                try:
+                                    chips[code] = {
+                                        "foreign_net": _pi(row[f_i]) if f_i < len(row) else 0,
+                                        "trust_net":   _pi(row[t_i]) if t_i < len(row) else 0,
+                                        "dealer_net":  _pi(row[d_i]) if d_i < len(row) else 0,
+                                    }
+                                    loaded += 1
+                                except Exception:
+                                    pass
+                            _log.info("[RT] classic T86 loaded %d stocks", loaded)
+                except Exception as e:
+                    _log.warning("[RT] classic T86 fallback failed: %s", e)
+
             if not chips:
                 _log.warning("[RT] 三大法人資料無法取得，chip_5d 將為 0")
 
