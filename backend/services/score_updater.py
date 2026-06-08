@@ -221,21 +221,50 @@ async def calc_and_save_score(stock_code: str, today: str) -> bool:
         return False
 
 
+MAX_STOCKS_PER_RUN = 200   # cap to avoid 89-minute FinMind API marathon
+
+
+async def _get_priority_codes_for_scoring() -> list[str]:
+    """高優先：自選股 + 庫存 + 前次高分前 50，補齊到 MAX_STOCKS_PER_RUN。"""
+    from ..models.models import Watchlist, Portfolio
+    priority: set[str] = set()
+    async with AsyncSessionLocal() as db:
+        r = await db.execute(select(Portfolio.stock_code).distinct())
+        priority.update(row[0] for row in r.fetchall() if row[0])
+        r = await db.execute(select(Watchlist.stock_code).distinct())
+        priority.update(row[0] for row in r.fetchall() if row[0])
+        r = await db.execute(
+            select(StockScore.stock_code)
+            .order_by(StockScore.total_score.desc())
+            .limit(50)
+        )
+        priority.update(row[0] for row in r.fetchall() if row[0])
+    return list(priority)
+
+
 async def run_score_update():
-    """對所有 DB 中有財務資料的股票重算評分"""
+    """對 DB 中有財務資料的股票計算評分，優先自選/庫存/高分，每次上限 200 檔"""
     today = date.today().strftime("%Y-%m-%d")
     logger.info("[Score] Agent B 啟動...")
 
     async with AsyncSessionLocal() as db:
         r = await db.execute(select(MonthlyRevenue.stock_code).distinct())
-        codes = [row[0] for row in r.fetchall() if row[0]]
+        all_codes = [row[0] for row in r.fetchall() if row[0]]
 
-    if not codes:
+    if not all_codes:
         logger.error("[Score] MonthlyRevenue 表無資料，無法評分 — Agent A 可能尚未完成或 pipeline 失敗")
         await _push_score_alert("⚠️ Agent B 評分失敗：MonthlyRevenue 表為空，pipeline 可能未執行")
         return
 
-    logger.info(f"[Score] 處理 {len(codes)} 檔股票")
+    # Build prioritized list
+    priority = await _get_priority_codes_for_scoring()
+    priority_set = set(priority)
+    codes = priority[:]
+    for c in all_codes:
+        if c not in priority_set and len(codes) < MAX_STOCKS_PER_RUN:
+            codes.append(c)
+
+    logger.info(f"[Score] 處理 {len(codes)} 檔股票（共 {len(all_codes)} 有資料，取前 {MAX_STOCKS_PER_RUN}）")
     success = fail = 0
 
     for i, code in enumerate(codes):
