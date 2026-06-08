@@ -17,6 +17,26 @@ from .finmind_service import fetch_adj_price, fetch_institutional_detail
 from .twse_service import fetch_realtime_quote
 
 
+async def _push_score_alert(text: str) -> None:
+    import os, httpx
+    token = os.getenv("LINE_CHANNEL_ACCESS_TOKEN", "")
+    uid   = os.getenv("ADMIN_LINE_UID", "")
+    if not token or not uid:
+        return
+    try:
+        await asyncio.to_thread(
+            lambda: httpx.post(
+                "https://api.line.me/v2/bot/message/push",
+                headers={"Authorization": f"Bearer {token}",
+                         "Content-Type": "application/json"},
+                json={"to": uid, "messages": [{"type": "text", "text": text}]},
+                timeout=8,
+            )
+        )
+    except Exception as exc:
+        logger.error(f"[Score] LINE alert failed: {exc}")
+
+
 async def _load_financials(stock_code: str) -> list[dict]:
     async with AsyncSessionLocal() as db:
         r = await db.execute(
@@ -82,6 +102,7 @@ async def calc_and_save_score(stock_code: str, today: str) -> bool:
         )
 
         if not prices:
+            logger.warning(f"[Score] {stock_code}: 無法取得股價資料（FinMind API 可能逾時或股票下市）")
             return False
 
         # 技術面評分
@@ -172,6 +193,11 @@ async def run_score_update():
         r = await db.execute(select(MonthlyRevenue.stock_code).distinct())
         codes = [row[0] for row in r.fetchall() if row[0]]
 
+    if not codes:
+        logger.error("[Score] MonthlyRevenue 表無資料，無法評分 — Agent A 可能尚未完成或 pipeline 失敗")
+        await _push_score_alert("⚠️ Agent B 評分失敗：MonthlyRevenue 表為空，pipeline 可能未執行")
+        return
+
     logger.info(f"[Score] 處理 {len(codes)} 檔股票")
     success = fail = 0
 
@@ -184,3 +210,13 @@ async def run_score_update():
             await asyncio.sleep(2)
 
     logger.info(f"[Score] 完成：成功 {success} / 失敗 {fail}")
+
+    # 成功率過低時發 LINE 警報
+    if success == 0:
+        await _push_score_alert(
+            f"🚨 Agent B 評分全部失敗（{fail} 檔），股價資料 API 可能中斷，今日推播將使用舊資料"
+        )
+    elif fail > success:
+        await _push_score_alert(
+            f"⚠️ Agent B 評分失敗率偏高：成功 {success} / 失敗 {fail}，請確認 FinMind API 狀態"
+        )

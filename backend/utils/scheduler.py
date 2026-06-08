@@ -703,6 +703,7 @@ async def _run_agent_b():
         await run_score_update()
     except Exception as e:
         logger.error(f"Agent B (scoring) failed: {e}")
+        await _push_failure_alert("評分引擎 Agent B (score_updater)", e)
 
 
 async def _run_agent_c():
@@ -711,6 +712,7 @@ async def _run_agent_c():
         await run_ai_decision()
     except Exception as e:
         logger.error(f"Agent C (decision) failed: {e}")
+        await _push_failure_alert("決策代理 Agent C (ai_decision_agent)", e)
 
 
 async def _run_industry_sentiment():
