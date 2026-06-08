@@ -8,7 +8,7 @@ from loguru import logger
 from sqlalchemy import select
 
 from ..models.database import AsyncSessionLocal
-from ..models.models import StockScore, StockFinancials, MonthlyRevenue
+from ..models.models import StockScore, StockFinancials, MonthlyRevenue, PriceHistory
 from .indicator_engine import (
     score_fundamental, score_chip, score_technical,
     calc_total_score, calc_confidence,
@@ -35,6 +35,40 @@ async def _push_score_alert(text: str) -> None:
         )
     except Exception as exc:
         logger.error(f"[Score] LINE alert failed: {exc}")
+
+
+async def _save_chip_to_price_history(stock_code: str, chips: list[dict]) -> None:
+    """Store institutional data in price_history so screener can use DB-cached chip data."""
+    if not chips:
+        return
+    try:
+        async with AsyncSessionLocal() as db:
+            for row in chips[-10:]:  # only last 10 days to avoid excessive writes
+                d = row.get("date", "")
+                if not d:
+                    continue
+                existing = await db.execute(
+                    select(PriceHistory).where(
+                        PriceHistory.stock_code == stock_code,
+                        PriceHistory.date == d,
+                    )
+                )
+                rec = existing.scalar_one_or_none()
+                if rec:
+                    rec.foreign_net          = row.get("foreign_net", 0)
+                    rec.investment_trust_net = row.get("trust_net", 0)
+                    rec.dealer_net           = row.get("dealer_net", 0)
+                else:
+                    db.add(PriceHistory(
+                        stock_code           = stock_code,
+                        date                 = d,
+                        foreign_net          = row.get("foreign_net", 0),
+                        investment_trust_net = row.get("trust_net", 0),
+                        dealer_net           = row.get("dealer_net", 0),
+                    ))
+            await db.commit()
+    except Exception as e:
+        logger.warning(f"[Score] {stock_code}: price_history chip upsert failed: {e}")
 
 
 async def _load_financials(stock_code: str) -> list[dict]:
@@ -104,6 +138,9 @@ async def calc_and_save_score(stock_code: str, today: str) -> bool:
         if not prices:
             logger.warning(f"[Score] {stock_code}: 無法取得股價資料（FinMind API 可能逾時或股票下市）")
             return False
+
+        # Persist chip data to price_history so screener can use cached DB values
+        asyncio.create_task(_save_chip_to_price_history(stock_code, chips))
 
         # 技術面評分
         closes  = [p["close"]  for p in prices if p.get("close")]

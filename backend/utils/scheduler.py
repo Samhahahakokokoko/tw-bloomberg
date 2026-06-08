@@ -527,9 +527,8 @@ def _apply_line_quota_safe_mode(scheduler: AsyncIOScheduler) -> None:
         return
 
     # Preserve core reports and user alerts under the small LINE push quota.
-    # NOTE: daily_decision, morning_picks, group_report are CORE features — do NOT add them here.
+    # NOTE: daily_decision, morning_picks, group_report, weekly_picks are CORE features — do NOT add them here.
     optional_line_push_jobs = {
-        "weekly_picks",
         "portfolio_overlay",
         "friday_summary",
         "smart_money",

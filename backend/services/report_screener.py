@@ -723,7 +723,38 @@ async def _fetch_rt_cache() -> dict:
                     _log.warning("[RT] classic T86 fallback failed: %s", e)
 
             if not chips:
-                _log.warning("[RT] 三大法人資料無法取得，chip_5d 將為 0")
+                _log.warning("[RT] 三大法人資料無法取得，嘗試 DB price_history 快取")
+                try:
+                    from datetime import date as _date, timedelta as _td
+                    from ..models.database import AsyncSessionLocal as _ASL
+                    from ..models.models import PriceHistory as _PH
+                    from sqlalchemy import select as _sel, func as _func
+                    cutoff = (_date.today() - _td(days=10)).isoformat()
+                    async with _ASL() as _db:
+                        _rows = await _db.execute(
+                            _sel(
+                                _PH.stock_code,
+                                _func.sum(_PH.foreign_net).label("f"),
+                                _func.sum(_PH.investment_trust_net).label("t"),
+                                _func.sum(_PH.dealer_net).label("d"),
+                            )
+                            .where(_PH.date >= cutoff)
+                            .where(_PH.foreign_net.isnot(None))
+                            .group_by(_PH.stock_code)
+                        )
+                        for r in _rows.fetchall():
+                            if r.stock_code:
+                                chips[r.stock_code] = {
+                                    "foreign_net": int(r.f or 0),
+                                    "trust_net":   int(r.t or 0),
+                                    "dealer_net":  int(r.d or 0),
+                                }
+                    if chips:
+                        _log.info("[RT] DB price_history chip fallback: %d stocks", len(chips))
+                    else:
+                        _log.warning("[RT] DB price_history 無法人資料，chip_5d 將為 0")
+                except Exception as _dbe:
+                    _log.warning("[RT] DB chip fallback failed: %s", _dbe)
 
             # ── TPEX 上櫃股收盤（補充上市以外的股票）─────────────────────────
             try:

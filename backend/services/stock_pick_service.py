@@ -20,52 +20,42 @@ async def generate_weekly_picks(top_n: int = 5) -> dict:
     3. AI 分析推薦
     """
     inst_map: dict[str, dict] = {}
-    # openapi.twse.com.tw/v1/fund/TWT38U 已 302 失效，改用 classic T86
-    from datetime import datetime as _dt
-    _date = _dt.now().strftime("%Y%m%d")
-    url = f"https://www.twse.com.tw/fund/T86?response=json&date={_date}"
+    # Use DB price_history (populated by Agent B) for chip data — TWSE T86 API is broken (302)
     try:
-        async with httpx.AsyncClient(timeout=25, follow_redirects=False) as client:
-            resp = await client.get(url)
-            resp.raise_for_status()
-            raw = resp.json()
-            if raw.get("stat") != "OK" or not raw.get("data"):
-                raise ValueError("T86 no data")
-            fields = raw.get("fields", [])
-            def _fi(kw):
-                for i, f in enumerate(fields):
-                    if kw in f: return i
-                return None
-            f_i = _fi("外陸資淨") or _fi("外資淨") or 4
-            t_i = _fi("投信淨") or 10
-            dc  = [i for i, f in enumerate(fields) if "自營商淨" in f]
-            d_i = dc[-1] if dc else 16
-            def _pi(v): return int(str(v or "0").replace(",",""))
-            _parsed = []
-            for row in raw["data"]:
-                code = row[0].strip()
-                if not code.isdigit(): continue
-                _parsed.append({
-                    "Code": code,
-                    "Name": "",
-                    "Foreign_Investor_Diff": _pi(row[f_i]) if f_i < len(row) else 0,
-                    "Investment_Trust_Diff": _pi(row[t_i]) if t_i < len(row) else 0,
-                    "Dealer_Diff":           _pi(row[d_i]) if d_i < len(row) else 0,
-                    "Total_Diff":            _pi(row[f_i]) + _pi(row[t_i]) + _pi(row[d_i]) if f_i < len(row) else 0,
-                })
-            for item in _parsed:
-                code = item.get("Code", "")
-                if not code.isdigit():
+        from datetime import date as _date, timedelta as _td
+        from ..models.database import AsyncSessionLocal
+        from ..models.models import PriceHistory
+        from sqlalchemy import select, func
+        cutoff = (_date.today() - _td(days=10)).isoformat()
+        async with AsyncSessionLocal() as db:
+            rows = await db.execute(
+                select(
+                    PriceHistory.stock_code,
+                    func.sum(PriceHistory.foreign_net).label("f"),
+                    func.sum(PriceHistory.investment_trust_net).label("t"),
+                    func.sum(PriceHistory.dealer_net).label("d"),
+                )
+                .where(PriceHistory.date >= cutoff)
+                .where(PriceHistory.foreign_net.isnot(None))
+                .group_by(PriceHistory.stock_code)
+            )
+            for r in rows.fetchall():
+                code = r.stock_code
+                if not code or not code.isdigit():
                     continue
+                f = int(r.f or 0)
+                t = int(r.t or 0)
+                d = int(r.d or 0)
                 inst_map[code] = {
-                    "name":        item.get("Name", ""),
-                    "foreign_net": _parse_int(item.get("Foreign_Investor_Diff", 0)),
-                    "trust_net":   _parse_int(item.get("Investment_Trust_Diff", 0)),
-                    "dealer_net":  _parse_int(item.get("Dealer_Diff", 0)),
-                    "total_net":   _parse_int(item.get("Total_Diff", 0)),
+                    "name": "",
+                    "foreign_net": f,
+                    "trust_net": t,
+                    "dealer_net": d,
+                    "total_net": f + t + d,
                 }
+        logger.info(f"Weekly picks DB chip data: {len(inst_map)} stocks")
     except Exception as e:
-        logger.error(f"Weekly picks inst error: {e}")
+        logger.error(f"Weekly picks DB chip error: {e}")
 
     # 篩選條件: 外資 > 500 張 且 法人合計 > 0
     candidates = [
