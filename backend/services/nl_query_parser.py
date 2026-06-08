@@ -138,9 +138,41 @@ async def execute_nl_query(query: str) -> dict:
     """
     完整執行流程：解析 → 篩選 → AI 總結
     回傳 {results, filter_description, ai_summary}
+    DB 評分過期時 fallback 到即時市場資料。
     """
     screener_filter = await parse_nl_to_filter(query)
     results = await run_screener(screener_filter)
+
+    if not results:
+        # DB 評分過期或不存在時，用即時市場資料補救
+        try:
+            from .report_screener import async_run_screener
+            # 選擇最接近的即時篩選類型
+            if screener_filter.foreign_consec_buy_min or screener_filter.dual_signal:
+                live_type = "chip"
+            elif screener_filter.ma_aligned or screener_filter.kd_golden_cross:
+                live_type = "momentum"
+            else:
+                live_type = "all"
+            live_rows = await async_run_screener(live_type, limit=screener_filter.limit or 20)
+            results = [
+                {
+                    "stock_code":        r.stock_id,
+                    "stock_name":        r.name,
+                    "total_score":       r.model_score,
+                    "fundamental_score": 0,
+                    "chip_score":        r.foreign_buy_days * 5,
+                    "technical_score":   max(0, r.ma20_slope * 100),
+                    "confidence":        r.model_score * 0.9,
+                    "ai_reason":         "",
+                    "score_date":        "",
+                }
+                for r in live_rows
+            ]
+            if results:
+                logger.info("[NLParser] DB 無評分，改用即時 %s 篩選 %d 檔", live_type, len(results))
+        except Exception as e:
+            logger.warning("[NLParser] live fallback failed: %s", e)
 
     # 產生 AI 總結
     ai_summary = await generate_nl_recommendation(query, results)
