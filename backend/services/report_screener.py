@@ -716,7 +716,7 @@ async def _fetch_rt_cache() -> dict:
                                         "dealer_net":  _pi(row[d_i]) if d_i < len(row) else 0,
                                     }
                                     loaded += 1
-                                except Exception:
+                                except Exception as e:
                                     pass
                             _log.info("[RT] classic T86 loaded %d stocks", loaded)
                 except Exception as e:

@@ -81,7 +81,7 @@ def _error_patterns(logs: str) -> dict[str, list[str]]:
 # ── Rule 1: LINE 400 — add plain-text fallback to _reply ─────────────────────
 
 _REPLY_PLAIN_FALLBACK = '''\
-            except Exception:
+            except Exception as e:
                 # fallback to plain text on LINE API error
                 import httpx as _hx
                 _hx.post(

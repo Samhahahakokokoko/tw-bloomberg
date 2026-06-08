@@ -52,7 +52,7 @@ def _probe(label: str, path: str, method: str) -> dict:
         if ok and "application/json" in r.headers.get("content-type", ""):
             try:
                 body = r.json()
-            except Exception:
+            except Exception as e:
                 pass
         return {"label": label, "status": r.status_code, "ok": ok, "body": body,
                 "detail": "" if ok else r.text[:200]}

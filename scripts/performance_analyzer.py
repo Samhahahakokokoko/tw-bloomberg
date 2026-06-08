@@ -57,7 +57,7 @@ async def _fetch_logs(lines: int = 800) -> str:
     try:
         from backend.services.fix_engine import fetch_railway_logs
         return await fetch_railway_logs(lines=lines) or ""
-    except Exception:
+    except Exception as e:
         return ""
 
 

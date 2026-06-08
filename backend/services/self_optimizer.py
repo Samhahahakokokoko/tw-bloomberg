@@ -299,7 +299,7 @@ async def _auto_recover_modules() -> dict[str, Any]:
                         last_dt = datetime.fromisoformat(str(last).replace("Z", ""))
                         if (now - last_dt).total_seconds() > 1800:
                             stale.append(f"{m.module_name}（連錯{m.error_count}次，{int((now-last_dt).total_seconds()//60)}分未執行）")
-                    except Exception:
+                    except Exception as e:
                         pass
 
         if stale:
