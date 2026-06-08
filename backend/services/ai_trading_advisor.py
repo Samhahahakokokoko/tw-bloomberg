@@ -45,21 +45,24 @@ async def generate_daily_trading_advice() -> str:
         data_is_live = True
         from .report_screener import async_run_screener
         live_rows = await async_run_screener("momentum", limit=20)
-        buy_candidates = [
-            {
-                "stock_code":       r.stock_id,
-                "stock_name":       r.name,
-                "total_score":      r.model_score,
+
+        def _live_to_dict(r) -> dict:
+            return {
+                "stock_code":         r.stock_id,
+                "stock_name":         r.name,
+                "total_score":        r.model_score,
                 "foreign_consec_buy": r.foreign_buy_days,
-                "three_margins_up": False,
-                "ma_aligned":       r.ma20_slope > 0,
-                "kd_golden_cross":  False,
+                "three_margins_up":   False,
+                "ma_aligned":         r.ma20_slope > 0,
+                "kd_golden_cross":    r.kd_weekly < 30,
             }
-            for r in live_rows[:3]
-        ]
+
+        buy_candidates = [_live_to_dict(r) for r in live_rows[:3]]
+        # Ranks 4-6 → observe list
+        top_db = [_live_to_dict(r) for r in live_rows[3:6]]
         avoid_candidates_pool = []
 
-    avoid_candidates = avoid_candidates_pool if top_db else []
+    avoid_candidates = avoid_candidates_pool if avoid_candidates_pool else []
 
     # 判斷資料實際日期，若非今日則顯示警告
     data_date = top_db[0].get("score_date", today_str) if top_db else today_str
@@ -94,12 +97,16 @@ async def generate_daily_trading_advice() -> str:
 
     lines.append("")
 
-    # 觀察清單（中等評分）
-    observe = [s for s in top_db if 50 <= s.get("total_score", 0) < 70][:3] if top_db else []
+    # 觀察清單（中等評分；live fallback 直接取 ranks 4-6）
+    if data_is_live:
+        observe = top_db[:3]  # top_db is live_rows[3:6] in live path
+    else:
+        observe = [s for s in top_db if 50 <= s.get("total_score", 0) < 70][:3] if top_db else []
     if observe:
         lines.append("🟡 觀察清單：")
         for s in observe:
-            lines.append(f"  {s['stock_code']} {s.get('stock_name','')}（評分{s['total_score']}，尚未突破）")
+            score_label = f"評分{s.get('total_score', 0):.0f}" if s.get('total_score') else "即時動能"
+            lines.append(f"  {s['stock_code']} {s.get('stock_name','')}（{score_label}，持續觀察）")
     else:
         lines.append("🟡 觀察清單：評分中等個股尚無明確催化劑")
 
