@@ -776,7 +776,7 @@ async def _push_morning_picks():
         from sqlalchemy import select
         from ..models.models import Subscriber
         from ..models.database import settings as cfg
-        from backend.services.report_screener import momentum_screener, all_screener, paginate
+        from backend.services.report_screener import async_run_screener, paginate
         from backend.services.generate_report_image import generate_report_image, push_report_image
 
         async with AsyncSessionLocal() as db:
@@ -787,8 +787,8 @@ async def _push_morning_picks():
         user_ids = [s.line_user_id for s in subs]
         base_url = os.getenv("BASE_URL", "")
 
-        for fn, label in [(momentum_screener, "動能選股"), (all_screener, "全維度排名")]:
-            rows = fn()
+        for screen_type, label in [("momentum", "動能選股"), ("all", "全維度排名")]:
+            rows = await async_run_screener(screen_type, limit=50)
             page_rows, total = paginate(rows, 1)
             path = generate_report_image(
                 stocks=page_rows, group=f"盤前重點｜{label}",
@@ -856,18 +856,16 @@ async def _push_group_report():
         user_ids = [s.line_user_id for s in subs]
         base_url  = os.getenv("BASE_URL", "")
 
-        from backend.services.report_screener import (
-            ai_screener, momentum_screener, chip_screener, paginate
-        )
+        from backend.services.report_screener import async_run_screener, paginate
         from backend.services.generate_report_image import generate_report_image, push_report_image
 
         tasks = [
-            (ai_screener,       "AI族群"),
-            (momentum_screener, "動能選股"),
-            (chip_screener,     "籌碼選股"),
+            ("ai",       "AI族群"),
+            ("momentum", "動能選股"),
+            ("chip",     "籌碼選股"),
         ]
-        for fn, label in tasks:
-            rows = fn()
+        for screen_type, label in tasks:
+            rows = await async_run_screener(screen_type, limit=50)
             page_rows, total = paginate(rows, 1)
             path = generate_report_image(
                 stocks=page_rows, group=f"收盤後｜{label}",
