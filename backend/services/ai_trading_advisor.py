@@ -32,15 +32,16 @@ async def generate_daily_trading_advice() -> str:
     regime      = regime_info.get("current", "unknown")
     regime_label= {"bull": "多頭 📈", "bear": "空頭 📉", "sideways": "盤整 ↔️"}.get(regime, "未知")
 
-    # 2. 取今日高分股 — 優先從 stock_scores DB（已有 pipeline 資料時）
-    #    DB 空或資料過期時 fallback 到即時 TWSE 動能池（async_run_screener）
-    top_db = await get_top_scores(limit=20)
+    # 2. 取今日高分股 — 優先從 stock_scores DB（僅用今日資料）
+    #    今日無資料時 fallback 到即時 TWSE 動能池（async_run_screener）
+    today_str = date.today().strftime("%Y-%m-%d")
+    top_db = await get_top_scores(limit=20, score_date=today_str)
     data_is_live = False
     if top_db:
         buy_candidates = top_db[:3]
         avoid_candidates_pool = [r for r in top_db if r.get("total_score", 50) < 30][:3]
     else:
-        # DB 空或資料過期，改用即時市場資料
+        # 今日無 DB 資料，改用即時市場資料
         data_is_live = True
         from .report_screener import async_run_screener
         live_rows = await async_run_screener("momentum", limit=20)
@@ -61,7 +62,6 @@ async def generate_daily_trading_advice() -> str:
     avoid_candidates = avoid_candidates_pool if top_db else []
 
     # 判斷資料實際日期，若非今日則顯示警告
-    today_str = date.today().strftime("%Y-%m-%d")
     data_date = top_db[0].get("score_date", today_str) if top_db else today_str
     is_stale = data_date != today_str and not data_is_live
     date_label = date.fromisoformat(str(data_date)).strftime("%m/%d") if not data_is_live else date.today().strftime("%m/%d")
