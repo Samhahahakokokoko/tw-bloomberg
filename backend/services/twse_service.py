@@ -268,50 +268,25 @@ async def _fetch_kline_twse(stock_code: str) -> list[dict]:
 
 
 async def fetch_institutional(stock_code: str) -> dict:
-    """三大法人買賣超 — classic TWSE T86 端點（OpenAPI 已 302 失效）"""
-    for delta in range(4):
-        date_str = (datetime.now() - timedelta(days=delta)).strftime("%Y%m%d")
-        try:
-            async with httpx.AsyncClient(timeout=15, follow_redirects=False) as client:
-                resp = await client.get(
-                    "https://www.twse.com.tw/fund/T86",
-                    params={"response": "json", "date": date_str},
-                )
-            if resp.status_code != 200:
-                continue
-            if "json" not in resp.headers.get("content-type", ""):
-                continue
-            d = resp.json()
-            if d.get("stat") != "OK" or not d.get("data"):
-                continue
-
-            fields = d.get("fields", [])
-
-            def _fi(keyword: str) -> Optional[int]:
-                for i, f in enumerate(fields):
-                    if keyword in f:
-                        return i
-                return None
-
-            foreign_i = _fi("外陸資淨") or _fi("外資淨") or 4
-            trust_i   = _fi("投信淨") or 7
-            dealer_candidates = [i for i, f in enumerate(fields) if "自營商淨" in f]
-            dealer_i  = dealer_candidates[-1] if dealer_candidates else 16
-            total_i   = _fi("三大法人淨") or 19
-
-            for row in d["data"]:
-                if row[0].strip() != stock_code:
-                    continue
-                return {
-                    "code": stock_code,
-                    "foreign_net": _parse_int(row[foreign_i]) if foreign_i < len(row) else 0,
-                    "investment_trust_net": _parse_int(row[trust_i]) if trust_i < len(row) else 0,
-                    "dealer_net": _parse_int(row[dealer_i]) if dealer_i < len(row) else 0,
-                    "total_net": _parse_int(row[total_i]) if total_i < len(row) else 0,
-                    "date": d.get("date", ""),
-                }
-        except Exception as e:
-            logger.error(f"Institutional T86 error {stock_code} {date_str}: {e}")
+    """三大法人買賣超 — T86 per-stock（OpenAPI 已 302，改用 chip_service）"""
+    try:
+        from .chip_service import fetch_chip_history
+        chips = await fetch_chip_history(stock_code, days=5)
+        if chips:
+            latest = chips[-1]
+            f = latest.get("foreign_net", 0)
+            t = latest.get("trust_net", 0)
+            d = latest.get("dealer_net", 0)
+            return {
+                "code": stock_code,
+                "foreign_net": f,
+                "investment_trust_net": t,
+                "dealer_net": d,
+                "total_net": f + t + d,
+                "date": latest.get("date", ""),
+            }
+    except Exception as e:
+        logger.error(f"fetch_institutional chip_service error {stock_code}: {e}")
     return {}
 
 
