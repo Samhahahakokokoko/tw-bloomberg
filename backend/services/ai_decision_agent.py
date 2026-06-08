@@ -101,9 +101,9 @@ async def run_ai_decision():
     today = date.today().strftime("%Y-%m-%d")
     logger.info("[AgentC] 決策員啟動...")
 
-    top = await get_top_scores(limit=MAX_STOCKS)
+    top = await get_top_scores(limit=MAX_STOCKS, score_date=today)
     if not top:
-        logger.info("[AgentC] 無評分資料，跳過")
+        logger.info("[AgentC] 今日無評分資料，跳過")
         return
 
     # 分批產生 AI 推薦理由
