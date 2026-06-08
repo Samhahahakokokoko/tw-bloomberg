@@ -6,26 +6,30 @@ from .twse_service import fetch_market_overview, fetch_stock_list
 
 
 async def generate_morning_report() -> str:
-    """組合早報文字 v2"""
+    """組合早報文字 v3 — 含漲跌榜、量能標記、細化市場狀態"""
     today = datetime.now().strftime("%m/%d")
     lines = [f"📊 台股早報 {today}\n{'─'*22}"]
 
     market_state = "盤整"
     change_pct_val = 0.0
 
-    # ── 大盤指數 + 市場狀態 ───────────────────────────────────────────────
+    # ── 大盤指數 + 市場狀態（細化 5 段）────────────────────────────────
     try:
         overview = await fetch_market_overview()
         if overview:
             sign = "▲" if overview["change"] >= 0 else "▼"
             change_pct_val = float(overview.get("change_pct") or 0)
 
-            if change_pct_val > 0.5:
-                market_state = "多頭"
+            if change_pct_val > 1.5:
+                market_state = "強多頭 🚀"
+            elif change_pct_val > 0.5:
+                market_state = "多頭 📈"
+            elif change_pct_val < -1.5:
+                market_state = "強空頭 🔻"
             elif change_pct_val < -0.5:
-                market_state = "空頭"
+                market_state = "空頭 📉"
             else:
-                market_state = "盤整"
+                market_state = "盤整 ↔️"
 
             lines.append(
                 f"【市場狀態】{market_state}\n"
@@ -35,30 +39,61 @@ async def generate_morning_report() -> str:
     except Exception as e:
         logger.error(f"Morning report TAIEX error: {e}")
 
-    # ── 今日重點：3 檔值得關注 ─────────────────────────────────────────────
+    # ── 今日漲幅前 3 + 跌幅前 3 ──────────────────────────────────────
     try:
         stocks = await fetch_stock_list()
         with_change = [s for s in stocks if s.get("change_pct") is not None]
-        top3 = sorted(with_change, key=lambda x: x.get("change_pct", 0), reverse=True)[:3]
-        if top3:
-            lines.append("\n【今日重點】3 檔值得關注")
-            for s in top3:
+
+        gainers = sorted(with_change, key=lambda x: x.get("change_pct", 0), reverse=True)[:3]
+        losers  = sorted(with_change, key=lambda x: x.get("change_pct", 0))[:3]
+
+        def _vol_tag(s) -> str:
+            vol   = s.get("volume", 0) or 0
+            avg   = s.get("avg_volume", 0) or 0
+            if avg > 0 and vol > avg * 3:
+                return " 🔥爆量"
+            if avg > 0 and vol > avg * 1.5:
+                return " ⚡放量"
+            return ""
+
+        if gainers:
+            lines.append("\n🟢 今日強勢（漲幅前 3）")
+            for s in gainers:
                 pct = s.get("change_pct", 0)
-                sign = "+" if pct >= 0 else ""
                 lines.append(
-                    f"  {s['code']} {s['name']}  {sign}{pct:.2f}%  "
-                    f"{s.get('price', '')}"
+                    f"  {s['code']} {s.get('name','')}  +{pct:.2f}%  "
+                    f"{s.get('price','')}{_vol_tag(s)}"
                 )
+
+        if losers and losers[0].get("change_pct", 0) < 0:
+            lines.append("\n🔴 今日弱勢（跌幅前 3）")
+            for s in losers:
+                pct = s.get("change_pct", 0)
+                if pct >= 0:
+                    break
+                lines.append(
+                    f"  {s['code']} {s.get('name','')}  {pct:.2f}%  "
+                    f"{s.get('price','')}"
+                )
+
+        # 漲跌家數比
+        up   = sum(1 for s in with_change if s.get("change_pct", 0) > 0)
+        down = sum(1 for s in with_change if s.get("change_pct", 0) < 0)
+        if up + down > 0:
+            lines.append(f"\n📊 漲跌家數：上漲 {up} / 下跌 {down}")
+
     except Exception as e:
         logger.error(f"Morning report movers error: {e}")
 
-    # ── 操作建議 ──────────────────────────────────────────────────────────
+    # ── 操作建議（對應細化市場狀態）──────────────────────────────────
     op_map = {
-        "多頭": "積極買進，動能延續中",
-        "空頭": "保守觀察，避開高風險個股",
-        "盤整": "選擇性進場，輕倉操作為主",
+        "強多頭 🚀": "市場強勁，可積極布局動能股",
+        "多頭 📈":   "多頭氛圍，選強勢股順勢操作",
+        "強空頭 🔻": "市場重挫，建議空手觀望護本",
+        "空頭 📉":   "偏空格局，輕倉避開弱勢個股",
+        "盤整 ↔️":   "震盪整理，選擇性進場輕倉為主",
     }
-    lines.append(f"\n【操作建議】{op_map[market_state]}")
+    lines.append(f"\n【操作建議】{op_map.get(market_state, '謹慎操作')}")
 
     # ── 外資動向 ──────────────────────────────────────────────────────────
     try:
