@@ -538,8 +538,6 @@ async def _handle_text(text: str, uid: str) -> list:
     parts = text.split()
     cmd   = parts[0].lower() if parts else ""
     args  = parts[1:]
-    print(f"[DEBUG] 收到指令 cmd={cmd} args={args}", flush=True)
-
     logger.info(f"[route] cmd={cmd!r} text={text[:60]!r}")
 
     # ── 權限 & 用量檢查 ──────────────────────────────────────────────────────
@@ -953,7 +951,7 @@ async def _cmd_quote(code: str) -> list:
         change_pct = float(quote.get("change_pct") or 0)
         source = quote.get("source", "")
         data_time = quote.get("as_of") or quote.get("timestamp") or quote.get("date") or ""
-        print(f"[quote] code={code} price={price}")
+        logger.debug(f"[quote] code={code} price={price}")
         sign = "+" if change >= 0 else "-"
         source_label = quote.get("source_label") or ("即時" if "mis" in source else "收盤")
         stale_note = "\n⚠️ 資料非今日" if quote.get("is_stale") else ""
@@ -1028,7 +1026,6 @@ async def _cmd_market_card(uid) -> list:
 
 
 async def _cmd_portfolio(uid: str) -> list:
-    print(f"[portfolio] uid={uid}", flush=True)
     try:
         async with AsyncSessionLocal() as db:
             holdings = await portfolio_service.get_portfolio(db, uid)
@@ -5619,16 +5616,15 @@ async def _cmd_chart(code: str, uid: str) -> list:
 
 async def _chart_bg(code: str, uid: str, reply_token: str = "") -> None:
     """圖表背景生成。優先用 reply_token 回傳（零配額），逾時或失敗才 push fallback。"""
-    print(f"[chart_bg] 開始 code={code} uid={uid[:8]} has_token={bool(reply_token)}", flush=True)
+    logger.info(f"[chart_bg] 開始 code={code} has_token={bool(reply_token)}")
     try:
         from backend.services.chart_service import generate_chart
         from backend.services.twse_service import fetch_kline, fetch_realtime_quote
 
         token = os.getenv("LINE_CHANNEL_ACCESS_TOKEN", "")
-        print(f"[chart_bg] token={'OK' if token else 'MISSING'} len={len(token)}", flush=True)
 
         kline = await fetch_kline(code)
-        print(f"[chart_bg] kline rows={len(kline) if kline else 0}", flush=True)
+        logger.info(f"[chart_bg] kline rows={len(kline) if kline else 0}")
         if not kline:
             err = {"type": "text", "text": f"❌ {code} 無 K 線資料"}
             if reply_token:
@@ -5639,33 +5635,28 @@ async def _chart_bg(code: str, uid: str, reply_token: str = "") -> None:
 
         q = await fetch_realtime_quote(code)
         name = (q.get("name") or code) if q else code
-        print(f"[chart_bg] name={name!r}", flush=True)
 
         png_bytes = await generate_chart(code, kline, name)
-        print(f"[chart_bg] 圖表生成完成 size={len(png_bytes)}bytes", flush=True)
+        logger.info(f"[chart_bg] 圖表生成完成 size={len(png_bytes)}bytes")
 
         content_url = await _upload_image_to_line(png_bytes, token) if token else None
-        print(f"[chart_bg] upload url={content_url!r}", flush=True)
 
         if content_url:
             img_msg = {"type": "image", "originalContentUrl": content_url, "previewImageUrl": content_url}
         else:
             img_msg = {"type": "text", "text": f"📊 {code} {name} 技術分析圖生成完成（上傳失敗，請稍後再試）"}
 
-        # 優先用 reply_token（不計配額），失敗 fallback push
         if reply_token:
             ok = await _reply_by_token(reply_token, [img_msg])
-            print(f"[chart_bg] reply 結果={'OK' if ok else 'FAILED→fallback push'} uid={uid[:8]}", flush=True)
+            logger.info(f"[chart_bg] reply={'OK' if ok else 'FAILED→fallback push'}")
             if not ok:
-                ok = await push_line_messages(uid, [img_msg], timeout=20, context="handler.chart_bg.fallback")
-                print(f"[chart_bg] fallback push={'OK' if ok else 'FAILED'}", flush=True)
+                await push_line_messages(uid, [img_msg], timeout=20, context="handler.chart_bg.fallback")
         else:
             ok = await push_line_messages(uid, [img_msg], timeout=20, context="handler.chart_bg")
-            print(f"[chart_bg] push 結果={'OK' if ok else 'FAILED'} uid={uid[:8]}", flush=True)
+            logger.info(f"[chart_bg] push={'OK' if ok else 'FAILED'}")
 
     except Exception as e:
         logger.error(f"[chart_bg] {code}: {e}", exc_info=True)
-        print(f"[chart_bg] EXCEPTION {type(e).__name__}: {e}", flush=True)
         err = {"type": "text", "text": f"❌ {code} 圖表生成失敗，請稍後再試"}
         if reply_token:
             await _reply_by_token(reply_token, [err])
