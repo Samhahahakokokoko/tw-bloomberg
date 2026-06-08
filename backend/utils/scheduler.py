@@ -9,15 +9,18 @@ from ..services.line_push import push_line_messages
 
 
 async def _push_failure_alert(task_name: str, error: str) -> None:
-    """關鍵任務失敗時推播 LINE 警告給所有訂閱者"""
+    """關鍵任務失敗時推播 LINE 警告給管理員（ADMIN_LINE_UID）"""
     try:
         import httpx
-        from ..models.database import settings, AsyncSessionLocal
-        from ..models.models import Subscriber
-        from sqlalchemy import select
+        from ..models.database import settings
 
         if not settings.line_channel_access_token:
             logger.warning("[Scheduler] LINE token 未設定，無法推送失敗通知")
+            return
+
+        admin_uid = os.getenv("ADMIN_LINE_UID", "")
+        if not admin_uid:
+            logger.warning("[Scheduler] ADMIN_LINE_UID 未設定，無法推送失敗通知")
             return
 
         text = (
@@ -26,24 +29,13 @@ async def _push_failure_alert(task_name: str, error: str) -> None:
             f"請檢查伺服器日誌"
         )
 
-        async with AsyncSessionLocal() as db:
-            r = await db.execute(select(Subscriber))
-            subs = r.scalars().all()
-
         async with httpx.AsyncClient(timeout=15) as c:
-            for sub in subs:
-                uid = getattr(sub, "line_user_id", None)
-                if not uid:
-                    continue
-                try:
-                    await push_line_messages(
-                        uid,
-                        [{"type": "text", "text": text}],
-                        client=c,
-                        context="scheduler.failure_alert",
-                    )
-                except Exception as e:
-                    pass
+            await push_line_messages(
+                admin_uid,
+                [{"type": "text", "text": text}],
+                client=c,
+                context="scheduler.failure_alert",
+            )
         logger.info("[Scheduler] 失敗通知已推送：%s", task_name)
     except Exception as e:
         logger.error("[Scheduler] 推送失敗通知時出錯：%s", e)
