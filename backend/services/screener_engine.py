@@ -7,7 +7,7 @@
 """
 from __future__ import annotations
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, timedelta
 from loguru import logger
 from sqlalchemy import select, and_
 
@@ -153,7 +153,7 @@ async def run_screener(
         )
         rows = r.scalars().all()
 
-    # 若今日無資料，往前找最近一天
+    # 若今日無資料，往前找最近一天（最多往回 5 天，避免推播過期資料）
     if not rows:
         async with AsyncSessionLocal() as db:
             r2 = await db.execute(
@@ -164,7 +164,14 @@ async def run_screener(
             latest_date = r2.scalar()
 
         if latest_date and latest_date != score_date:
-            logger.info(f"[Screener] {score_date} 無資料，改用 {latest_date}")
+            staleness = (date.today() - date.fromisoformat(str(latest_date))).days
+            if staleness > 5:
+                logger.warning(
+                    f"[Screener] DB 資料已過期 {staleness} 天（最新: {latest_date}），"
+                    f"拒絕 fallback，返回空結果以避免推播舊資料"
+                )
+                return []
+            logger.info(f"[Screener] {score_date} 無資料，改用 {latest_date}（{staleness} 天前）")
             return await run_screener(filters, score_date=latest_date)
         return []
 
