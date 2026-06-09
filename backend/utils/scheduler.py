@@ -531,34 +531,44 @@ def _apply_line_quota_safe_mode(scheduler: AsyncIOScheduler) -> None:
         logger.info("[Scheduler] LINE quota safe mode disabled")
         return
 
-    # Preserve core reports and user alerts under the small LINE push quota.
-    # NOTE: daily_decision, morning_picks, group_report, weekly_picks are CORE features — do NOT add them here.
-    optional_line_push_jobs = {
-        "portfolio_overlay",
-        "friday_summary",
-        "smart_money",
-        "ai_feed",
-        "smart_alert_v2",
-        "watchlist_daily",
-        "analyst_alert_check",
-        "autonomous_research",
-        "smart_money_v2",
+    # Tier 1 — always removed in safe mode: bulk/low-value broadcast jobs
+    # NOTE: daily_decision, morning_picks, group_report, weekly_picks are CORE — never added here.
+    tier1_jobs = {
         "agent_report",
         "sector_heatmap",
-        "portfolio_manager_advice",
-        "mistake_detector_weekly",
         "narrative_map_push",
-        "macro_weekly",
-        "euphoria_stress_push",
         "ai_debate_push",
+        "macro_weekly",
+        "mistake_detector_weekly",
+        "euphoria_stress_push",
     }
+
+    # Tier 2 — only removed when LINE_QUOTA_STRICT_MODE=1: high-value per-user alerts
+    tier2_jobs = {
+        "watchlist_daily",
+        "smart_money",
+        "smart_money_v2",
+        "smart_alert_v2",
+        "portfolio_overlay",
+        "portfolio_manager_advice",
+        "ai_feed",
+        "analyst_alert_check",
+        "autonomous_research",
+        "friday_summary",
+    }
+
+    strict = os.getenv("LINE_QUOTA_STRICT_MODE", "0").lower() not in {"0", "false", "off"}
+    to_remove = tier1_jobs | (tier2_jobs if strict else set())
+
     removed = []
-    for job_id in optional_line_push_jobs:
+    for job_id in to_remove:
         if scheduler.get_job(job_id):
             scheduler.remove_job(job_id)
             removed.append(job_id)
+
+    mode_label = "strict" if strict else "normal"
     logger.info(
-        f"[Scheduler] LINE quota safe mode removed {len(removed)} optional push jobs: "
+        f"[Scheduler] LINE quota safe mode ({mode_label}) removed {len(removed)} push jobs: "
         f"{','.join(sorted(removed))}"
     )
 
