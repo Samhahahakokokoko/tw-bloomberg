@@ -64,7 +64,7 @@ async def push_anomaly_alert(anomaly: dict):
         from .morning_report import _push_to_users
 
         async with AsyncSessionLocal() as db:
-            result = await db.execute(select(Subscriber))
+            result = await db.execute(select(Subscriber).where(Subscriber.subscribed_morning == True))
             subs = result.scalars().all()
 
         if subs:

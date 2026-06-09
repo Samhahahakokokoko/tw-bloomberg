@@ -296,7 +296,7 @@ async def push_smart_money_alerts():
     msg = "\n".join(lines)
 
     async with AsyncSessionLocal() as db:
-        r = await db.execute(select(Subscriber))
+        r = await db.execute(select(Subscriber).where(Subscriber.subscribed_morning == True))
         subs = r.scalars().all()
     if subs:
         await _push_to_users([s.line_user_id for s in subs], msg)

@@ -235,7 +235,7 @@ class CapitalFlowEngine:
             from backend.models.models import Subscriber
             from sqlalchemy import select
             async with AsyncSessionLocal() as db:
-                r    = await db.execute(select(Subscriber))
+                r    = await db.execute(select(Subscriber).where(Subscriber.subscribed_morning == True))
                 subs = r.scalars().all()
             msg = (
                 f"⚠️ 資金輪動警告\n\n"
