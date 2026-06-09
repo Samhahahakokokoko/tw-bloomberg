@@ -4663,15 +4663,12 @@ async def _cmd_insider(code: str, uid: str) -> list:
 
 
 async def _cmd_earnings(code: str, uid: str) -> list:
-    """/earnings [代碼] — 法說會日曆（無代碼）或個股財報（有代碼）"""
+    """/earnings — 持股財報日曆；/earnings CODE — 個股財報截止 + EPS 資訊"""
     if not code:
-        # 無代碼 → 法說會日曆
+        # 無代碼 → 持股財報日曆（自動同步持倉提醒）
         try:
-            from backend.services.earnings_service import (
-                get_investor_meetings, format_investor_calendar,
-            )
-            meetings = await get_investor_meetings(days=30)
-            text = format_investor_calendar(meetings)
+            from backend.services.earnings_service import get_portfolio_earnings_calendar
+            text = await get_portfolio_earnings_calendar(uid)
             return [_text(text, qr_items(
                 ("台積電財報", "/earnings 2330"),
                 ("聯發科財報", "/earnings 2454"),
@@ -4679,17 +4676,21 @@ async def _cmd_earnings(code: str, uid: str) -> list:
             ))]
         except Exception as e:
             logger.error(f"[earnings calendar] {e}")
-            return [_text("❌ 法說會日曆讀取失敗，請稍後再試")]
-    # 有代碼 → 個股財報分析
+            return [_text("❌ 財報日曆讀取失敗，請稍後再試")]
+    # 有代碼 → 個股財報資訊 + 分析
     try:
-        from backend.services.earnings_intelligence import (
-            analyze_earnings, format_earnings_calendar, get_upcoming_earnings,
-        )
+        from backend.services.earnings_service import get_stock_earnings_info
+        from backend.services.earnings_intelligence import analyze_earnings
+        info_text = await get_stock_earnings_info(code)
         result = await analyze_earnings(code)
         if result:
-            return [TextMessage(text=result.to_line_text(),
+            combined = info_text + "\n\n" + result.to_line_text()
+            return [TextMessage(text=combined[:2000],
                                 quick_reply=_make_qr(result.to_line_qr()))]
-        return [_text(f"❌ 查無 {code} 財報資料")]
+        return [_text(info_text, qr_items(
+            ("加入自選", f"/watch {code}"),
+            ("查報價", f"/q {code}"),
+        ))]
     except Exception as e:
         logger.error(f"[earnings] {e}")
         return [_text("❌ 財報查詢失敗，請稍後再試")]

@@ -684,7 +684,23 @@ async def _push_weekly_picks():
 
 async def _check_earnings_reminders():
     try:
-        from ..services.earnings_service import check_and_push_reminders
+        from ..services.earnings_service import (
+            check_and_push_reminders, sync_portfolio_reminders,
+        )
+        from ..models.models import Subscriber
+        from ..models.database import AsyncSessionLocal
+        from sqlalchemy import select
+
+        # 先同步所有訂閱者的持股財報提醒（確保新持股也有提醒記錄）
+        async with AsyncSessionLocal() as db:
+            r = await db.execute(select(Subscriber))
+            subs = r.scalars().all()
+        for sub in subs:
+            try:
+                await sync_portfolio_reminders(sub.line_user_id)
+            except Exception as e:
+                logger.warning(f"[earnings] sync {sub.line_user_id} failed: {e}")
+
         await check_and_push_reminders()
     except Exception as e:
         logger.error(f"Earnings reminder check failed: {e}")

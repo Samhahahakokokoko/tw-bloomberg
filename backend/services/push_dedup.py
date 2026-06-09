@@ -30,16 +30,18 @@ async def check_and_record(
     user_id: str,
     message_type: str,
     content: str,
+    period_key: str | None = None,
 ) -> bool:
     """
     檢查是否可以推送；若可以則寫入記錄並回傳 True，
     若已推過則回傳 False（呼叫方應跳過此次推送）。
+    period_key: 若指定則覆蓋預設的日期/週期 key（用於跨日去重，如財報里程碑）。
     """
     from ..models.database import AsyncSessionLocal
     from ..models.models import PushLog
     from sqlalchemy import select
 
-    period = _period_key(message_type)
+    period = period_key if period_key is not None else _period_key(message_type)
     chash  = _hash(content)
 
     try:
