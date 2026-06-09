@@ -1362,7 +1362,7 @@ async def _run_market_intel_scan():
         logger.info("[Intel 15:30] lead_lag: {} triggered", len(result_ll.triggered_signals))
 
         results_theme = await run_theme_propagation()
-        logger.info("[Intel 15:30] theme: top={} {:.0f}%%",
+        logger.info("[Intel 15:30] theme: top={} {:.0f}%",
                     results_theme[0].theme if results_theme else "N/A",
                     results_theme[0].total_score if results_theme else 0)
 
@@ -1514,7 +1514,7 @@ async def _run_prediction_market_weekly():
         snapshot = await get_snapshot()
 
         expired = [p for p in snapshot.predictions if p.days_left <= 0]
-        logger.info("[predict Fri19:00] active={} resolved={} expired_today={} acc={:.0f}%%",
+        logger.info("[predict Fri19:00] active={} resolved={} expired_today={} acc={:.0f}%",
                     snapshot.total_active, snapshot.total_resolved,
                     len(expired), snapshot.accuracy_30d * 100)
     except Exception as e:
