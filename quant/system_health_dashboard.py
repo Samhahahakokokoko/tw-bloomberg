@@ -148,8 +148,11 @@ async def collect_health() -> SystemHealth:
     try:
         import httpx
         async with httpx.AsyncClient(timeout=5) as c:
-            r = await c.get("https://api.finmindtrade.com/api/v4/info")
-            ok = r.status_code == 200
+            r = await c.get(
+                "https://api.finmindtrade.com/api/v4/data",
+                params={"dataset": "TaiwanStockInfo", "data_id": "2330", "start_date": "2024-01-01"},
+            )
+            ok = r.status_code in (200, 402, 403)
         lat = int((time.monotonic() - t0) * 1000)
         modules.append(ModuleStatus(
             name="FinMind API", status="green" if ok else "yellow",
