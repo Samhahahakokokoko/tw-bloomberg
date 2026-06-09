@@ -163,7 +163,7 @@ async def compute_dna(analyst_id: str) -> Optional[AnalystDNA]:
             r2 = await db.execute(
                 select(AnalystCall)
                 .where(AnalystCall.analyst_id == analyst_id)
-                .where(AnalystCall.actual_return != None)
+                .where(AnalystCall.result_5d != None)
                 .order_by(AnalystCall.date.desc())
                 .limit(200)
             )
@@ -187,7 +187,7 @@ async def compute_dna(analyst_id: str) -> Optional[AnalystDNA]:
             mkt = getattr(c, "market_state", "unknown") or "unknown"
             if mkt not in mkt_wins:
                 mkt_wins[mkt] = []
-            mkt_wins[mkt].append(1.0 if (c.actual_return or 0) > 0 else 0.0)
+            mkt_wins[mkt].append(1.0 if (c.result_5d or c.result_20d or 0) > 0 else 0.0)
 
         market_win_rates = {
             mkt: sum(v) / len(v)
@@ -203,7 +203,7 @@ async def compute_dna(analyst_id: str) -> Optional[AnalystDNA]:
                 continue
             if sector not in sector_wins:
                 sector_wins[sector] = []
-            sector_wins[sector].append(1.0 if (c.actual_return or 0) > 0 else 0.0)
+            sector_wins[sector].append(1.0 if (c.result_5d or c.result_20d or 0) > 0 else 0.0)
 
         sector_win_rates = {
             s: sum(v) / len(v)
