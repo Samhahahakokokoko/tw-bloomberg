@@ -688,8 +688,16 @@ async def _fetch_rt_cache() -> dict:
             # OpenAPI 全失敗 → fallback 到 classic www.twse.com.tw/fund/T86
             if not chips:
                 try:
-                    from datetime import datetime as _dt
-                    _date = _dt.now().strftime("%Y%m%d")
+                    from datetime import datetime as _dt, timedelta as _td
+                    _now = _dt.now()
+                    # T86 盤後資料約 14:30 更新；盤前/盤中取前一交易日
+                    if _now.hour < 15:
+                        _d = (_now - _td(days=1)).date()
+                        while _d.weekday() >= 5:   # skip Sat(5) / Sun(6)
+                            _d -= _td(days=1)
+                    else:
+                        _d = _now.date()
+                    _date = _d.strftime("%Y%m%d")
                     r = await client.get(
                         "https://www.twse.com.tw/fund/T86",
                         params={"response": "json", "date": _date},

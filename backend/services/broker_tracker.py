@@ -38,12 +38,15 @@ async def fetch_broker_detail(stock_code: str, days: int = 10) -> list[dict]:
     start_date = (date.today() - timedelta(days=days + 5)).strftime("%Y-%m-%d")
     raw = await _get("BrokerTradingDetail", stock_code, start_date)
 
+    stock_name = await _lookup_stock_name(stock_code)
+
     parsed = []
     for r in raw:
         try:
             parsed.append({
                 "date":        r.get("date", ""),
                 "stock_code":  stock_code,
+                "stock_name":  stock_name,
                 "broker_id":   str(r.get("broker_id", "")),
                 "broker_name": r.get("broker", ""),
                 "buy_shares":  int(float(r.get("buy", 0) or 0)),
@@ -69,7 +72,11 @@ async def _cache_broker_data(stock_code: str, rows: list[dict]):
                     BrokerActivity.broker_id  == r["broker_id"],
                 )
             )
-            if existing.scalar_one_or_none():
+            rec = existing.scalar_one_or_none()
+            if rec:
+                # 補填舊紀錄缺失的 stock_name
+                if not rec.stock_name and r.get("stock_name"):
+                    rec.stock_name = r["stock_name"]
                 continue
             db.add(BrokerActivity(**r))
         await db.commit()
