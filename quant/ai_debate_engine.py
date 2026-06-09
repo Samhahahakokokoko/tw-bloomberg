@@ -25,6 +25,8 @@ import asyncio
 
 logger = logging.getLogger(__name__)
 
+_credit_exhausted: bool = False
+
 
 @dataclass
 class DebateResult:
@@ -108,10 +110,14 @@ async def run_ai_debate(
     context: str = "",
 ) -> DebateResult:
     """呼叫 Claude API 進行多空辯論"""
+    global _credit_exhausted
     api_key = os.getenv("ANTHROPIC_API_KEY", "")
 
-    if not api_key:
-        logger.info("[debate] no API key, using fallback for %s", stock_id)
+    if not api_key or _credit_exhausted:
+        if _credit_exhausted:
+            logger.debug("[debate] credit exhausted, using fallback for %s", stock_id)
+        else:
+            logger.info("[debate] no API key, using fallback for %s", stock_id)
         fb = _FALLBACK_DEBATES.get(stock_id, _FALLBACK_DEBATES["default"])
         return DebateResult(
             stock_id       = stock_id,
@@ -126,7 +132,7 @@ async def run_ai_debate(
 
     try:
         import anthropic
-        client = anthropic.Anthropic(api_key=api_key)
+        client = anthropic.AsyncAnthropic(api_key=api_key)
 
         prompt = _DEBATE_PROMPT.format(
             stock_id   = stock_id,
@@ -134,7 +140,7 @@ async def run_ai_debate(
             context    = context or "無額外資訊，請根據一般市場知識分析",
         )
 
-        msg = client.messages.create(
+        msg = await client.messages.create(
             model      = "claude-haiku-4-5-20251001",
             max_tokens = 800,
             messages   = [{"role": "user", "content": prompt}],
@@ -160,7 +166,8 @@ async def run_ai_debate(
 
     except Exception as e:
         if "credit balance is too low" in str(e):
-            logger.warning("[debate] Anthropic API 額度不足，使用預設辯論結果")
+            _credit_exhausted = True
+            logger.warning("[debate] Anthropic credit 耗盡，本 process 停止 AI 辯論")
         else:
             logger.warning("[debate] Claude API failed for %s: %s", stock_id, e)
         fb = _FALLBACK_DEBATES.get(stock_id, _FALLBACK_DEBATES["default"])
