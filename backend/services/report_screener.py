@@ -689,7 +689,7 @@ async def _fetch_rt_cache() -> dict:
             if not chips:
                 try:
                     from datetime import datetime as _dt, timedelta as _td
-                    _now = _dt.now()
+                    _now = _dt.utcnow() + _td(hours=8)   # UTC → 台灣時間 (CST)
                     # T86 盤後資料約 14:30 更新；盤前/盤中取前一交易日
                     if _now.hour < 15:
                         _d = (_now - _td(days=1)).date()
