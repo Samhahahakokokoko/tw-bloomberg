@@ -131,6 +131,21 @@ async def _raw_kline_month(stock_code: str, date_str: str) -> dict:
 # ── 公開 / 半公開查詢函式（final-fallback try/except 保留）──────────────────────
 
 async def _fetch_twse_daily_quote(stock_code: str) -> dict:
+    # Fast path: use screener's in-memory price cache to avoid fetching all 1353 stocks
+    try:
+        from .report_screener import _rt_cache
+        p = _rt_cache.get("prices", {}).get(stock_code)
+        if p and p.get("close", 0) > 0:
+            return {
+                "code": stock_code, "name": p.get("name", stock_code),
+                "price": p["close"], "close": p["close"],
+                "change": p.get("change", 0), "change_pct": p.get("change_pct", 0),
+                "volume": p.get("volume", 0),
+                "source": "rt_cache_daily", "source_label": "TWSE 收盤",
+                "is_realtime": False, "is_stale": False,
+            }
+    except Exception:
+        pass
     try:
         for item in await _raw_twse_daily_all():
             if item.get("Code") == stock_code:
