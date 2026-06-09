@@ -130,6 +130,14 @@ async def analyze_with_claude(title: str, description: str) -> dict:
         if "credit balance is too low" in str(e):
             _credit_exhausted = True
             logger.warning("[youtube] Anthropic credit 耗盡，本 process 停止 AI 分析")
+            try:
+                from .system_monitor import log_module_status
+                import asyncio
+                asyncio.create_task(log_module_status(
+                    "anthropic_ai", "error", "credit balance is too low — AI 分析已停用"
+                ))
+            except Exception:
+                pass
         else:
             logger.warning(f"[youtube] claude analysis failed: {e}, using rule-based")
         return _rule_based_analysis(title, description)

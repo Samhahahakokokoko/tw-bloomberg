@@ -235,6 +235,13 @@ async def _analyze_sentiment(text: str, api_key: str) -> tuple[str, float]:
             if "credit balance is too low" in str(e):
                 _credit_exhausted = True                      # [FIX-6] 設熔斷
                 logger.warning("[Scraper] Anthropic credit 耗盡，本 process 停止情緒分析")
+                try:
+                    from backend.services.system_monitor import log_module_status
+                    await log_module_status(
+                        "anthropic_ai", "error", "credit balance is too low — 情緒分析已停用"
+                    )
+                except Exception:
+                    pass
                 break
             if attempt < 2:
                 await asyncio.sleep(1)

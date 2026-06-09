@@ -12,7 +12,7 @@ MODULES = [
     "morning_report", "ai_feed", "news_scraper", "alert_checker",
     "smart_alert_v2", "watchlist_daily", "market_breadth",
     "autonomous_research", "hedge_fund_agent", "sector_heatmap",
-    "portfolio_manager_advice", "pipeline_movers",
+    "portfolio_manager_advice", "pipeline_movers", "anthropic_ai",
 ]
 
 
