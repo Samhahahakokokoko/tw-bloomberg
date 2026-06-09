@@ -36,6 +36,9 @@ STOCK_CODE_RE = re.compile(r"[（(](\d{4})[）)]")
 _DEFAULT_SENTIMENT = "neutral"
 _DEFAULT_SCORE     = 0.5   # [FIX-5] 改為 0.5，避免被解讀為極度負面
 
+# 熔斷旗標：偵測到 credit balance too low 後，本次 process 全程跳過 API 呼叫
+_credit_exhausted: bool = False
+
 
 async def scrape_all() -> list:
     """
@@ -190,7 +193,13 @@ async def _analyze_sentiment(text: str, api_key: str) -> tuple[str, float]:
     """
     [FIX-2] api_key 未設定 → 立即回傳預設值
     [FIX-3] retry 3 次，全部失敗回傳預設值
+    [FIX-6] credit 耗盡後設熔斷旗標，本 process 全程不再呼叫 API
     """
+    global _credit_exhausted
+
+    if _credit_exhausted:                                      # [FIX-6] 熔斷快速返回
+        return _DEFAULT_SENTIMENT, _DEFAULT_SCORE
+
     if not api_key or len(text.strip()) < 10:               # [FIX-2]
         return _DEFAULT_SENTIMENT, _DEFAULT_SCORE
 
@@ -224,6 +233,8 @@ async def _analyze_sentiment(text: str, api_key: str) -> tuple[str, float]:
         except Exception as e:
             logger.warning(f"[Scraper] 情緒分析 attempt {attempt+1}/3 失敗: {e}")
             if "credit balance is too low" in str(e):
+                _credit_exhausted = True                      # [FIX-6] 設熔斷
+                logger.warning("[Scraper] Anthropic credit 耗盡，本 process 停止情緒分析")
                 break
             if attempt < 2:
                 await asyncio.sleep(1)

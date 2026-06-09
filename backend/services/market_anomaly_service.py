@@ -54,12 +54,13 @@ async def check_market_anomaly() -> dict:
 
 
 async def push_anomaly_alert(anomaly: dict):
-    """推播大盤異常警報給所有訂閱者"""
+    """推播大盤異常警報給所有訂閱者（含去重：同內容當天只推一次）"""
     if not anomaly.get("has_anomaly"):
         return
     try:
         from ..models.database import AsyncSessionLocal
         from ..models.models import Subscriber
+        from .push_dedup import check_and_record
         from sqlalchemy import select
         from .morning_report import _push_to_users
 
@@ -67,8 +68,20 @@ async def push_anomaly_alert(anomaly: dict):
             result = await db.execute(select(Subscriber).where(Subscriber.subscribed_morning == True))
             subs = result.scalars().all()
 
-        if subs:
-            await _push_to_users([s.line_user_id for s in subs], anomaly["message"])
-            logger.info(f"Anomaly alert pushed: {anomaly['message']}")
+        if not subs:
+            return
+
+        msg = anomaly["message"]
+        eligible = []
+        for sub in subs:
+            if await check_and_record(sub.line_user_id, "alert", msg):
+                eligible.append(sub.line_user_id)
+
+        skipped = len(subs) - len(eligible)
+        if skipped:
+            logger.info(f"Anomaly alert already pushed today ({skipped} skipped): {msg[:50]}")
+        if eligible:
+            await _push_to_users(eligible, msg)
+            logger.info(f"Anomaly alert pushed: {msg}")
     except Exception as e:
         logger.error(f"Anomaly alert push error: {e}")
