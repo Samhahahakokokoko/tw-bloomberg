@@ -3,7 +3,7 @@ import { Routes, Route, NavLink } from "react-router-dom";
 import {
   BarChart2, TrendingUp, BookOpen, Bell, Newspaper, Activity,
   Star, Cpu, Heart, Map, Trophy, Users, CalendarDays,
-  Filter, FileText, Target, Layers,
+  Filter, FileText, Target, Layers, Wifi,
 } from "lucide-react";
 import Dashboard       from "./pages/Dashboard";
 import Quote           from "./pages/Quote";
@@ -28,6 +28,7 @@ import LiveDashboard            from "./pages/LiveDashboard";
 import AnalystDashboard         from "./pages/AnalystDashboard";
 import StrategyPerformance      from "./pages/StrategyPerformance";
 import SystemMonitor            from "./pages/SystemMonitor";
+import SystemStatus             from "./pages/SystemStatus";
 
 const NAV = [
   { to: "/",           label: "DASHBOARD",  icon: Activity },
@@ -53,6 +54,7 @@ const NAV = [
   { to: "/analysts",   label: "分析師",     icon: Users },
   { to: "/strat-perf", label: "績效分析",   icon: TrendingUp },
   { to: "/system",     label: "系統監控",   icon: BarChart2 },
+  { to: "/status",     label: "系統狀態",   icon: Wifi },
 ];
 
 export default function App() {
@@ -118,6 +120,7 @@ export default function App() {
           <Route path="/analysts"    element={<AnalystDashboard />} />
           <Route path="/strat-perf"  element={<StrategyPerformance />} />
           <Route path="/system"      element={<SystemMonitor />} />
+          <Route path="/status"      element={<SystemStatus />} />
         </Routes>
       </main>
     </div>

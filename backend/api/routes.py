@@ -1059,6 +1059,131 @@ async def get_audit_log(limit: int = Query(50), stock_id: str = Query("")):
     ]
 
 
+# ── Public System Status ───────────────────────────────────────────────────────
+
+@router.get("/system/status")
+async def system_status():
+    """公開系統狀態端點 — 各服務健康 + 今日推送統計"""
+    import time as _time
+    import httpx
+    from datetime import datetime, date
+    from ..models.database import AsyncSessionLocal
+    from ..models.models import PushLog
+    from sqlalchemy import text, func, select as sa_select
+
+    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    today   = date.today().isoformat()
+    services: dict = {}
+
+    # ── 資料庫 ──────────────────────────────────────────────────────────────
+    t0 = _time.monotonic()
+    try:
+        async with AsyncSessionLocal() as db:
+            await db.execute(text("SELECT 1"))
+        services["database"] = {
+            "name": "資料庫", "status": "ok",
+            "latency_ms": int((_time.monotonic() - t0) * 1000), "message": "連線正常",
+        }
+    except Exception as e:
+        services["database"] = {
+            "name": "資料庫", "status": "error",
+            "latency_ms": None, "message": str(e)[:80],
+        }
+
+    # ── TWSE API ─────────────────────────────────────────────────────────────
+    t0 = _time.monotonic()
+    try:
+        async with httpx.AsyncClient(timeout=6) as c:
+            r = await c.get("https://mis.twse.com.tw/stock/api/getStockInfo.jsp?ex_ch=tse_2330.tw&json=1&delay=0")
+            ok = r.status_code == 200
+        services["twse"] = {
+            "name": "TWSE API", "status": "ok" if ok else "warning",
+            "latency_ms": int((_time.monotonic() - t0) * 1000),
+            "message": "即時報價正常" if ok else f"HTTP {r.status_code}",
+        }
+    except Exception as e:
+        services["twse"] = {
+            "name": "TWSE API", "status": "error",
+            "latency_ms": None, "message": str(e)[:80],
+        }
+
+    # ── LINE Bot ─────────────────────────────────────────────────────────────
+    line_token = settings.line_channel_access_token
+    if not line_token:
+        services["line_bot"] = {"name": "LINE Bot", "status": "error", "latency_ms": None, "message": "Token 未設定"}
+    else:
+        t0 = _time.monotonic()
+        try:
+            async with httpx.AsyncClient(timeout=6) as c:
+                r = await c.get(
+                    "https://api.line.me/v2/bot/info",
+                    headers={"Authorization": f"Bearer {line_token}"},
+                )
+            ok = r.status_code == 200
+            services["line_bot"] = {
+                "name": "LINE Bot", "status": "ok" if ok else "warning",
+                "latency_ms": int((_time.monotonic() - t0) * 1000),
+                "message": "Bot 正常" if ok else f"HTTP {r.status_code}",
+            }
+        except Exception as e:
+            services["line_bot"] = {
+                "name": "LINE Bot", "status": "error",
+                "latency_ms": None, "message": str(e)[:80],
+            }
+
+    # ── Railway (自身服務) ───────────────────────────────────────────────────
+    services["railway"] = {
+        "name": "Railway 服務", "status": "ok",
+        "latency_ms": 0, "message": "運行中",
+    }
+
+    # ── 今日推送統計 ──────────────────────────────────────────────────────────
+    push_stats: dict = {}
+    last_push_time: str = ""
+    try:
+        async with AsyncSessionLocal() as db:
+            # 今日各類型推送次數（每條記錄算一次）
+            rows = await db.execute(
+                sa_select(PushLog.message_type, func.count(PushLog.id).label("cnt"))
+                .where(PushLog.period_key == today)
+                .group_by(PushLog.message_type)
+            )
+            for row in rows.all():
+                push_stats[row.message_type] = row.cnt
+
+            # 最後推送時間
+            last = await db.execute(
+                sa_select(PushLog.pushed_at)
+                .order_by(PushLog.pushed_at.desc())
+                .limit(1)
+            )
+            last_row = last.scalar_one_or_none()
+            if last_row:
+                last_push_time = str(last_row)[:16]
+    except Exception:
+        pass
+
+    total_push_today = sum(push_stats.values())
+
+    # ── 整體狀態判斷 ──────────────────────────────────────────────────────────
+    statuses = [s["status"] for s in services.values()]
+    if "error" in statuses:
+        overall = "degraded"
+    elif "warning" in statuses:
+        overall = "warning"
+    else:
+        overall = "ok"
+
+    return {
+        "overall":          overall,
+        "updated_at":       now_str,
+        "services":         services,
+        "push_today":       total_push_today,
+        "push_by_type":     push_stats,
+        "last_push_time":   last_push_time,
+    }
+
+
 # ── Analysts ───────────────────────────────────────────────────────────────────
 
 @router.get("/analysts")

@@ -721,6 +721,7 @@ async def _handle_text(text: str, uid: str) -> list:
     if cmd == "/bug" and len(parts) >= 2:
         return await _cmd_feedback(" ".join(parts[1:]), uid, "bug")
     if cmd == "/system":                return await _cmd_system_health(uid)
+    if cmd == "/status":                return await _cmd_status(uid)
     if cmd == "/pushlog":               return await _cmd_pushlog(uid)
     if cmd == "/analyst":
         sub = parts[1].lower() if len(parts) > 1 else ""
@@ -5171,6 +5172,41 @@ async def _cmd_pushlog(uid: str) -> list:
         return [_text("\n".join(lines))]
     except Exception as e:
         return [_text(f"❌ 查詢失敗：{e}")]
+
+
+async def _cmd_status(uid: str) -> list:
+    """/status — 系統狀態摘要"""
+    import httpx, os
+    try:
+        base = os.getenv("RAILWAY_BACKEND_URL", "http://localhost:8000")
+        async with httpx.AsyncClient(timeout=10) as c:
+            r = await c.get(f"{base}/api/system/status")
+        if not r.is_success:
+            return [_text(f"❌ 狀態查詢失敗（HTTP {r.status_code}）")]
+        d = r.json()
+
+        icon_map = {"ok": "✅", "warning": "⚠️", "error": "❌", "degraded": "🔴"}
+        overall  = d.get("overall", "ok")
+        oi       = icon_map.get(overall, "❓")
+
+        lines = [f"{oi} 系統狀態：{'正常' if overall == 'ok' else '異常'}",
+                 f"更新：{d.get('updated_at', '--')}", "─" * 18]
+
+        for svc in d.get("services", {}).values():
+            si = icon_map.get(svc.get("status", "ok"), "❓")
+            lat = f"  {svc['latency_ms']}ms" if svc.get("latency_ms") is not None else ""
+            lines.append(f"{si} {svc['name']}{lat}")
+
+        push_today = d.get("push_today", 0)
+        last_push  = d.get("last_push_time", "")
+        lines.append("─" * 18)
+        lines.append(f"📨 今日推送：{push_today} 則")
+        if last_push:
+            lines.append(f"   最後推送：{last_push}")
+
+        return [_text("\n".join(lines), qr_items(("推送記錄", "/pushlog"), ("主選單", "/help")))]
+    except Exception as e:
+        return [_text(f"❌ 無法取得系統狀態：{e}")]
 
 
 async def _cmd_heatmap(uid: str) -> list:
