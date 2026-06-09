@@ -64,7 +64,7 @@ def retry(
                         else delay
                     )
                     logger.warning(
-                        "[retry] %s HTTP %d — 第%d次重試，等待%.0fs",
+                        "[retry] {} HTTP {} — 第{}次重試，等待{:.0f}s",
                         func.__name__, status, attempt, wait,
                     )
                     await asyncio.sleep(wait)
@@ -74,7 +74,7 @@ def retry(
                     if attempt >= max_attempts:
                         raise
                     logger.warning(
-                        "[retry] %s 連線逾時/失敗 — 第%d次重試，等待%.0fs",
+                        "[retry] {} 連線逾時/失敗 — 第{}次重試，等待{:.0f}s",
                         func.__name__, attempt, delay,
                     )
                     await asyncio.sleep(delay)
@@ -84,7 +84,7 @@ def retry(
                     if attempt >= max_attempts:
                         raise
                     logger.warning(
-                        "[retry] %s 第%d次重試 (%s)",
+                        "[retry] {} 第{}次重試 ({})",
                         func.__name__, attempt, type(exc).__name__,
                     )
                     await asyncio.sleep(delay)

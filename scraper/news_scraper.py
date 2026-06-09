@@ -1,4 +1,4 @@
-"""新聞爬蟲 — 工商時報 + 經濟日報 RSS，Claude API 情緒分析
+"""新聞爬蟲 — 經濟日報 RSS，Claude API 情緒分析
 
 修復清單：
   [FIX-1] 每篇新聞獨立 try/except，單篇失敗直接跳過不中斷流程
@@ -24,10 +24,6 @@ from loguru import logger
 from backend.utils.retry import retry
 
 SOURCES = {
-    "工商時報": [
-        "https://ctee.com.tw/feed",
-        "https://ctee.com.tw/news/stock/feed",
-    ],
     "經濟日報": [
         "https://money.udn.com/rssfeed/news/1001/5591?ch=money",
         "https://money.udn.com/rssfeed/news/1001/10846?ch=money",
