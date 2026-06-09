@@ -1163,7 +1163,7 @@ async def system_status():
             last_row = last.scalar_one_or_none()
             if last_row:
                 last_push_time = str(last_row)[:16]
-    except Exception:
+    except Exception as e:
         pass
 
     total_push_today = sum(push_stats.values())

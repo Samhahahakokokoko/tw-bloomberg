@@ -129,7 +129,7 @@ async def add_reminder(
     try:
         q = await fetch_realtime_quote(stock_code)
         stock_name = q.get("name", "")
-    except Exception:
+    except Exception as e:
         pass
 
     reminder = EarningsReminder(
@@ -420,7 +420,7 @@ async def get_stock_earnings_info(stock_code: str) -> str:
     try:
         q = await fetch_realtime_quote(stock_code)
         stock_name = q.get("name", "") or ""
-    except Exception:
+    except Exception as e:
         pass
 
     title = f"📊 {stock_code} {stock_name} 財報資訊".strip()

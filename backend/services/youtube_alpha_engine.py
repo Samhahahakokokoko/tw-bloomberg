@@ -9,6 +9,7 @@ from datetime import datetime
 from typing import Optional
 
 from loguru import logger
+import asyncio
 
 YOUTUBE_API_KEY  = os.getenv("YOUTUBE_API_KEY", "")
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
@@ -136,7 +137,7 @@ async def analyze_with_claude(title: str, description: str) -> dict:
                 asyncio.create_task(log_module_status(
                     "anthropic_ai", "error", "credit balance is too low — AI 分析已停用"
                 ))
-            except Exception:
+            except Exception as e:
                 pass
         else:
             logger.warning(f"[youtube] claude analysis failed: {e}, using rule-based")

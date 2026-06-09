@@ -27,7 +27,7 @@ async def _lookup_stock_name(stock_code: str) -> str:
         from .twse_service import fetch_realtime_quote
         q = await fetch_realtime_quote(stock_code)
         return q.get("name", "") or ""
-    except Exception:
+    except Exception as e:
         return ""
 
 

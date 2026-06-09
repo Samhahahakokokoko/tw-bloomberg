@@ -829,7 +829,7 @@ async def _fetch_rt_cache() -> dict:
                             "name":       str(item.get("CompanyName", "") or ""),
                         }
                         _valid_ticker_cache.add(code)
-                    except Exception:
+                    except Exception as e:
                         pass
                 _log.info("[RT] TPEX added %d OTC stocks", len(prices) - tpex_before)
             else:

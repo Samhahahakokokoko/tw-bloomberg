@@ -161,7 +161,7 @@ async def _fetch_twse_daily_quote(stock_code: str) -> dict:
                 "source": "rt_cache_daily", "source_label": "TWSE 收盤",
                 "is_realtime": False, "is_stale": False,
             }
-    except Exception:
+    except Exception as e:
         pass
     try:
         for item in await _raw_twse_daily_all():
