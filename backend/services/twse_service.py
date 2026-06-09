@@ -86,15 +86,32 @@ async def _raw_twse_daily_all() -> list:
 
 @retry(max_attempts=3, delay=2.0)
 async def _raw_tpex_daily_all() -> list:
-    """TPEX 收盤報價 — raises on error, retried by decorator"""
-    async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
-        resp = await client.get(
-            f"{TPEX_BASE}/tpex_mainboard_daily_close_quotes",
-            params={"_": str(int(time.time() * 1000))},
-            headers={"Cache-Control": "no-cache", "Pragma": "no-cache"},
-        )
-        resp.raise_for_status()
-        return resp.json()
+    """TPEX 收盤報價 — raises on error, retried by decorator.
+    使用獨立 client（max_keepalive=0）+ 較長 read timeout 修復 chunked read 問題。
+    """
+    _urls = [
+        f"{TPEX_BASE}/tpex_mainboard_daily_close_quotes",
+        "https://www.tpex.org.tw/openapi/v2/tpex_mainboard_daily_close_quotes",
+    ]
+    last_err: Exception = RuntimeError("TPEX: no URL tried")
+    for url in _urls:
+        try:
+            async with httpx.AsyncClient(
+                timeout=httpx.Timeout(connect=10, read=35, write=10, pool=5),
+                limits=httpx.Limits(max_keepalive_connections=0, max_connections=5),
+                follow_redirects=True,
+            ) as client:
+                resp = await client.get(
+                    url,
+                    params={"_": str(int(time.time() * 1000))},
+                    headers={"Cache-Control": "no-cache", "Pragma": "no-cache"},
+                )
+                resp.raise_for_status()
+                return resp.json()
+        except Exception as e:
+            last_err = e
+            logger.warning(f"TPEX _raw_tpex_daily_all {url.split('/')[-2]} failed: {e}")
+    raise last_err
 
 
 @retry(max_attempts=3, delay=2.0)

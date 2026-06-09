@@ -13,6 +13,9 @@ from loguru import logger
 YOUTUBE_API_KEY  = os.getenv("YOUTUBE_API_KEY", "")
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 
+# 熔斷旗標：credit 耗盡後本 process 全程跳過 Anthropic API 呼叫
+_credit_exhausted: bool = False
+
 # 台股代碼正則（4-5碼數字，常見格式）
 STOCK_CODE_RE = re.compile(r'\b([2-9]\d{3}[A-Z]?)\b')
 
@@ -97,12 +100,14 @@ def _mock_videos(channel_id: str) -> list[dict]:
 
 async def analyze_with_claude(title: str, description: str) -> dict:
     """用 Claude API 做 NLP 分析，抽取股票和情緒"""
-    if not ANTHROPIC_API_KEY:
+    global _credit_exhausted
+
+    if _credit_exhausted or not ANTHROPIC_API_KEY:
         return _rule_based_analysis(title, description)
 
     try:
         import anthropic
-        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+        client = anthropic.AsyncAnthropic(api_key=ANTHROPIC_API_KEY)
         prompt = (
             f"分析以下台股 YouTube 影片內容，以 JSON 格式回傳：\n\n"
             f"標題：{title}\n描述：{description[:300]}\n\n"
@@ -113,18 +118,18 @@ async def analyze_with_claude(title: str, description: str) -> dict:
             f"4. key_points: 最多3個關鍵論點（繁體中文，每點20字內）\n\n"
             f"只回傳 JSON，不要其他說明。"
         )
-        msg = client.messages.create(
+        msg = await client.messages.create(
             model="claude-haiku-4-5-20251001",
             max_tokens=300,
             messages=[{"role": "user", "content": prompt}],
         )
         text = msg.content[0].text.strip()
-        # 清理 markdown code block
         text = re.sub(r"```json|```", "", text).strip()
         return json.loads(text)
     except Exception as e:
         if "credit balance is too low" in str(e):
-            logger.warning("[youtube] Anthropic API 額度不足，使用規則式分析")
+            _credit_exhausted = True
+            logger.warning("[youtube] Anthropic credit 耗盡，本 process 停止 AI 分析")
         else:
             logger.warning(f"[youtube] claude analysis failed: {e}, using rule-based")
         return _rule_based_analysis(title, description)
