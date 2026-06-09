@@ -289,7 +289,7 @@ async def run_news_pipeline(
             from sqlalchemy import select
 
             async with AsyncSessionLocal() as db:
-                r = await db.execute(select(Subscriber))
+                r = await db.execute(select(Subscriber).where(Subscriber.subscribed_morning == True))
                 subs = r.scalars().all()
             user_ids = [s.line_user_id for s in subs if s.line_user_id]
 

@@ -17,7 +17,7 @@ async def push_monthly_reports():
     year, month = last_month.year, last_month.month
 
     async with AsyncSessionLocal() as db:
-        r = await db.execute(select(Subscriber))
+        r = await db.execute(select(Subscriber).where(Subscriber.subscribed_morning == True))
         subscribers = r.scalars().all()
 
     for sub in subscribers:
