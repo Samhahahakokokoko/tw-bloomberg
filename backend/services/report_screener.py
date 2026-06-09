@@ -782,18 +782,30 @@ async def _fetch_rt_cache() -> dict:
 
             tpex_data = None
             for _tpex_url in _TPEX_URLS:
-                try:
-                    async with httpx.AsyncClient(
-                        timeout=httpx.Timeout(connect=10, read=35, write=10, pool=5),
-                        limits=httpx.Limits(max_keepalive_connections=0, max_connections=5),
-                        follow_redirects=True,
-                    ) as tpex_client:
-                        r = await tpex_client.get(_tpex_url)
-                    if r.status_code == 200 and "json" in r.headers.get("content-type", ""):
-                        tpex_data = r.json()
-                        break
-                except Exception as e:
-                    _log.warning("[RT] TPEX %s failed: %s", _tpex_url.split("/")[-2], e)
+                for _attempt in range(2):   # 每個 URL 最多重試一次
+                    try:
+                        async with httpx.AsyncClient(
+                            timeout=httpx.Timeout(connect=10, read=35, write=10, pool=5),
+                            limits=httpx.Limits(max_keepalive_connections=0, max_connections=5),
+                            follow_redirects=True,
+                        ) as tpex_client:
+                            r = await tpex_client.get(_tpex_url)
+                        ct = r.headers.get("content-type", "")
+                        if r.status_code == 200 and "json" in ct:
+                            tpex_data = r.json()
+                        elif r.status_code == 200:
+                            _log.warning("[RT] TPEX %s non-JSON (%s)", _tpex_url.split("/")[-2], ct[:40])
+                        else:
+                            _log.warning("[RT] TPEX %s HTTP %d", _tpex_url.split("/")[-2], r.status_code)
+                    except Exception as e:
+                        _log.warning("[RT] TPEX %s attempt%d failed: %s", _tpex_url.split("/")[-2], _attempt + 1, e)
+                        if _attempt == 0:
+                            import asyncio as _asyncio
+                            await _asyncio.sleep(2)
+                            continue
+                    break   # success or non-retryable error
+                if tpex_data is not None:
+                    break
 
             if tpex_data is not None:
                 tpex_before = len(prices)
