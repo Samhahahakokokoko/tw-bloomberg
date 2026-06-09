@@ -11,6 +11,11 @@ from ..utils.retry import retry
 TWSE_BASE = "https://openapi.twse.com.tw/v1"
 TPEX_BASE = "https://www.tpex.org.tw/openapi/v1"
 
+# 60-second in-memory cache for fetch_market_overview (called from 7+ places)
+_overview_cache: dict = {}
+_overview_cache_ts: float = 0.0
+_OVERVIEW_TTL = 60.0
+
 
 def _safe_float(v, default=0.0):
     try:
@@ -291,7 +296,11 @@ async def fetch_institutional(stock_code: str) -> dict:
 
 
 async def fetch_market_overview() -> dict:
-    """大盤指數概況"""
+    """大盤指數概況（60s TTL cache，避免多處同時呼叫 MI_INDEX）"""
+    global _overview_cache, _overview_cache_ts
+    if _overview_cache and (time.time() - _overview_cache_ts) < _OVERVIEW_TTL:
+        return _overview_cache
+
     url = f"{TWSE_BASE}/exchangeReport/MI_INDEX"
     try:
         async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
@@ -305,16 +314,19 @@ async def fetch_market_overview() -> dict:
                 # causing sign-flip when multiplied by the 漲跌 indicator.
                 change = sign * abs(float(str(taiex.get("漲跌點數", "0")).replace(",", "") or "0"))
                 pct    = sign * abs(float(str(taiex.get("漲跌百分比", "0")).replace(",", "") or "0"))
-                return {
+                result = {
                     "index": "TAIEX",
                     "value": float(str(taiex.get("收盤指數", "0")).replace(",", "")),
                     "change": change,
                     "change_pct": pct,
                     "date": taiex.get("日期", ""),
                 }
+                _overview_cache = result
+                _overview_cache_ts = time.time()
+                return result
     except Exception as e:
         logger.error(f"Market overview error: {e}")
-    return {}
+    return _overview_cache  # return stale data on error rather than empty dict
 
 
 async def fetch_stock_list() -> list[dict]:
