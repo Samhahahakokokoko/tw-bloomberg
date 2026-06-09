@@ -301,8 +301,10 @@ async def fetch_market_overview() -> dict:
             taiex = next((x for x in data if x.get("指數") == "發行量加權股價指數"), None)
             if taiex:
                 sign = 1 if taiex.get("漲跌", "+") == "+" else -1
-                change = sign * float(str(taiex.get("漲跌點數", "0")).replace(",", ""))
-                pct = sign * float(str(taiex.get("漲跌百分比", "0")).replace(",", ""))
+                # Use abs() because the raw numeric fields sometimes embed their own sign,
+                # causing sign-flip when multiplied by the 漲跌 indicator.
+                change = sign * abs(float(str(taiex.get("漲跌點數", "0")).replace(",", "") or "0"))
+                pct    = sign * abs(float(str(taiex.get("漲跌百分比", "0")).replace(",", "") or "0"))
                 return {
                     "index": "TAIEX",
                     "value": float(str(taiex.get("收盤指數", "0")).replace(",", "")),
