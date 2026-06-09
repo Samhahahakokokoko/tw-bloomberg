@@ -64,16 +64,18 @@ async def init_default_analysts():
         await db.commit()
         logger.info("[analyst_tracker] cleaned up mock analyst data")
 
-        # 沙盒期：把所有非 S 的分析師升為 A tier + win_rate=0.70（確保高可信）
-        r = await db.execute(select(Analyst).limit(1))
-        if r.scalar_one_or_none():
-            await db.execute(
-                update(Analyst)
-                .where(Analyst.tier.notin_(["S"]))
-                .values(tier="A", win_rate=0.70)
-            )
+        # 確保新加入的分析師（win_rate=0 且無 calls 記錄）有合理初始值
+        r = await db.execute(
+            select(Analyst).where(Analyst.win_rate == 0.0)
+        )
+        zero_rate = r.scalars().all()
+        if zero_rate:
+            for a in zero_rate:
+                a.win_rate = 0.70
+                if a.tier not in ("S", "A"):
+                    a.tier = "A"
             await db.commit()
-            logger.info("[analyst_tracker] sandbox upgrade: all analysts → tier=A win_rate=0.70")
+            logger.info("[analyst_tracker] set initial win_rate=0.70 for %d new analysts", len(zero_rate))
 
     # 補回 YouTube 真實頻道名稱
     try:
