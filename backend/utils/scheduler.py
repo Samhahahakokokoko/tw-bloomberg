@@ -183,6 +183,13 @@ def start_scheduler() -> AsyncIOScheduler:
         id="agent_c_decision", replace_existing=True,
     )
 
+    # 分點資料盤後更新 + 聰明錢警示 — 每日 19:00
+    scheduler.add_job(
+        _update_broker_data,
+        CronTrigger(day_of_week="mon-fri", hour=19, minute=0, timezone="Asia/Taipei"),
+        id="broker_data_update", replace_existing=True,
+    )
+
     # 持倉健康報告 — 每日 19:00 推播（portfolio_overlay）
     scheduler.add_job(
         _push_portfolio_overlay,
@@ -748,6 +755,32 @@ async def _push_smart_money():
         await push_smart_money_alerts()
     except Exception as e:
         logger.error(f"Smart money push failed: {e}")
+
+
+async def _update_broker_data():
+    """每日 19:00 — 自選股分點資料批次更新 + 聰明錢連買警示"""
+    try:
+        from ..models.models import Watchlist, Portfolio
+        from sqlalchemy import select as sa_select
+
+        # 取得需要更新的股票：自選股 + 持倉
+        codes: set[str] = set()
+        async with AsyncSessionLocal() as db:
+            for model in (Watchlist, Portfolio):
+                r = await db.execute(sa_select(model.stock_code).distinct())
+                codes.update(row[0] for row in r.all() if row[0])
+
+        if not codes:
+            logger.info("[Broker] 無自選股/持倉，跳過分點更新")
+            return
+
+        from ..services.broker_tracker import fetch_bulk_broker_data, push_consecutive_buy_alerts
+        updated = await fetch_bulk_broker_data(list(codes)[:30], days=10)
+        logger.info(f"[Broker] 分點資料更新完成：{updated}/{len(codes)} 檔")
+
+        await push_consecutive_buy_alerts()
+    except Exception as e:
+        logger.error(f"[Broker] broker_data_update failed: {e}")
 
 
 async def _push_daily_advice():

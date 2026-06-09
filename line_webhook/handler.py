@@ -1973,27 +1973,41 @@ async def _cmd_accuracy() -> list:
 
 
 async def _cmd_broker(stock_code: str) -> list:
-    """查詢特定股票前 10 大買超分點"""
+    """查詢特定股票買超/賣超分點排行"""
     try:
-        from backend.services.broker_tracker import get_top_brokers, fetch_broker_detail
-        # 先確保有快取資料
-        await fetch_broker_detail(stock_code, 10)
-        data = await get_top_brokers(stock_code, 10)
-        brokers = data.get("brokers", [])
-        if not brokers:
+        from backend.services.broker_tracker import get_broker_summary
+        data = await get_broker_summary(stock_code, days=10)
+        if data.get("no_data"):
             return [_text(
-                f"❌ {stock_code} 無分點資料\n"
-                "（免費版 FinMind 可能需要 token）",
+                f"❌ {stock_code} 無分點資料\n（需要 FinMind token，或盤後才有資料）",
                 _home_qr()
             )]
-        lines = [f"🏦 {stock_code} 前10大買超分點（近10日）", "─" * 22]
-        for i, b in enumerate(brokers[:8], 1):
-            net = b.get("net_shares", 0)
-            sign = "+" if net >= 0 else ""
-            lines.append(f"{i}. {b.get('broker_name','?')}\n   {sign}{net:,}張  連買{b.get('days_bought',0)}日")
+
+        name = data.get("stock_name", "")
+        header = f"🏦 {stock_code} {name} 主力分點".strip()
+        sep    = "─" * 18
+        lines  = [header, f"（近10日累計）", sep]
+
+        buyers = data.get("top_buyers", [])
+        if buyers:
+            lines.append("買超排行：")
+            for i, b in enumerate(buyers, 1):
+                net  = b["net_shares"]
+                days = b.get("days_bought", 0)
+                day_tag = f" {days}日" if days > 1 else ""
+                lines.append(f"  #{i} {b['broker_name']:<12} +{net:,}張{day_tag}")
+
+        sellers = data.get("top_sellers", [])
+        if sellers:
+            lines.append("")
+            lines.append("賣超排行：")
+            for i, b in enumerate(sellers, 1):
+                net = abs(b["net_shares"])
+                lines.append(f"  #{i} {b['broker_name']:<12} -{net:,}張")
+
         return [_text(
             "\n".join(lines),
-            qr_items(("📈 報價", f"/quote {stock_code}"), ("🕵️ 主力訊號", "/smart"))
+            qr_items(("📈 報價", f"/quote {stock_code}"), ("🧠 聰明錢", "/smart"))
         )]
     except Exception as e:
         return [_text(f"❌ 分點查詢失敗：{e}")]
@@ -2021,23 +2035,43 @@ async def _cmd_track(broker_name: str) -> list:
 
 
 async def _cmd_smart_money() -> list:
-    """偵測今日主力分點異動最大訊號"""
+    """今日主力分點聰明錢訊號"""
     try:
         from backend.services.broker_tracker import detect_smart_money
         signals = await detect_smart_money()
         if not signals:
             return [_text(
-                "🕵️ 今日無明顯主力分點訊號\n"
-                "（需要先累積分點快取資料）\n\n"
-                "先用 /broker 代碼 查詢幾檔股票",
+                "🧠 聰明錢追蹤\n────────────────\n"
+                "今日無明顯主力分點訊號\n"
+                "（分點資料為盤後更新，每日 19:00 自動同步）\n\n"
+                "也可先用 /broker 代碼 查詢個股建立快取",
                 _home_qr()
             )]
-        lines = ["🕵️ 聰明錢訊號", "─" * 22]
-        for s in signals[:6]:
-            lines.append(f"• {s['message']}")
+
+        lines = ["🧠 聰明錢追蹤", "─" * 18]
+        shown = set()
+        for s in signals[:8]:
+            sc   = s["stock_code"]
+            name = s.get("stock_name", "")
+            tag  = f"{sc} {name}".strip()
+
+            if sc not in shown:
+                shown.add(sc)
+                if lines[-1] != "─" * 18:
+                    lines.append("")
+                lines.append(f"{'▶' if s['type']=='consecutive_buy' else '⚡'} {tag}")
+
+            if s["type"] == "consecutive_buy":
+                net  = s.get("net_total", 0)
+                cday = s.get("consec_days", 0)
+                lines.append(f"   {s['broker_name']} 連續{cday}日買超 +{net:,}張")
+            else:
+                cnt = s.get("broker_count", 0)
+                lines.append(f"   {cnt}個主力分點同步進場 ⚡")
+
         return [_text(
             "\n".join(lines),
-            qr_items(("📊 選股", "/screener"), ("💼 庫存", "/portfolio"))
+            qr_items(("📊 選股", "/screener"), ("🏦 分點查詢", "/broker 2330"))
         )]
     except Exception as e:
         return [_text(f"❌ 訊號偵測失敗：{e}")]

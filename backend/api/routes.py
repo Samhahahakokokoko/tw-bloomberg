@@ -967,12 +967,15 @@ async def data_source_status():
     except Exception as e:
         results["twse"] = {"ok": False, "latency_ms": None, "note": str(e)[:60]}
 
-    # FinMind
+    # FinMind — use data endpoint with tiny query (info endpoint returns 404)
     t0 = time.monotonic()
     try:
-        async with httpx.AsyncClient(timeout=5) as c:
-            r = await c.get("https://api.finmindtrade.com/api/v4/info")
-            ok = r.status_code == 200
+        async with httpx.AsyncClient(timeout=6) as c:
+            r = await c.get(
+                "https://api.finmindtrade.com/api/v4/data",
+                params={"dataset": "TaiwanStockInfo", "data_id": "2330", "start_date": "2024-01-01"},
+            )
+            ok = r.status_code in (200, 402, 403)  # 402/403 = needs token but server is up
         results["finmind"] = {"ok": ok, "latency_ms": int((time.monotonic() - t0) * 1000), "note": "歷史財務資料"}
     except Exception as e:
         results["finmind"] = {"ok": False, "latency_ms": None, "note": str(e)[:60]}
