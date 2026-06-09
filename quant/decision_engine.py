@@ -14,11 +14,14 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, date
 from typing import Optional
 import asyncio
 
 logger = logging.getLogger(__name__)
+
+# 今日決策結果快取，避免同一天多次重跑引擎（key = (YYYY-MM-DD, uid)）
+_decision_cache: dict[tuple[str, str], "DailyDecision"] = {}
 
 MAX_DECISIONS       = 8
 BUY_MIN_CONFIDENCE  = 60     # 買進最低信心（技術面模式無 chip 時 medium ≈ 62）
@@ -147,6 +150,10 @@ class DecisionEngine:
 
     async def run(self, uid: str) -> DailyDecision:
         import time
+        cache_key = (date.today().isoformat(), uid)
+        if cache_key in _decision_cache:
+            logger.info("決策引擎 cache hit uid=%s", uid)
+            return _decision_cache[cache_key]
         logger.info("決策引擎開始執行 timestamp=%.3f uid=%s", time.time(), uid)
 
         from quant.audit_log_engine import AuditLogger
@@ -353,8 +360,6 @@ class DecisionEngine:
                     close        = m.close
                     watch_source = "mover"
                 logger.info("[WATCH] %s 收盤價=%.1f 來源=%s", m.stock_id, close, watch_source)
-                if m.stock_id == "2330":
-                    print(f"2330 使用的收盤價: {close}  (來源: {watch_source})")
                 decisions.append(Decision(
                     action="watch",
                     stock_code=m.stock_id, stock_name=m.name,
@@ -440,7 +445,7 @@ class DecisionEngine:
         except Exception as _ov_err:
             logger.warning("[Decision] market overview fetch failed: %s", _ov_err)
 
-        return DailyDecision(
+        result = DailyDecision(
             decisions=decisions[:MAX_DECISIONS],
             generated_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             movers_count=movers_count,
@@ -448,6 +453,8 @@ class DecisionEngine:
             pipeline_note="  ".join(notes),
             market_overview=market_overview,
         )
+        _decision_cache[cache_key] = result
+        return result
 
     def _make_buy(self, rec, movers: list) -> Optional[Decision]:
         """從 ScanRecord 生成買進決策"""
@@ -485,11 +492,7 @@ class DecisionEngine:
                         price_source = "mover"
                     break
 
-        # Debug：每支進入 _make_buy 的股票都印出收盤價與原因
-        logger.info("[BUY] %s 收盤價=%.1f 來源=%s", stock_id, close, price_source)
-        logger.info("[BUY] %s 原因列表: %s", stock_id, reasons)
-        if stock_id == "2330":
-            print(f"2330 使用的收盤價: {close}  (來源: {price_source})")
+        logger.info("[BUY] %s 收盤價=%.1f 來源=%s 原因=%s", stock_id, close, price_source, reasons)
 
         pos = {"core": 0.15, "medium": 0.10, "satellite": 0.05}.get(layer, 0.08)
         pos = min(pos, max_pos, MAX_POSITION_PCT)
