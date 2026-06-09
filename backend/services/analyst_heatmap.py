@@ -175,9 +175,10 @@ def generate_heatmap_image(rows: list[dict]) -> Path:
 
 
 async def push_consensus_report():
-    """每日 20:00 推送分析師共識報告給所有訂閱者"""
+    """每日 20:00 推送分析師共識報告給所有訂閱者（含去重）"""
     from ..models.database import AsyncSessionLocal, settings
     from ..models.models import Subscriber
+    from .push_dedup import check_and_record
     from sqlalchemy import select
     import httpx
 
@@ -202,15 +203,23 @@ async def push_consensus_report():
         subs = r.scalars().all()
 
     from .line_push import push_line_messages
+    sent = skipped = 0
     async with httpx.AsyncClient(timeout=30) as c:
         for sub in subs:
+            if not await check_and_record(sub.line_user_id, "analyst", text):
+                skipped += 1
+                continue
             await push_line_messages(
                 sub.line_user_id,
                 [{"type": "text", "text": text, "quickReply": qr}],
                 client=c,
                 context="analyst_heatmap",
             )
-    logger.info(f"[analyst_heatmap] pushed to {len(subs)} subscribers")
+            sent += 1
+
+    if skipped:
+        logger.info(f"[analyst_heatmap] {skipped} already pushed today, skipping")
+    logger.info(f"[analyst_heatmap] pushed to {sent} subscribers")
 
 
 async def calculate_daily_consensus_with_alpha() -> list:

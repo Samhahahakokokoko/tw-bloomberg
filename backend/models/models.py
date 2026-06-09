@@ -1130,3 +1130,16 @@ class UserPermission(Base):
     note       = Column(String(200), default="")
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class PushLog(Base):
+    """LINE 推送去重記錄 — 防止同類型訊息重複推送"""
+    __tablename__ = "push_log"
+    __table_args__ = (UniqueConstraint("user_id", "message_type", "period_key", "content_hash"),)
+
+    id           = Column(Integer, primary_key=True, index=True)
+    user_id      = Column(String(100), nullable=False, index=True)
+    message_type = Column(String(30), nullable=False, index=True)  # morning/weekly/daily/alert/analyst
+    content_hash = Column(String(64), nullable=False)              # SHA-256 前 64 chars
+    period_key   = Column(String(10), nullable=False, index=True)  # YYYY-MM-DD or YYYY-WNN
+    pushed_at    = Column(DateTime, default=datetime.utcnow)

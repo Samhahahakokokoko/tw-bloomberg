@@ -721,6 +721,7 @@ async def _handle_text(text: str, uid: str) -> list:
     if cmd == "/bug" and len(parts) >= 2:
         return await _cmd_feedback(" ".join(parts[1:]), uid, "bug")
     if cmd == "/system":                return await _cmd_system_health(uid)
+    if cmd == "/pushlog":               return await _cmd_pushlog(uid)
     if cmd == "/analyst":
         sub = parts[1].lower() if len(parts) > 1 else ""
         if sub == "list":               return await _cmd_analyst_list()
@@ -5152,6 +5153,24 @@ async def _cmd_system_health(uid: str) -> list:
         return [_text(text, qr_items(("🏠 主選單", "/help")))]
     except Exception as e:
         return [_text(f"❌ 系統狀態查詢失敗：{e}")]
+
+
+async def _cmd_pushlog(uid: str) -> list:
+    """/pushlog — 查看今日推送記錄"""
+    try:
+        from backend.services.push_dedup import get_today_log
+        records = await get_today_log(uid)
+        if not records:
+            return [_text("📭 今日尚無推送記錄")]
+        type_map = {"morning": "早報", "weekly": "週報", "daily": "每日決策",
+                    "analyst": "分析師共識", "alert": "警報"}
+        lines = ["📋 今日推送記錄", "─" * 18]
+        for r in records:
+            label = type_map.get(r["message_type"], r["message_type"])
+            lines.append(f"✅ {label}  {r['pushed_at'][11:]}")
+        return [_text("\n".join(lines))]
+    except Exception as e:
+        return [_text(f"❌ 查詢失敗：{e}")]
 
 
 async def _cmd_heatmap(uid: str) -> list:

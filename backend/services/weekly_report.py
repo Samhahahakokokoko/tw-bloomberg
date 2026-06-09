@@ -62,8 +62,9 @@ async def generate_weekly_report() -> str:
 async def push_weekly_report():
     from ..models.database import AsyncSessionLocal, settings
     from ..models.models import Subscriber
-    from sqlalchemy import select
+    from .push_dedup import check_and_record
     from .morning_report import _push_to_users
+    from sqlalchemy import select
 
     report = await generate_weekly_report()
 
@@ -73,11 +74,22 @@ async def push_weekly_report():
         )
         subs = result.scalars().all()
 
-    if subs:
-        await _push_to_users([s.line_user_id for s in subs], report)
-        logger.info(f"Weekly report pushed to {len(subs)} subscribers")
-    else:
+    if not subs:
         logger.info("Weekly report: no subscribers")
+        return
+
+    eligible = []
+    for sub in subs:
+        if await check_and_record(sub.line_user_id, "weekly", report):
+            eligible.append(sub.line_user_id)
+
+    skipped = len(subs) - len(eligible)
+    if skipped:
+        logger.info(f"Weekly report: {skipped} already pushed this week, skipping")
+
+    if eligible:
+        await _push_to_users(eligible, report)
+        logger.info(f"Weekly report pushed to {len(eligible)} subscribers")
 
 
 async def _weekly_ai_comment(summary: str) -> str:

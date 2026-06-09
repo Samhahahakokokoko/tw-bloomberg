@@ -122,9 +122,10 @@ async def generate_morning_report() -> str:
 
 
 async def push_morning_report():
-    """推送早報給所有訂閱者"""
+    """推送早報給所有訂閱者（含去重）"""
     from ..models.database import AsyncSessionLocal, settings
     from ..models.models import Subscriber
+    from .push_dedup import check_and_record
     from sqlalchemy import select
 
     report = await generate_morning_report()
@@ -139,8 +140,18 @@ async def push_morning_report():
         logger.info("Morning report: no subscribers")
         return
 
-    await _push_to_users([s.line_user_id for s in subscribers], report)
-    logger.info(f"Morning report pushed to {len(subscribers)} subscribers")
+    eligible = []
+    for sub in subscribers:
+        if await check_and_record(sub.line_user_id, "morning", report):
+            eligible.append(sub.line_user_id)
+
+    skipped = len(subscribers) - len(eligible)
+    if skipped:
+        logger.info(f"Morning report: {skipped} already pushed today, skipping")
+
+    if eligible:
+        await _push_to_users(eligible, report)
+        logger.info(f"Morning report pushed to {len(eligible)} subscribers")
 
 
 async def _fetch_total_institutional() -> dict:

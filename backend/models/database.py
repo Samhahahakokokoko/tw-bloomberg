@@ -100,6 +100,8 @@ _SQLITE_MIGRATIONS = [
     "CREATE INDEX IF NOT EXISTS ix_predictions_date   ON predictions(date)",
     "CREATE INDEX IF NOT EXISTS ix_strategy_user ON strategy_settings(user_id)",
     "CREATE INDEX IF NOT EXISTS ix_pipeline_run ON pipeline_log(run_id)",
+    "CREATE INDEX IF NOT EXISTS ix_pushlog_user_type ON push_log(user_id, message_type)",
+    "CREATE INDEX IF NOT EXISTS ix_pushlog_period    ON push_log(period_key)",
 ]
 
 _PG_MIGRATIONS = [
@@ -136,6 +138,8 @@ _PG_MIGRATIONS = [
     "CREATE INDEX IF NOT EXISTS ix_pipeline_run ON pipeline_log(run_id)",
     "CREATE INDEX IF NOT EXISTS ix_alpha_name ON alpha_registry(alpha_name)",
     "CREATE INDEX IF NOT EXISTS ix_callback_user ON callback_log(user_id)",
+    "CREATE INDEX IF NOT EXISTS ix_pushlog_user_type ON push_log(user_id, message_type)",
+    "CREATE INDEX IF NOT EXISTS ix_pushlog_period    ON push_log(period_key)",
 ]
 
 

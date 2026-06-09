@@ -1,4 +1,5 @@
 """APScheduler — 排程任務"""
+import asyncio
 import os
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -6,6 +7,11 @@ from apscheduler.triggers.cron import CronTrigger
 from loguru import logger
 from ..models.database import AsyncSessionLocal
 from ..services.line_push import push_line_messages
+
+_morning_lock   = asyncio.Lock()
+_weekly_lock    = asyncio.Lock()
+_decision_lock  = asyncio.Lock()
+_analyst_lock   = asyncio.Lock()
 
 
 async def _push_failure_alert(task_name: str, error: str) -> None:
@@ -575,20 +581,28 @@ async def _scan_stop_loss():
 
 
 async def _run_morning_report():
-    try:
-        from ..services.morning_report import push_morning_report
-        await push_morning_report()
-    except Exception as e:
-        logger.error(f"Morning report job failed: {e}")
-        await _push_failure_alert("早報推送 (morning_report)", e)
+    if _morning_lock.locked():
+        logger.info("[Scheduler] 早報推送已在執行中，跳過本次排程")
+        return
+    async with _morning_lock:
+        try:
+            from ..services.morning_report import push_morning_report
+            await push_morning_report()
+        except Exception as e:
+            logger.error(f"Morning report job failed: {e}")
+            await _push_failure_alert("早報推送 (morning_report)", e)
 
 
 async def _run_weekly_report():
-    try:
-        from ..services.weekly_report import push_weekly_report
-        await push_weekly_report()
-    except Exception as e:
-        logger.error(f"Weekly report job failed: {e}")
+    if _weekly_lock.locked():
+        logger.info("[Scheduler] 週報推送已在執行中，跳過本次排程")
+        return
+    async with _weekly_lock:
+        try:
+            from ..services.weekly_report import push_weekly_report
+            await push_weekly_report()
+        except Exception as e:
+            logger.error(f"Weekly report job failed: {e}")
 
 
 async def _run_scraper():
@@ -886,15 +900,19 @@ async def _push_portfolio_overlay():
 
 async def _push_daily_decision():
     """每日 19:30 — 決策報告推送給所有訂閱者"""
-    try:
-        from quant.decision_engine import DecisionEngine
-        from ..models.database import settings
-        engine = DecisionEngine()
-        n = await engine.push_all_subscribers(settings.line_channel_access_token)
-        logger.info(f"[DecisionEngine] pushed to {n} subscribers")
-    except Exception as e:
-        logger.error(f"Daily decision job failed: {e}")
-        await _push_failure_alert("每日決策報告 (decision_engine)", e)
+    if _decision_lock.locked():
+        logger.info("[Scheduler] 每日決策推送已在執行中，跳過本次排程")
+        return
+    async with _decision_lock:
+        try:
+            from quant.decision_engine import DecisionEngine
+            from ..models.database import settings
+            engine = DecisionEngine()
+            n = await engine.push_all_subscribers(settings.line_channel_access_token)
+            logger.info(f"[DecisionEngine] pushed to {n} subscribers")
+        except Exception as e:
+            logger.error(f"Daily decision job failed: {e}")
+            await _push_failure_alert("每日決策報告 (decision_engine)", e)
 
 
 # ── Alpha Pipeline 四段排程 ───────────────────────────────────────────────────
@@ -1099,11 +1117,15 @@ async def _run_analyst_performance():
 
 
 async def _push_analyst_consensus():
-    try:
-        from ..services.analyst_heatmap import push_consensus_report
-        await push_consensus_report()
-    except Exception as e:
-        logger.error(f"Analyst consensus push failed: {e}")
+    if _analyst_lock.locked():
+        logger.info("[Scheduler] 分析師共識推送已在執行中，跳過本次排程")
+        return
+    async with _analyst_lock:
+        try:
+            from ..services.analyst_heatmap import push_consensus_report
+            await push_consensus_report()
+        except Exception as e:
+            logger.error(f"Analyst consensus push failed: {e}")
 
 
 async def _push_autonomous_research():
