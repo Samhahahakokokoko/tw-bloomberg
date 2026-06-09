@@ -760,43 +760,60 @@ async def _fetch_rt_cache() -> dict:
                     _log.warning("[RT] DB chip fallback failed: %s", _dbe)
 
             # ── TPEX 上櫃股收盤（補充上市以外的股票）─────────────────────────
-            try:
-                r = await client.get(
-                    "https://www.tpex.org.tw/openapi/v1/tpex_mainboard_daily_close_quotes",
-                    follow_redirects=True,
-                )
-                if r.status_code == 200 and "json" in r.headers.get("content-type", ""):
-                    tpex_before = len(prices)
-                    for item in r.json():
-                        code = unify_ticker_format(item.get("SecuritiesCompanyCode", ""))
-                        if not code or code in prices:   # 已有 TWSE 資料的不覆蓋
+            # 使用獨立 client（max_keepalive_connections=0）避免 TPEX chunked read 問題；
+            # v2 為 v1 失敗時的 fallback。
+            _TPEX_URLS = [
+                "https://www.tpex.org.tw/openapi/v1/tpex_mainboard_daily_close_quotes",
+                "https://www.tpex.org.tw/openapi/v2/tpex_mainboard_daily_close_quotes",
+            ]
+            def _sf_tpex(v, default=0.0):
+                try:
+                    return float(str(v or "").replace(",", ""))
+                except (ValueError, TypeError):
+                    return default
+
+            tpex_data = None
+            for _tpex_url in _TPEX_URLS:
+                try:
+                    async with httpx.AsyncClient(
+                        timeout=httpx.Timeout(connect=10, read=35, write=10, pool=5),
+                        limits=httpx.Limits(max_keepalive_connections=0, max_connections=5),
+                        follow_redirects=True,
+                    ) as tpex_client:
+                        r = await tpex_client.get(_tpex_url)
+                    if r.status_code == 200 and "json" in r.headers.get("content-type", ""):
+                        tpex_data = r.json()
+                        break
+                except Exception as e:
+                    _log.warning("[RT] TPEX %s failed: %s", _tpex_url.split("/")[-2], e)
+
+            if tpex_data is not None:
+                tpex_before = len(prices)
+                for item in tpex_data:
+                    code = unify_ticker_format(item.get("SecuritiesCompanyCode", ""))
+                    if not code or code in prices:   # 已有 TWSE 資料的不覆蓋
+                        continue
+                    try:
+                        close  = _sf_tpex(item.get("Close"))
+                        change = _sf_tpex(item.get("Change"))
+                        vol_s  = str(item.get("TradingShares", "") or "").replace(",", "")
+                        vol    = int(vol_s) if vol_s.isdigit() else 0
+                        if close <= 0:
                             continue
-                        try:
-                            def _sf_tpex(v, default=0.0):
-                                try:
-                                    return float(str(v or "").replace(",", ""))
-                                except (ValueError, TypeError):
-                                    return default
-                            close  = _sf_tpex(item.get("Close"))
-                            change = _sf_tpex(item.get("Change"))
-                            vol_s  = str(item.get("TradingShares", "") or "").replace(",", "")
-                            vol    = int(vol_s) if vol_s.isdigit() else 0
-                            if close <= 0:
-                                continue
-                            prev = close - change
-                            pct  = round(change / prev * 100, 2) if prev and prev != 0 else 0.0
-                            prices[code] = {
-                                "close":      close,
-                                "change_pct": pct,
-                                "volume":     vol // 1000,   # 股 → 張
-                                "name":       str(item.get("CompanyName", "") or ""),
-                            }
-                            _valid_ticker_cache.add(code)
-                        except Exception as e:
-                            pass
-                    _log.info("[RT] TPEX added %d OTC stocks", len(prices) - tpex_before)
-            except Exception as e:
-                _log.warning("[RT] TPEX mainboard failed: %s", e)
+                        prev = close - change
+                        pct  = round(change / prev * 100, 2) if prev and prev != 0 else 0.0
+                        prices[code] = {
+                            "close":      close,
+                            "change_pct": pct,
+                            "volume":     vol // 1000,   # 股 → 張
+                            "name":       str(item.get("CompanyName", "") or ""),
+                        }
+                        _valid_ticker_cache.add(code)
+                    except Exception:
+                        pass
+                _log.info("[RT] TPEX added %d OTC stocks", len(prices) - tpex_before)
+            else:
+                _log.warning("[RT] TPEX mainboard: all endpoints failed, OTC stocks skipped")
 
     except Exception as e:
         _log.error("[RT] httpx session failed: %s", e)
