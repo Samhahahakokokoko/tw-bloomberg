@@ -726,7 +726,7 @@ async def _fetch_rt_cache() -> dict:
                     _log.warning("[RT] classic T86 fallback failed: %s", e)
 
             if not chips:
-                _log.warning("[RT] 三大法人資料無法取得，嘗試 DB price_history 快取")
+                _log.info("[RT] 三大法人資料無法取得（T86 為盤後資料），嘗試 DB price_history 快取")
                 try:
                     from datetime import date as _date, timedelta as _td
                     from ..models.database import AsyncSessionLocal as _ASL
@@ -755,7 +755,7 @@ async def _fetch_rt_cache() -> dict:
                     if chips:
                         _log.info("[RT] DB price_history chip fallback: %d stocks", len(chips))
                     else:
-                        _log.warning("[RT] DB price_history 無法人資料，chip_5d 將為 0")
+                        _log.info("[RT] DB price_history 無法人資料（Agent B 尚未執行），chip_5d 將為 0")
                 except Exception as _dbe:
                     _log.warning("[RT] DB chip fallback failed: %s", _dbe)
 
