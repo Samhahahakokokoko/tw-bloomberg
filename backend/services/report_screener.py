@@ -654,7 +654,10 @@ async def _fetch_rt_cache() -> dict:
 
             for _inst_url in _inst_urls:
                 try:
-                    r = await client.get(_inst_url, follow_redirects=True, timeout=15)
+                    r = await client.get(_inst_url, follow_redirects=False, timeout=10)
+                    if r.status_code in (301, 302, 303, 307, 308):
+                        _log.debug("[RT] %s → redirect, skipping", _inst_url)
+                        continue
                     if r.status_code != 200:
                         _log.warning("[RT] %s → HTTP %s, trying next", _inst_url, r.status_code)
                         continue
