@@ -140,10 +140,10 @@ async def _delete_old_backups() -> int:
             if dt < cutoff:
                 try:
                     svc.files().delete(fileId=f["id"]).execute()
-                    logger.info("[Backup] 刪除舊備份：%s", f["name"])
+                    logger.info("[Backup] 刪除舊備份：{}", f["name"])
                     deleted += 1
                 except Exception as e:
-                    logger.warning("[Backup] 刪除失敗 %s: %s", f["name"], e)
+                    logger.warning("[Backup] 刪除失敗 {}: {}", f["name"], e)
         return deleted
 
     return await loop.run_in_executor(None, _do)
@@ -174,7 +174,7 @@ async def _push_failure_alert(error_msg: str, ts: str) -> None:
             context="backup.failure_alert",
         )
     except Exception as e:
-        logger.error("[Backup] 推送失敗通知時出錯：%s", e)
+        logger.error("[Backup] 推送失敗通知時出錯：{}", e)
 
 
 # ── 主流程 ─────────────────────────────────────────────────────────────────────
@@ -190,7 +190,7 @@ async def run_backup() -> dict:
     db_url = os.getenv("DATABASE_URL", "")
     if not db_url:
         err = "DATABASE_URL 未設定"
-        logger.error("[Backup] %s", err)
+        logger.error("[Backup] {}", err)
         await _push_failure_alert(err, ts)
         return {"ok": False, "filename": "", "file_id": "", "size_mb": 0, "error": err}
 
@@ -198,26 +198,26 @@ async def run_backup() -> dict:
     gz_path = os.path.join(tmp_dir, filename)
 
     try:
-        logger.info("[Backup] 開始 pg_dump → %s", filename)
+        logger.info("[Backup] 開始 pg_dump → {}", filename)
         await _pg_dump(db_url, gz_path)
 
         size_mb = round(os.path.getsize(gz_path) / 1024 / 1024, 2)
-        logger.info("[Backup] pg_dump 完成，大小：%.2f MB", size_mb)
+        logger.info("[Backup] pg_dump 完成，大小：{:.2f} MB", size_mb)
 
         logger.info("[Backup] 上傳 Google Drive…")
         file_id = await _upload_to_drive(gz_path, filename)
-        logger.info("[Backup] 上傳成功 file_id=%s", file_id)
+        logger.info("[Backup] 上傳成功 file_id={}", file_id)
 
         deleted = await _delete_old_backups()
         if deleted:
-            logger.info("[Backup] 刪除 %d 筆過期備份", deleted)
+            logger.info("[Backup] 刪除 {} 筆過期備份", deleted)
 
         return {"ok": True, "filename": filename, "file_id": file_id,
                 "size_mb": size_mb, "error": ""}
 
     except Exception as e:
         err_str = str(e)
-        logger.error("[Backup] 備份失敗：%s", err_str, exc_info=True)
+        logger.error("[Backup] 備份失敗：{}", err_str, exc_info=True)
         await _push_failure_alert(err_str, ts)
         return {"ok": False, "filename": filename, "file_id": "",
                 "size_mb": 0, "error": err_str}

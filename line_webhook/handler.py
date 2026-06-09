@@ -215,7 +215,7 @@ async def _handle_postback_inner(data: str, uid: str) -> list:
         params = {"act": act}
     hid  = int(params.get("id", 0))
     code = params.get("code", "")
-    logger.info("[postback] uid=%s act=%r", uid[:8], act)
+    logger.info("[postback] uid={} act={}", uid[:8], act)
 
     if act == "add":
         delta = int(params.get("delta", 100))
@@ -472,9 +472,9 @@ async def _handle_postback_inner(data: str, uid: str) -> list:
         if result:
             return result
     except Exception as cb_err:
-        logger.debug("[postback] callback_router error: %s", cb_err)
+        logger.debug("[postback] callback_router error: {}", cb_err)
 
-    logger.info("[postback] 未定義 act=%s uid=%s", act, uid[:8])
+    logger.info("[postback] 未定義 act={} uid={}", act, uid[:8])
     try:
         from backend.models.database import AsyncSessionLocal
         from backend.models.models import CallbackLog
@@ -1075,7 +1075,7 @@ async def _cmd_portfolio(uid: str) -> list:
             ("💰 稅務", "/tax"),
         ))]
     except Exception as e:
-        logger.error("[cmd_portfolio] %s", e, exc_info=True)
+        logger.error("[cmd_portfolio] {}", e, exc_info=True)
         return [_text(f"❌ 庫存讀取失敗：{type(e).__name__}")]
 
 
@@ -1196,7 +1196,7 @@ async def _cmd_set_sl(code: str, price_str: str, uid: str) -> list:
             )
         )]
     except Exception as e:
-        logger.error("[cmd_set_sl] %s", e)
+        logger.error("[cmd_set_sl] {}", e)
         return [_text(f"❌ 設定失敗：{e}")]
 
 
@@ -1226,7 +1226,7 @@ async def _cmd_set_tp(code: str, price_str: str, uid: str) -> list:
             )
         )]
     except Exception as e:
-        logger.error("[cmd_set_tp] %s", e)
+        logger.error("[cmd_set_tp] {}", e)
         return [_text(f"❌ 設定失敗：{e}")]
 
 
@@ -1262,7 +1262,7 @@ async def _cmd_stops(uid: str) -> list:
             ("📰 新聞", "/news"),
         ))]
     except Exception as e:
-        logger.error("[cmd_stops] %s", e)
+        logger.error("[cmd_stops] {}", e)
         return [_text(f"❌ 查詢失敗：{e}")]
 
 
@@ -1459,7 +1459,7 @@ async def _cmd_analysis(uid: str) -> list:
             ("🔄 回測", "/backtest"),
         ))]
     except Exception as e:
-        logger.error("[cmd_analysis] %s", e)
+        logger.error("[cmd_analysis] {}", e)
         return [_text(f"❌ 分析失敗：{e}")]
 
 
@@ -1570,7 +1570,7 @@ async def _cmd_dividend(code: str, uid: str = "") -> list:
             ("💼 庫存",   "/p"),
         ))]
     except Exception as e:
-        logger.error("[cmd_dividend] %s", e)
+        logger.error("[cmd_dividend] {}", e)
         return [_text(f"❌ 查詢失敗：{type(e).__name__}")]
 
 
@@ -1607,7 +1607,7 @@ async def _cmd_etf(code: str) -> list:
             ("📈 報價",               f"/quote {code}"),
         ))]
     except Exception as e:
-        logger.error("[cmd_etf] %s", e, exc_info=True)
+        logger.error("[cmd_etf] {}", e, exc_info=True)
         return [_text(f"❌ ETF 查詢失敗：{type(e).__name__}")]
 
 
@@ -1627,7 +1627,7 @@ async def _cmd_etf_compare(code1: str, code2: str) -> list:
             (f"DCA {code2}",  f"/dca {code2} 3000"),
         ))]
     except Exception as e:
-        logger.error("[cmd_etf_compare] %s", e, exc_info=True)
+        logger.error("[cmd_etf_compare] {}", e, exc_info=True)
         return [_text(f"❌ 比較失敗：{type(e).__name__}")]
 
 
@@ -1651,7 +1651,7 @@ async def _cmd_dca(code: str, monthly_amount: int) -> list:
             (f"分析 {code}", f"/etf {code}"),
         ))]
     except Exception as e:
-        logger.error("[cmd_dca] %s", e, exc_info=True)
+        logger.error("[cmd_dca] {}", e, exc_info=True)
         return [_text(f"❌ 試算失敗：{type(e).__name__}")]
 
 
@@ -1666,7 +1666,7 @@ async def _cmd_exdiv(uid: str) -> list:
             ("📅 大盤新聞", "/news"),
         ))]
     except Exception as e:
-        logger.error("[cmd_exdiv] %s", e, exc_info=True)
+        logger.error("[cmd_exdiv] {}", e, exc_info=True)
         return [_text(f"❌ 配息清單查詢失敗：{type(e).__name__}")]
 
 
@@ -1678,7 +1678,7 @@ async def _cmd_backups() -> list:
         return [_text(format_backup_list(backups),
                       qr_items(("💾 立即備份", "/backup")))]
     except Exception as e:
-        logger.error("[cmd_backups] %s", e)
+        logger.error("[cmd_backups] {}", e)
         return [_text(f"❌ 備份清單查詢失敗：{type(e).__name__}")]
 
 
@@ -1705,7 +1705,7 @@ async def _backup_bg(uid: str) -> None:
         await push_line_messages(uid, [{"type": "text", "text": msg}],
                                  timeout=30, context="handler.backup_bg")
     except Exception as e:
-        logger.error("[backup_bg] %s", e)
+        logger.error("[backup_bg] {}", e)
         await push_line_messages(uid, [{"type": "text", "text": f"❌ 備份異常：{type(e).__name__}"}],
                                  timeout=15, context="handler.backup_bg.error")
 
@@ -1765,7 +1765,7 @@ async def _cmd_rec_dispatch(uid: str) -> list:
         return [_text("⏱ 策略分析中，請稍後再試 /rec",
                       qr_items(("💼 庫存", "/portfolio")))]
     except Exception as e:
-        logger.error("[rec] %s", e, exc_info=True)
+        logger.error("[rec] {}", e, exc_info=True)
         return [_text(f"❌ 策略推薦失敗：{type(e).__name__}",
                       qr_items(("💼 庫存", "/portfolio")))]
 
@@ -2299,7 +2299,7 @@ async def _cmd_news_stock(code: str, uid: str) -> list:
         news  = await get_stock_news(code, name, limit=5)
         msg   = format_stock_news_for_line(code, name, news)
     except Exception as e:
-        logger.warning("[news_stock] %s", e)
+        logger.warning("[news_stock] {}", e)
         msg = f"❌ 個股新聞查詢失敗：{type(e).__name__}"
     return [_text(msg, qr_items(
         ("📰 市場新聞", "/news"),
@@ -2518,7 +2518,7 @@ async def _cmd_pipeline(code: str, uid: str) -> list:
     except asyncio.TimeoutError:
         return [_text(f"⏱ {code} 量化分析逾時，請稍後再試 /pipeline {code}")]
     except Exception as e:
-        logger.error("[pipeline] %s", e)
+        logger.error("[pipeline] {}", e)
         return [_text(f"❌ 量化分析失敗：{type(e).__name__}")]
 
 
@@ -2699,7 +2699,7 @@ async def _cmd_daily(uid: str) -> list:
     except asyncio.TimeoutError:
         return [TextMessage(text="功能暫時無法使用，請稍後再試")]
     except Exception as e:
-        logger.error("[daily] %s", e, exc_info=True)
+        logger.error("[daily] {}", e, exc_info=True)
         return [TextMessage(text="功能暫時無法使用，請稍後再試")]
 
 
@@ -2710,22 +2710,22 @@ async def _daily_bg(uid: str) -> None:
     async def _push(text: str):
         ok = await push_line_messages(uid, [{"type": "text", "text": text[:4800]}], timeout=20, context="handler.daily_bg")
         if not ok:
-            logger.error("[daily_bg] LINE push failed uid=%s", uid)
+            logger.error("[daily_bg] LINE push failed uid={}", uid)
         else:
-            logger.info("[daily_bg] LINE push OK: uid=%s", uid)
+            logger.info("[daily_bg] LINE push OK: uid={}", uid)
 
     try:
-        logger.info("[daily_bg] Step 1: 啟動 DecisionEngine uid=%s", uid)
+        logger.info("[daily_bg] Step 1: 啟動 DecisionEngine uid={}", uid)
         from quant.decision_engine import DecisionEngine
         engine = DecisionEngine()
 
         logger.info("[daily_bg] Step 2: 開始 engine.run()（timeout=150s）")
         daily = await asyncio.wait_for(engine.run(uid), timeout=150)
 
-        logger.info("[daily_bg] Step 3: engine.run() 完成，共 %d 個決策", len(daily.decisions))
+        logger.info("[daily_bg] Step 3: engine.run() 完成，共 {} 個決策", len(daily.decisions))
         report = daily.format_line()
 
-        logger.info("[daily_bg] Step 4: 推送 LINE 訊息 uid=%s", uid)
+        logger.info("[daily_bg] Step 4: 推送 LINE 訊息 uid={}", uid)
         await _push(report)
         logger.info("[daily_bg] Step 5: 推送完成")
 
@@ -2736,7 +2736,7 @@ async def _daily_bg(uid: str) -> None:
         except Exception as e:
             pass
     except Exception as e:
-        logger.error("[daily_bg] 失敗：%s", e, exc_info=True)
+        logger.error("[daily_bg] 失敗：{}", e, exc_info=True)
         try:
             await _push(f"❌ 決策報告失敗：{type(e).__name__}: {e}")
         except Exception as e:
@@ -2756,7 +2756,7 @@ async def _cmd_movers(uid: str) -> list:
             ("📊 選股",     "/r"),
         ))]
     except Exception as e:
-        logger.error("[movers] %s", e)
+        logger.error("[movers] {}", e)
         return [_text(f"❌ 動能掃描失敗：{e}")]
 
 
@@ -2769,7 +2769,7 @@ async def _cmd_overlay(uid: str) -> list:
         report   = overlay.format_report(signals)
         return [TextMessage(text=report[:5000])]
     except Exception as e:
-        logger.error("[overlay] %s", e)
+        logger.error("[overlay] {}", e)
         return [TextMessage(text="功能暫時無法使用，請稍後再試")]
 
 
@@ -2788,7 +2788,7 @@ async def _cmd_research(code: str, uid: str) -> list:
             (f"AI分析 {code}", f"/ai {code}"),
         ))]
     except Exception as e:
-        logger.error("[research] %s", e)
+        logger.error("[research] {}", e)
         return [_text(f"❌ 研究清單失敗：{e}")]
 
 
@@ -2806,7 +2806,7 @@ async def _cmd_sector(uid: str) -> list:
             ("📋 決策報告",  "/daily"),
         ))]
     except Exception as e:
-        logger.error("[sector] %s", e)
+        logger.error("[sector] {}", e)
         from quant.sector_rotation_engine import SectorRotationEngine
         engine    = SectorRotationEngine()
         strengths = engine.scan_mock()
@@ -2826,7 +2826,7 @@ async def _cmd_flow(uid: str) -> list:
             ("📋 決策報告",  "/daily"),
         ))]
     except Exception as e:
-        logger.error("[flow] %s", e)
+        logger.error("[flow] {}", e)
         from quant.capital_flow_engine import CapitalFlowEngine
         snap = CapitalFlowEngine().mock_snapshot()
         return [_text(snap.format_line())]
@@ -2845,7 +2845,7 @@ async def _cmd_alpha_health(uid: str) -> list:
             ("📋 決策報告", "/daily"),
         ))]
     except Exception as e:
-        logger.error("[alpha] %s", e)
+        logger.error("[alpha] {}", e)
         return [_text(f"❌ Alpha 健康查詢失敗：{e}")]
 
 
@@ -2889,7 +2889,7 @@ async def _cmd_conviction(code: str, uid: str) -> list:
             (f"AI分析",     f"/ai {code}"),
         ))]
     except Exception as e:
-        logger.error("[conviction] %s", e)
+        logger.error("[conviction] {}", e)
         return [_text(f"❌ 信心指數計算失敗：{e}")]
 
 
@@ -3043,7 +3043,7 @@ async def _cmd_backtest_v2(parts: list[str], uid: str) -> list:
         ))
         return [_text(f"⏱ {code}《{label}》計算較久，改背景執行…完成後推送")]
     except Exception as e:
-        logger.error("[backtest_v2] %s", e)
+        logger.error("[backtest_v2] {}", e)
         return [_text(f"❌ 回測失敗：{type(e).__name__}", _BACKTEST_QR)]
 
 
@@ -3184,7 +3184,7 @@ async def _run_backtest_single(
                 f"（{wf_result.stability.pct_profitable*100:.0f}% 期間獲利）"
             )
         except Exception as e:
-            logger.warning("[backtest wf] %s", e)
+            logger.warning("[backtest wf] {}", e)
 
     label = _BACKTEST_LABELS.get(strategy, strategy)
     text  = _format_backtest_text(code, label, f"{d0} ~ {d1}",
@@ -3269,7 +3269,7 @@ async def _backtest_single_bg(code: str, strategy: str,
                 await push_line_messages(uid, [{"type":"text","text":txt}],
                                          timeout=20, context="backtest.single_bg")
     except Exception as e:
-        logger.error("[backtest_single_bg] %s", e)
+        logger.error("[backtest_single_bg] {}", e)
         await push_line_messages(uid, [{"type":"text","text":f"❌ 回測失敗：{e}"}],
                                  timeout=10, context="backtest.single_bg.err")
 
@@ -3294,7 +3294,7 @@ async def _backtest_multi_bg(codes: list[str], strategy: str,
                 )
                 results.append((code, report))
             except Exception as e:
-                logger.warning("[multi_bt] %s %s", code, e)
+                logger.warning("[multi_bt] {} {}", code, e)
 
         if not results:
             await push_line_messages(uid, [{"type":"text","text":"❌ 多股回測失敗"}],
@@ -3319,7 +3319,7 @@ async def _backtest_multi_bg(codes: list[str], strategy: str,
         await push_line_messages(uid, [{"type":"text","text":"\n".join(lines)}],
                                  timeout=20, context="backtest.multi_bg")
     except Exception as e:
-        logger.error("[backtest_multi_bg] %s", e)
+        logger.error("[backtest_multi_bg] {}", e)
         await push_line_messages(uid, [{"type":"text","text":f"❌ 多股回測失敗：{e}"}],
                                  timeout=10, context="backtest.multi_bg.err")
 
@@ -3346,7 +3346,7 @@ async def _backtest_compare_bg(code: str, uid: str) -> None:
                 )
                 results.append((strategy, report))
             except Exception as e:
-                logger.warning("[compare_bt] %s %s", strategy, e)
+                logger.warning("[compare_bt] {} {}", strategy, e)
 
         results.sort(key=lambda x: x[1].total_return, reverse=True)
         benchmark = await _fetch_benchmark_return(start_date)
@@ -3370,7 +3370,7 @@ async def _backtest_compare_bg(code: str, uid: str) -> None:
         await push_line_messages(uid, [{"type":"text","text":text}],
                                  timeout=20, context="backtest.compare_bg")
     except Exception as e:
-        logger.error("[backtest_compare_bg] %s", e)
+        logger.error("[backtest_compare_bg] {}", e)
         await push_line_messages(uid, [{"type":"text","text":f"❌ 比較失敗：{e}"}],
                                  timeout=10, context="backtest.compare_bg.err")
 
@@ -3498,7 +3498,7 @@ async def _backtest_bg(strategy: str, label: str, uid: str) -> None:
             timeout=20, context="handler.backtest_bg",
         )
     except Exception as e:
-        logger.error("[backtest_bg] %s", e)
+        logger.error("[backtest_bg] {}", e)
         await push_line_messages(uid, [{"type": "text", "text": f"❌ 回測計算失敗：{e}"}], timeout=10, context="handler.backtest_bg.error")
 
 
@@ -3568,7 +3568,7 @@ def _gen_strategy_signals_v2(feat_df: "pd.DataFrame", strategy: str) -> "pd.Seri
                 if k < 20 and k > d:   signals[i] = "buy"
                 elif k > 80 and k < d: signals[i] = "sell"
     except Exception as e:
-        logger.warning("[backtest_v2] signal gen failed: %s", e)
+        logger.warning("[backtest_v2] signal gen failed: {}", e)
     return pd.Series(signals)
 
 
@@ -3766,7 +3766,7 @@ async def _cmd_risk_report(uid: str) -> list:
         return [TextMessage(text="\n".join(lines)[:5000])]
 
     except Exception as e:
-        logger.error("[risk_report] %s", e)
+        logger.error("[risk_report] {}", e)
         return [TextMessage(text="功能暫時無法使用，請稍後再試")]
 
 
@@ -3813,7 +3813,7 @@ async def _risk_optimize_bg(uid: str) -> None:
 
         await push_line_messages(uid, [{"type": "text", "text": msg[:4800]}], timeout=30, context="handler.risk_optimize_bg")
     except Exception as e:
-        logger.error("[risk_optimize_bg] %s", e)
+        logger.error("[risk_optimize_bg] {}", e)
 
 
 # ── 策略管理指令 ─────────────────────────────────────────────────────────────
@@ -3829,7 +3829,7 @@ async def _cmd_strategy_manage(uid: str) -> list:
         return [_flex("策略管理", card,
                       qr_items(("💼 庫存", "/p"), ("📊 選股", "/r")))]
     except Exception as e:
-        logger.warning("[strategy] manage 失敗: %s", e)
+        logger.warning("[strategy] manage 失敗: {}", e)
         return [_text("策略管理暫時無法使用",
                       qr_items(("💼 庫存", "/p")))]
 
@@ -3849,7 +3849,7 @@ async def _cmd_strategy_perf(name: str, uid: str) -> list:
                       qr_items(("策略管理", "/strategy"),
                                ("📊 選股", "/r")))]
     except Exception as e:
-        logger.warning("[strategy] perf 失敗: %s", e)
+        logger.warning("[strategy] perf 失敗: {}", e)
         return [_text("績效暫時無法取得", qr_items(("策略管理", "/strategy")))]
 
 
@@ -3864,7 +3864,7 @@ async def _cmd_strategy_toggle(name: str, uid: str) -> list:
             _, msg = await toggle_strategy(db, uid, name)
         return [_text(msg, qr_items(("策略管理", "/strategy")))]
     except Exception as e:
-        logger.warning("[strategy] toggle 失敗: %s", e)
+        logger.warning("[strategy] toggle 失敗: {}", e)
         return [_text("切換失敗，請稍後再試")]
 
 
@@ -3880,7 +3880,7 @@ async def _cmd_strategy_preset(preset: str, uid: str) -> list:
             qr_items(("查看設定", "/strategy"), ("📊 選股", "/r")),
         )]
     except Exception as e:
-        logger.warning("[strategy] preset 失敗: %s", e)
+        logger.warning("[strategy] preset 失敗: {}", e)
         return [_text("設定失敗，請稍後再試")]
 
 
@@ -3897,7 +3897,7 @@ async def _cmd_report(screen_type: str, uid: str, sector: str = "") -> list:
     except asyncio.TimeoutError:
         return [TextMessage(text="功能暫時無法使用，請稍後再試")]
     except Exception as e:
-        logger.error("[report] %s", e)
+        logger.error("[report] {}", e)
         return [TextMessage(text="功能暫時無法使用，請稍後再試")]
 
     if not rows:

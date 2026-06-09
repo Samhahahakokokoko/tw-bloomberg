@@ -52,7 +52,7 @@ async def get_role(user_id: str) -> str:
                 return role
             return u.role
     except Exception as e:
-        logger.warning("[permission] get_role failed: %s", e)
+        logger.warning("[permission] get_role failed: {}", e)
         return "admin" if user_id == ADMIN_UID else "basic"
 
 
@@ -74,7 +74,7 @@ async def get_daily_count(user_id: str) -> int:
             )
             return r.scalar() or 0
     except Exception as e:
-        logger.warning("[permission] daily_count failed: %s", e)
+        logger.warning("[permission] daily_count failed: {}", e)
         return 0
 
 
@@ -87,7 +87,7 @@ async def log_usage(user_id: str, action: str) -> None:
             db.add(UsageLog(user_id=user_id, action=action[:50]))
             await db.commit()
     except Exception as e:
-        logger.warning("[permission] log_usage failed: %s", e)
+        logger.warning("[permission] log_usage failed: {}", e)
 
 
 async def check_permission(user_id: str, cmd: str) -> tuple[bool, str]:
@@ -195,7 +195,7 @@ async def get_all_users() -> list[dict]:
             for u in users
         ]
     except Exception as e:
-        logger.warning("[permission] get_all_users failed: %s", e)
+        logger.warning("[permission] get_all_users failed: {}", e)
         return []
 
 
@@ -219,5 +219,5 @@ async def get_usage_stats() -> list[dict]:
             )
             return [{"user_id": row[0], "count": row[1]} for row in r.all()]
     except Exception as e:
-        logger.warning("[permission] usage_stats failed: %s", e)
+        logger.warning("[permission] usage_stats failed: {}", e)
         return []

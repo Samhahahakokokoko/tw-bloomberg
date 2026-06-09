@@ -170,9 +170,9 @@ async def execute_nl_query(query: str) -> dict:
                 for r in live_rows
             ]
             if results:
-                logger.info("[NLParser] DB 無評分，改用即時 %s 篩選 %d 檔", live_type, len(results))
+                logger.info("[NLParser] DB 無評分，改用即時 {} 篩選 {} 檔", live_type, len(results))
         except Exception as e:
-            logger.warning("[NLParser] live fallback failed: %s", e)
+            logger.warning("[NLParser] live fallback failed: {}", e)
 
     # 產生 AI 總結
     ai_summary = await generate_nl_recommendation(query, results)

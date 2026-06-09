@@ -142,7 +142,7 @@ async def resolve_channel_id(identifier: str, id_type: str) -> str:
                 return identifier
 
     except Exception as e:
-        logger.warning("[onboarding] resolve_channel_id failed: %s", e)
+        logger.warning("[onboarding] resolve_channel_id failed: {}", e)
 
     return identifier  # fallback
 
@@ -244,7 +244,7 @@ async def fetch_channel_preview(channel_id: str, raw_url: str = "") -> Optional[
                 for item in r2.json().get("items", []):
                     recent_titles.append(item["snippet"].get("title", ""))
         except Exception as e:
-            logger.warning("[onboarding] fetch_channel_preview API failed: %s", e)
+            logger.warning("[onboarding] fetch_channel_preview API failed: {}", e)
 
     # fallback：從 handle 推導 @handle，或直接用 channel_id 縮寫
     if not title:
@@ -312,7 +312,7 @@ async def start_review(url: str) -> tuple[Optional[ChannelPreview], str]:
         return None, "頻道資訊取得失敗"
 
     _pending_reviews[channel_id] = preview
-    logger.info("[onboarding] pending review: %s (%s)", preview.title, channel_id)
+    logger.info("[onboarding] pending review: {} ({})", preview.title, channel_id)
     return preview, ""
 
 
@@ -374,18 +374,18 @@ async def approve_channel(channel_id: str, override_name: str = "",
             await db.commit()
 
         _pending_reviews.pop(channel_id, None)
-        logger.info("[onboarding] approved: %s → sandbox until %s", name, sandbox_end)
+        logger.info("[onboarding] approved: {} → sandbox until {}", name, sandbox_end)
         return True, f"✅ 已核准「{name}」，進入 30 天沙盒追蹤（至 {sandbox_end}）"
 
     except Exception as e:
-        logger.error("[onboarding] approve failed: %s", e)
+        logger.error("[onboarding] approve failed: {}", e)
         return False, f"核准失敗：{e}"
 
 
 async def reject_channel(channel_id: str, reason: str = "") -> str:
     preview = _pending_reviews.pop(channel_id, None)
     name = preview.title if preview else channel_id
-    logger.info("[onboarding] rejected: %s reason=%s", name, reason)
+    logger.info("[onboarding] rejected: {} reason={}", name, reason)
     return f"❌ 已拒絕「{name}」{('：' + reason) if reason else ''}"
 
 
@@ -462,7 +462,7 @@ async def refresh_analyst_names() -> int:
                             # 同時更新 channel_id 為真實 UC ID
                             name_map[f"__cid__{a.channel_id}"] = real_cid
                 except Exception as e:
-                    logger.warning("[onboarding] handle lookup failed %s: %s", handle, e)
+                    logger.warning("[onboarding] handle lookup failed {}: {}", handle, e)
 
         if not name_map:
             logger.info("[onboarding] YouTube API returned no titles")
@@ -484,9 +484,9 @@ async def refresh_analyst_names() -> int:
                     updated += 1
             await db.commit()
 
-        logger.info("[onboarding] refreshed %d analyst names", updated)
+        logger.info("[onboarding] refreshed {} analyst names", updated)
         return updated
 
     except Exception as e:
-        logger.error("[onboarding] refresh_analyst_names failed: %s", e)
+        logger.error("[onboarding] refresh_analyst_names failed: {}", e)
         return 0

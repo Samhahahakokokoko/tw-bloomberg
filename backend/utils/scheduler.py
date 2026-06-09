@@ -36,9 +36,9 @@ async def _push_failure_alert(task_name: str, error: str) -> None:
                 client=c,
                 context="scheduler.failure_alert",
             )
-        logger.info("[Scheduler] 失敗通知已推送：%s", task_name)
+        logger.info("[Scheduler] 失敗通知已推送：{}", task_name)
     except Exception as e:
-        logger.error("[Scheduler] 推送失敗通知時出錯：%s", e)
+        logger.error("[Scheduler] 推送失敗通知時出錯：{}", e)
 
 
 def start_scheduler() -> AsyncIOScheduler:
@@ -556,11 +556,11 @@ async def _run_db_backup():
         from ..services.backup_service import run_backup
         result = await run_backup()
         if result["ok"]:
-            logger.info("[Backup] 成功：%s (%.2f MB)", result["filename"], result.get("size_mb", 0))
+            logger.info("[Backup] 成功：{} ({:.2f} MB)", result["filename"], result.get("size_mb", 0))
         else:
-            logger.error("[Backup] 失敗：%s", result["error"])
+            logger.error("[Backup] 失敗：{}", result["error"])
     except Exception as e:
-        logger.error("[Backup] job 異常：%s", e)
+        logger.error("[Backup] job 異常：{}", e)
 
 
 async def _scan_stop_loss():
@@ -569,9 +569,9 @@ async def _scan_stop_loss():
         from ..services.stop_loss_service import scan_and_alert
         n = await scan_and_alert()
         if n:
-            logger.info("[StopLoss] %d 個停損/停利提醒已推播", n)
+            logger.info("[StopLoss] {} 個停損/停利提醒已推播", n)
     except Exception as e:
-        logger.error("[StopLoss] scan job failed: %s", e)
+        logger.error("[StopLoss] scan job failed: {}", e)
 
 
 async def _run_morning_report():
@@ -630,7 +630,7 @@ async def _scan_dividend_reminders():
         from ..services.dividend_service import scan_dividend_reminders
         n = await scan_dividend_reminders()
         if n:
-            logger.info("[Dividend] %d 筆除權息提醒已推播", n)
+            logger.info("[Dividend] {} 筆除權息提醒已推播", n)
     except Exception as e:
         logger.error(f"[Dividend] scan_dividend_reminders failed: {e}")
 
@@ -951,7 +951,7 @@ async def _run_pipeline_scanner_filter():
         strengths = await engine.scan()
         signal    = engine.detect_rotation(strengths)
         await engine.save_snapshot(strengths)
-        logger.info("[Pipeline 18:15] sector: main=%s rotation=%s",
+        logger.info("[Pipeline 18:15] sector: main={} rotation={}",
                     ",".join(signal.mainstream[:2]), signal.rotation_alert)
     except Exception as e:
         logger.error(f"[Pipeline 18:15] sector_rotation failed: {e}")
@@ -978,7 +978,7 @@ async def _run_pipeline_research():
             r    = await checker.check(code)
             results.append(f"{code}:{r.overall}({r.auto_pass}/6)")
 
-        logger.info("[Pipeline 18:30] research: %s", " ".join(results))
+        logger.info("[Pipeline 18:30] research: {}", " ".join(results))
     except Exception as e:
         logger.error(f"[Pipeline 18:30] research failed: {e}")
     try:
@@ -993,7 +993,7 @@ async def _run_pipeline_research():
                 health = await engine.update_ic(alpha, history[-1])
                 if health.status == "DEAD":
                     dead.append(alpha)
-        logger.info("[Pipeline 18:30] alpha_decay: %d dead factors=%s",
+        logger.info("[Pipeline 18:30] alpha_decay: {} dead factors={}",
                     len(dead), dead)
     except Exception as e:
         logger.error(f"[Pipeline 18:30] alpha_decay failed: {e}")
@@ -1019,7 +1019,7 @@ async def _run_pipeline_overlay_prep():
                 signals = await overlay.scan(uid)
                 total_signals += len(signals)
 
-        logger.info("[Pipeline 18:45] overlay prep: %d 檔持倉已掃描", total_signals)
+        logger.info("[Pipeline 18:45] overlay prep: {} 檔持倉已掃描", total_signals)
     except Exception as e:
         logger.error(f"[Pipeline 18:45] overlay prep failed: {e}")
     try:
@@ -1034,7 +1034,7 @@ async def _run_pipeline_overlay_prep():
             {"mover": m, "scan_rec": r, "research": None, "regime": {"regime": "UNKNOWN", "confidence": 0.5}}
             for m, r in zip(movers[:10], all_recs[:10])
         ])
-        logger.info("[Pipeline 18:45] conviction: %d 檔達交易門檻", len(results))
+        logger.info("[Pipeline 18:45] conviction: {} 檔達交易門檻", len(results))
     except Exception as e:
         logger.error(f"[Pipeline 18:45] conviction failed: {e}")
 
@@ -1256,7 +1256,7 @@ async def _push_narrative_map():
                     )
                 except Exception as e:
                     pass
-        logger.info("[Narrative] pushed to %d subscribers", len(subs))
+        logger.info("[Narrative] pushed to {} subscribers", len(subs))
     except Exception as e:
         logger.error(f"Narrative map push failed: {e}")
 
@@ -1273,7 +1273,7 @@ async def _run_committee_batch():
                   for m in movers[:3]]
         results = await run_batch_committee(stocks)
         buy_signals = [r for r in results if r.final_action in ("buy", "strong_buy")]
-        logger.info("[Committee] batch: %d stocks, %d buy signals", len(results), len(buy_signals))
+        logger.info("[Committee] batch: {} stocks, {} buy signals", len(results), len(buy_signals))
     except Exception as e:
         logger.error(f"Committee batch failed: {e}")
 
@@ -1282,7 +1282,7 @@ async def _run_self_learning_weights():
     try:
         from quant.self_learning_weight_engine import compute_weight_update
         report = await compute_weight_update()
-        logger.info("[SelfLearn] weights updated: +%d -%d pause=%d",
+        logger.info("[SelfLearn] weights updated: +{} -{} pause={}",
                     len(report.boosted_factors), len(report.decayed_factors),
                     len(report.disabled_factors))
     except Exception as e:
@@ -1314,7 +1314,7 @@ async def _push_macro_weekly():
                     )
                 except Exception as e:
                     pass
-        logger.info("[Macro] weekly report pushed to %d", len(subs))
+        logger.info("[Macro] weekly report pushed to {}", len(subs))
     except Exception as e:
         logger.error(f"Macro weekly push failed: {e}")
 
@@ -1341,7 +1341,7 @@ async def _run_system_health_check():
         from quant.system_health_dashboard import collect_health
         health = await collect_health()
         if health.overall_status == "red":
-            logger.critical("[Health] system status RED: %s",
+            logger.critical("[Health] system status RED: {}",
                             [m.name for m in health.modules if m.status == "red"])
     except Exception as e:
         logger.error(f"System health check failed: {e}")
@@ -1356,19 +1356,19 @@ async def _run_market_intel_scan():
         from quant.institutional_footprint_engine import scan_institutional_footprint
 
         results_tl = await run_market_timeline()
-        logger.info("[Intel 15:30] timeline: %d stocks scanned", len(results_tl))
+        logger.info("[Intel 15:30] timeline: {} stocks scanned", len(results_tl))
 
         result_ll = await run_lead_lag_scan()
-        logger.info("[Intel 15:30] lead_lag: %d triggered", len(result_ll.triggered_signals))
+        logger.info("[Intel 15:30] lead_lag: {} triggered", len(result_ll.triggered_signals))
 
         results_theme = await run_theme_propagation()
-        logger.info("[Intel 15:30] theme: top=%s %.0f%%",
+        logger.info("[Intel 15:30] theme: top={} {:.0f}%%",
                     results_theme[0].theme if results_theme else "N/A",
                     results_theme[0].total_score if results_theme else 0)
 
         results_fp = await scan_institutional_footprint()
         smart = sum(1 for r in results_fp if r.is_smart_money)
-        logger.info("[Intel 15:30] footprint: %d smart money", smart)
+        logger.info("[Intel 15:30] footprint: {} smart money", smart)
     except Exception as e:
         logger.error(f"[Intel 15:30] market intel scan failed: {e}")
 
@@ -1405,7 +1405,7 @@ async def _run_drift_detection_job():
                     )
                 except Exception as e:
                     pass
-        logger.info("[drift 16:30] pushed %d alerts to %d subscribers",
+        logger.info("[drift 16:30] pushed {} alerts to {} subscribers",
                     len(report.high_severity), len(subs))
     except Exception as e:
         logger.error(f"[drift 16:30] drift detection failed: {e}")
@@ -1448,7 +1448,7 @@ async def _push_euphoria_stress():
                     )
                 except Exception as e:
                     pass
-        logger.info("[intel 17:00] euphoria=%.1f stress=%.1f pushed to %d",
+        logger.info("[intel 17:00] euphoria={:.1f} stress={:.1f} pushed to {}",
                     euphoria.euphoria_score, stress.stress_score, len(subs))
     except Exception as e:
         logger.error(f"[intel 17:00] euphoria/stress push failed: {e}")
@@ -1499,7 +1499,7 @@ async def _push_ai_debate():
                     )
                 except Exception as e:
                     pass
-        logger.info("[intel 20:30] debate pushed %d stocks to %d subscribers",
+        logger.info("[intel 20:30] debate pushed {} stocks to {} subscribers",
                     len(target), len(subs))
     except Exception as e:
         logger.error(f"[intel 20:30] ai debate push failed: {e}")
@@ -1514,7 +1514,7 @@ async def _run_prediction_market_weekly():
         snapshot = await get_snapshot()
 
         expired = [p for p in snapshot.predictions if p.days_left <= 0]
-        logger.info("[predict Fri19:00] active=%d resolved=%d expired_today=%d acc=%.0f%%",
+        logger.info("[predict Fri19:00] active={} resolved={} expired_today={} acc={:.0f}%%",
                     snapshot.total_active, snapshot.total_resolved,
                     len(expired), snapshot.accuracy_30d * 100)
     except Exception as e:

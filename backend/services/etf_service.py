@@ -52,7 +52,7 @@ async def _fetch_history_prices(code: str) -> list[dict]:
         if records and len(records) >= 20:
             return records
     except Exception as e:
-        logger.warning("[etf] yfinance failed for %s: %s", code, e)
+        logger.warning("[etf] yfinance failed for {}: {}", code, e)
 
     # TWSE 月別備援：抓近 13 個月
     import httpx
@@ -86,7 +86,7 @@ async def _fetch_history_prices(code: str) -> list[dict]:
                 except Exception as e:
                     continue
         except Exception as e:
-            logger.warning("[etf] TWSE kline %s/%s error: %s", y, m, e)
+            logger.warning("[etf] TWSE kline {}/{} error: {}", y, m, e)
     results.sort(key=lambda x: x["date"])
     return results
 

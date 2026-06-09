@@ -186,7 +186,7 @@ async def scan_and_alert() -> int:
                             a2.sl_triggered_date = today
                             await db.commit()
                     pushed += 1
-                    logger.info("[StopLoss] SL triggered: %s %s uid=%s", alert.stock_code, price, alert.user_id[:8])
+                    logger.info("[StopLoss] SL triggered: {} {} uid={}", alert.stock_code, price, alert.user_id[:8])
 
                 # 停利觸發
                 if (
@@ -210,13 +210,13 @@ async def scan_and_alert() -> int:
                             a2.tp_triggered_date = today
                             await db.commit()
                     pushed += 1
-                    logger.info("[TakeProfit] TP triggered: %s %s uid=%s", alert.stock_code, price, alert.user_id[:8])
+                    logger.info("[TakeProfit] TP triggered: {} {} uid={}", alert.stock_code, price, alert.user_id[:8])
 
             except Exception as e:
-                logger.warning("[StopLoss] scan error for %s: %s", alert.stock_code, e)
+                logger.warning("[StopLoss] scan error for {}: {}", alert.stock_code, e)
 
     except Exception as e:
-        logger.error("[StopLoss] scan_and_alert failed: %s", e)
+        logger.error("[StopLoss] scan_and_alert failed: {}", e)
 
     return pushed
 

@@ -254,7 +254,7 @@ async def compute_dna(analyst_id: str) -> Optional[AnalystDNA]:
         return dna
 
     except Exception as e:
-        logger.error("[DNA] compute failed for %s: %s", analyst_id, e)
+        logger.error("[DNA] compute failed for {}: {}", analyst_id, e)
         return None
 
 
@@ -286,7 +286,7 @@ async def _save_dna(dna: AnalystDNA):
             rec.last_updated           = dna.last_updated
             await db.commit()
     except Exception as e:
-        logger.warning("[DNA] save failed: %s", e)
+        logger.warning("[DNA] save failed: {}", e)
 
 
 async def load_dna(analyst_id: str) -> Optional[AnalystDNA]:
@@ -361,7 +361,7 @@ async def get_weighted_analysts(
         return results
 
     except Exception as e:
-        logger.error("[DNA] get_weighted_analysts failed: %s", e)
+        logger.error("[DNA] get_weighted_analysts failed: {}", e)
         return []
 
 
@@ -383,8 +383,8 @@ async def run_weekly_dna_update():
                 if dna:
                     updated += 1
             except Exception as e:
-                logger.warning("[DNA] update failed for %s: %s", a.analyst_id, e)
+                logger.warning("[DNA] update failed for {}: {}", a.analyst_id, e)
 
-        logger.info("[DNA] weekly update: %d/%d analysts updated", updated, len(analysts))
+        logger.info("[DNA] weekly update: {}/{} analysts updated", updated, len(analysts))
     except Exception as e:
-        logger.error("[DNA] weekly update failed: %s", e)
+        logger.error("[DNA] weekly update failed: {}", e)

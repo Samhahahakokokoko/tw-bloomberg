@@ -334,7 +334,7 @@ async def scan_dividend_reminders() -> int:
                     )
 
     except Exception as e:
-        logger.error("[dividend] scan_dividend_reminders failed: %s", e)
+        logger.error("[dividend] scan_dividend_reminders failed: {}", e)
 
     return pushed
 

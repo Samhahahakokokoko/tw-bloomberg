@@ -204,7 +204,7 @@ async def evaluate_sandbox(analyst_id: str) -> Optional[SandboxEvaluation]:
         )
 
     except Exception as e:
-        logger.error("[sandbox] evaluate failed for %s: %s", analyst_id, e)
+        logger.error("[sandbox] evaluate failed for {}: {}", analyst_id, e)
         return None
 
 
@@ -250,11 +250,11 @@ async def promote_analyst(analyst_id: str, new_tier: str = "") -> tuple[bool, st
 
             await db.commit()
 
-        logger.info("[sandbox] promoted %s → Tier %s", evaluation.analyst_name, tier)
+        logger.info("[sandbox] promoted {} → Tier {}", evaluation.analyst_name, tier)
         return True, f"🎉 {evaluation.analyst_name} 晉升 {tier} 級正式分析師！（勝率 {evaluation.win_rate:.0%}）"
 
     except Exception as e:
-        logger.error("[sandbox] promote failed: %s", e)
+        logger.error("[sandbox] promote failed: {}", e)
         return False, f"晉升失敗：{e}"
 
 
@@ -316,10 +316,10 @@ async def run_daily_sandbox_evaluation():
                 if ok:
                     promoted += 1
 
-        logger.info("[sandbox] daily eval: %d promoted, %d rejected, %d still active",
+        logger.info("[sandbox] daily eval: {} promoted, {} rejected, {} still active",
                     promoted, rejected, len(sandboxes) - promoted - rejected)
     except Exception as e:
-        logger.error("[sandbox] daily eval failed: %s", e)
+        logger.error("[sandbox] daily eval failed: {}", e)
 
 
 async def list_sandbox_analysts() -> list[SandboxEvaluation]:
@@ -342,5 +342,5 @@ async def list_sandbox_analysts() -> list[SandboxEvaluation]:
                 results.append(ev)
         return results
     except Exception as e:
-        logger.error("[sandbox] list failed: %s", e)
+        logger.error("[sandbox] list failed: {}", e)
         return []

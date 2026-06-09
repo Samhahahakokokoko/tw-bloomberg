@@ -75,7 +75,7 @@ async def init_default_analysts():
                 if a.tier not in ("S", "A"):
                     a.tier = "A"
             await db.commit()
-            logger.info("[analyst_tracker] set initial win_rate=0.70 for %d new analysts", len(zero_rate))
+            logger.info("[analyst_tracker] set initial win_rate=0.70 for {} new analysts", len(zero_rate))
 
     # 補回 YouTube 真實頻道名稱
     try:
