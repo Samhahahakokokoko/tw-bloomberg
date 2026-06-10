@@ -100,10 +100,13 @@ async def generate_daily_trading_advice() -> str:
     lines.append("")
 
     # 觀察清單（中等評分；live fallback 直接取 ranks 4-6）
+    buy_codes = {s["stock_code"] for s in buy_candidates}
     if data_is_live:
         observe = top_db[:3]  # top_db is live_rows[3:6] in live path
     else:
-        observe = [s for s in top_db if 50 <= s.get("total_score", 0) < 70][:3] if top_db else []
+        observe = [s for s in top_db
+                   if 50 <= s.get("total_score", 0) < 70
+                   and s["stock_code"] not in buy_codes][:3] if top_db else []
     if observe:
         lines.append("🟡 觀察清單：")
         for s in observe:
