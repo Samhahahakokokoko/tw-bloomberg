@@ -171,6 +171,7 @@ async def _push_failure_alert(error_msg: str, ts: str) -> None:
         await push_line_messages(
             admin_uid,
             [{"type": "text", "text": text}],
+            token=settings.line_channel_access_token,
             context="backup.failure_alert",
         )
     except Exception as e:
