@@ -657,6 +657,10 @@ async def _handle_text(text: str, uid: str) -> list:
                       qr_items(("💼 庫存", "/p")))]
     if cmd == "/backtest":
         return await _cmd_backtest_v2(parts, uid)
+    if cmd == "/test":
+        return await _cmd_test(parts)
+    if cmd == "/chip" and len(parts) >= 2:
+        return await _cmd_chip(parts[1])
     if cmd == "/ai_guide":                      return [_ai_guide()]
     if cmd == "/help":                          return [_text(_help_text(), _home_qr())]
     if cmd == "/screener":                      return await _cmd_screener(parts[1] if len(parts) > 1 else "top")
@@ -2431,6 +2435,10 @@ def _help_text() -> str:
         "/memory       歷史情境比對\n"
         "/committee 代碼  委員會決議\n"
         "/weights      因子調權週報\n"
+        "\n📈 快速分析（整合自 stock-bot）\n"
+        "/chip 2330    三大法人近 5 日\n"
+        "/test 2330 RSI   簡易回測\n"
+        "/test 2330 MACD  MACD 回測\n"
     )
 
 
@@ -3090,6 +3098,79 @@ async def _cmd_backtest_menu(uid: str) -> list:
 
 async def _cmd_backtest_run(strategy: str, uid: str) -> list:
     return await _cmd_backtest_v2(["/backtest", "2330", strategy], uid)
+
+
+async def _cmd_test(parts: list[str]) -> list:
+    """/test {code} {RSI|MACD} — 簡易回測，映射到現有 /backtest 引擎"""
+    if len(parts) < 2:
+        return [_text(
+            "格式：/test 股票代號 策略\n\n"
+            "範例：\n  /test 2330 RSI\n  /test 2330 MACD\n\n"
+            "支援策略：RSI、MACD（也可用 /backtest 取得更完整結果）"
+        )]
+    code     = parts[1].upper()
+    strategy_raw = parts[2].lower() if len(parts) >= 3 else "rsi"
+    alias_map = {"rsi": "value", "macd": "chip", "momentum": "momentum",
+                 "value": "value", "chip": "chip"}
+    strategy = alias_map.get(strategy_raw, "value")
+    return await _cmd_backtest_v2(["/backtest", code, strategy], "")
+
+
+async def _cmd_chip(code: str) -> list:
+    """/chip {code} — 三大法人近 5 日買賣超摘要"""
+    try:
+        from backend.services.chip_service import fetch_chip_history
+        from backend.services.ai_trading_advisor import _ai_stock_advice
+
+        rows = await fetch_chip_history(code, days=5)
+        if not rows:
+            return [_text(f"❌ {code} 籌碼資料暫無（T86 可能尚未更新）")]
+
+        # 統計 5 日合計
+        f5 = sum(r.get("foreign_net", 0) for r in rows)
+        t5 = sum(r.get("trust_net",   0) for r in rows)
+        d5 = sum(r.get("dealer_net",  0) for r in rows)
+
+        # 外資連續買超天數
+        consec = 0
+        for r in reversed(rows):
+            if r.get("foreign_net", 0) > 0:
+                consec += 1
+            else:
+                break
+
+        def _fmt(v: int) -> str:
+            return f"+{v:,}" if v >= 0 else f"{v:,}"
+
+        f_str = f"連續買超 {consec} 天，{_fmt(f5)} 張" if consec > 0 else f"{_fmt(f5)} 張"
+
+        # 簡單判斷
+        total = f5 + t5
+        if total > 1000:
+            verdict = "法人偏多 📈"
+        elif total < -1000:
+            verdict = "法人偏空 📉"
+        else:
+            verdict = "法人中性 ➡️"
+
+        text = (
+            f"🏛 {code} 三大法人（近 5 日）\n"
+            f"{'─'*24}\n"
+            f"外資：{f_str}\n"
+            f"投信：{_fmt(t5)} 張\n"
+            f"自營商：{_fmt(d5)} 張\n"
+            f"{'─'*24}\n"
+            f"籌碼判斷：{verdict}\n\n"
+            f"輸入 /ai {code} 取得完整 AI 分析"
+        )
+        return [_text(text, qr_items(
+            (f"AI分析", f"/ai {code}"),
+            ("回測RSI", f"/test {code} RSI"),
+            ("報價",    f"/q {code}"),
+        ))]
+    except Exception as e:
+        logger.error(f"[chip] {code} error: {e}")
+        return [_text(f"❌ 籌碼查詢失敗，請稍後再試")]
 
 
 # ── 核心回測：取資料、計算指標 ───────────────────────────────────────────────
