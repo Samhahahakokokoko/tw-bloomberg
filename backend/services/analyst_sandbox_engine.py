@@ -119,12 +119,14 @@ async def evaluate_sandbox(analyst_id: str) -> Optional[SandboxEvaluation]:
 
         total_calls = len(calls)
 
-        # 勝率：以 actual_return > 0 為勝
-        scored_calls = [c for c in calls if c.actual_return is not None]
+        # 勝率：以 result_5d > 0 為勝（AnalystCall 無 actual_return，用 result_5d/result_20d）
+        def _ret(c):
+            return c.result_5d if c.result_5d is not None else c.result_20d
+        scored_calls = [c for c in calls if _ret(c) is not None]
         if scored_calls:
-            wins = sum(1 for c in scored_calls if (c.actual_return or 0) > 0)
+            wins = sum(1 for c in scored_calls if (_ret(c) or 0) > 0)
             win_rate = wins / len(scored_calls)
-            avg_return = sum((c.actual_return or 0) for c in scored_calls) / len(scored_calls)
+            avg_return = sum((_ret(c) or 0) for c in scored_calls) / len(scored_calls)
         else:
             win_rate = 0.5
             avg_return = 0.0
@@ -132,7 +134,7 @@ async def evaluate_sandbox(analyst_id: str) -> Optional[SandboxEvaluation]:
         # 連續失敗
         consecutive_fail = 0
         for c in calls[:5]:
-            if (c.actual_return or 0) < 0:
+            if (_ret(c) or 0) < 0:
                 consecutive_fail += 1
             else:
                 break
