@@ -3101,19 +3101,101 @@ async def _cmd_backtest_run(strategy: str, uid: str) -> list:
 
 
 async def _cmd_test(parts: list[str]) -> list:
-    """/test {code} {RSI|MACD} — 簡易回測，映射到現有 /backtest 引擎"""
+    """/test {code} {RSI|MACD} — yfinance 3 年回測，不依賴 DB"""
     if len(parts) < 2:
         return [_text(
             "格式：/test 股票代號 策略\n\n"
             "範例：\n  /test 2330 RSI\n  /test 2330 MACD\n\n"
-            "支援策略：RSI、MACD（也可用 /backtest 取得更完整結果）"
+            "支援策略：RSI、MACD"
         )]
     code     = parts[1].upper()
-    strategy_raw = parts[2].lower() if len(parts) >= 3 else "rsi"
-    alias_map = {"rsi": "value", "macd": "chip", "momentum": "momentum",
-                 "value": "value", "chip": "chip"}
-    strategy = alias_map.get(strategy_raw, "value")
-    return await _cmd_backtest_v2(["/backtest", code, strategy], "")
+    strategy = (parts[2].upper() if len(parts) >= 3 else "RSI")
+    if strategy not in ("RSI", "MACD"):
+        return [_text(f"❌ 不支援策略「{strategy}」，請用 RSI 或 MACD")]
+
+    try:
+        import asyncio, functools
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(None, functools.partial(_run_yf_backtest, code, strategy))
+        return [_text(result, qr_items(
+            (f"MACD回測", f"/test {code} MACD") if strategy == "RSI" else (f"RSI回測", f"/test {code} RSI"),
+            ("AI分析",   f"/ai {code}"),
+            ("籌碼",     f"/chip {code}"),
+        ))]
+    except Exception as e:
+        logger.error(f"[test] {code} {strategy} error: {e}")
+        return [_text(f"❌ 回測失敗：{e}")]
+
+
+def _run_yf_backtest(code: str, strategy: str) -> str:
+    """yfinance + ta 回測（同步，跑在 executor）"""
+    import yfinance as yf
+    import ta as ta_lib
+    import pandas as pd
+
+    ticker = f"{code}.TW"
+    df = yf.download(ticker, period="3y", progress=False, auto_adjust=True)
+    if df.empty:
+        return f"❌ 無法取得 {code} 資料，請確認代號"
+
+    if isinstance(df.columns, pd.MultiIndex):
+        df.columns = df.columns.get_level_values(0)
+    df = df.dropna(subset=["Close"])
+    if len(df) < 60:
+        return f"❌ {code} 資料不足（{len(df)} 筆），無法回測"
+
+    close = df["Close"]
+
+    if strategy == "RSI":
+        rsi    = ta_lib.momentum.RSIIndicator(close, window=14).rsi()
+        signal = pd.Series(0, index=df.index)
+        signal[rsi < 30] =  1
+        signal[rsi > 70] = -1
+    else:  # MACD
+        macd_ind = ta_lib.trend.MACD(close)
+        macd     = macd_ind.macd()
+        sig      = macd_ind.macd_signal()
+        signal   = pd.Series(0, index=df.index)
+        signal[(macd > sig) & (macd.shift(1) <= sig.shift(1))] =  1
+        signal[(macd < sig) & (macd.shift(1) >= sig.shift(1))] = -1
+
+    # 回測引擎
+    capital, position, entry_px = 1_000_000.0, 0, 0.0
+    trades = []
+    for date, row in df.iterrows():
+        sig = signal.get(date, 0)
+        px  = float(row["Close"])
+        if sig == 1 and position == 0:
+            position  = int(capital / px)
+            entry_px  = px
+            capital  -= position * px
+        elif sig == -1 and position > 0:
+            pnl = position * (px - entry_px)
+            trades.append({"ret": (px - entry_px) / entry_px, "pnl": pnl})
+            capital += position * px
+            position = 0
+
+    final_px    = float(df["Close"].iloc[-1])
+    total_value = capital + position * final_px
+    total_ret   = (total_value - 1_000_000) / 1_000_000 * 100
+    n           = len(trades)
+    win_rate    = sum(1 for t in trades if t["pnl"] > 0) / n * 100 if n else 0
+    avg_ret     = sum(t["ret"] for t in trades) / n * 100 if n else 0
+    sign        = "+" if total_ret >= 0 else ""
+    start       = df.index[0].strftime("%Y-%m-%d")
+    end         = df.index[-1].strftime("%Y-%m-%d")
+
+    return (
+        f"📊 {code}  {strategy} 回測（3年）\n"
+        f"{'─'*24}\n"
+        f"期間：{start} ～ {end}\n"
+        f"總報酬：{sign}{total_ret:.1f}%\n"
+        f"期末資金：{total_value:,.0f} 元\n"
+        f"交易次數：{n} 次\n"
+        f"勝率：{win_rate:.1f}%\n"
+        f"平均每筆：{'+' if avg_ret>=0 else ''}{avg_ret:.2f}%\n"
+        f"{'─'*24}"
+    )
 
 
 async def _cmd_chip(code: str) -> list:

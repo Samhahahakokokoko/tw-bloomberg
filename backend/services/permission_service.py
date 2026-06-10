@@ -23,12 +23,13 @@ ADMIN_CMDS = {
 PREMIUM_CMDS = {
     "/daily", "/report", "/analyst",
     "/analysis", "analysis", "/perf", "perf",
-    "/chart", "chart", "/backtest",
-    "/ai", "/rec", "/optimize", "/var",
+    "/chart", "chart",
+    "/rec", "/optimize", "/var",
     "/correlation", "/screener", "/pipeline",
     "/smart_money", "/smartmoney", "/morning",
     "/weekly", "/subscribe",
 }
+# /ai /backtest /chip /test 開放給所有用戶
 # basic 以上才能用：/p /buy /sell /alert /history /tax /quote /market /news
 # 未列出的指令預設 basic 以上可用
 
