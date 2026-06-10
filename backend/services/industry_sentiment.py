@@ -12,6 +12,8 @@ from sqlalchemy import select
 from ..models.database import AsyncSessionLocal, settings
 from ..models.models import NewsArticle, IndustrySentiment
 
+_credit_exhausted: bool = False
+
 
 # 產業 → 關鍵字對應
 INDUSTRY_KEYWORDS: dict[str, list[str]] = {
@@ -195,7 +197,8 @@ async def get_all_sentiments(analysis_date: str = "") -> list[dict]:
 
 
 async def _ai_industry_summary(industry: str, news: list, net: float) -> str:
-    if not settings.anthropic_api_key:
+    global _credit_exhausted
+    if not settings.anthropic_api_key or _credit_exhausted:
         return ""
     try:
         import anthropic
@@ -217,7 +220,8 @@ async def _ai_industry_summary(industry: str, news: list, net: float) -> str:
         return msg.content[0].text.strip()
     except Exception as e:
         if "credit balance is too low" in str(e):
-            logger.warning("[IndustrySentiment] Anthropic API 額度不足")
+            _credit_exhausted = True
+            logger.warning("[IndustrySentiment] Anthropic credit 耗盡，停止 AI 產業摘要")
         else:
             logger.error(f"[IndustrySentiment] AI summary error: {e}")
         return ""
