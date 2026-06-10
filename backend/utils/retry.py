@@ -54,8 +54,8 @@ def retry(
 
                 except httpx.HTTPStatusError as exc:
                     status = exc.response.status_code
-                    if status == 404:
-                        raise                          # 404 → 無此資源，不重試
+                    if status in (404, 422):
+                        raise                          # 404/422 → 無此資源/無效請求，不重試
                     if attempt >= max_attempts:
                         raise
                     wait = (

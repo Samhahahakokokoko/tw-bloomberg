@@ -54,8 +54,10 @@ async def analyze_portfolio(uid: str) -> PortfolioAdvice:
     advice = PortfolioAdvice(uid=uid, health_score=75, main_risk="資料不足，無法評估")
 
     try:
-        from .portfolio_service import get_holdings
-        holdings = await get_holdings(uid)
+        from .portfolio_service import get_portfolio
+        from ..models.database import AsyncSessionLocal
+        async with AsyncSessionLocal() as _db:
+            holdings = await get_portfolio(_db, uid)
         if not holdings:
             advice.main_risk = "尚無持股"
             return advice
