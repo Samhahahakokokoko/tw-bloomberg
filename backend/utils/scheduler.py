@@ -1610,6 +1610,7 @@ async def _run_auto_improve():
             save_plan, format_plan_for_line,
         )
         from ..services.line_push import push_line_messages
+        from ..models.database import settings
         import os
 
         api_key = settings.anthropic_api_key
