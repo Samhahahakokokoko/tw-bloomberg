@@ -172,6 +172,8 @@ async def _fetch_rss(url: str, source: str) -> list[dict]:
 
 
 def _strip_html(html: str) -> str:
+    if not html or "<" not in html:
+        return html.strip() if html else ""
     try:
         return BeautifulSoup(html, "lxml").get_text(" ", strip=True)
     except Exception:
