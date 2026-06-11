@@ -113,7 +113,7 @@ async def generate_morning_report() -> str:
     # ── AI 簡評 ───────────────────────────────────────────────────────────
     try:
         body = "\n".join(lines)
-        ai_comment = await _ai_summary(body)
+        ai_comment = await _ai_summary(body, market_state, change_pct_val)
         lines.append(f"\n🤖 {ai_comment}")
     except Exception as e:
         logger.error(f"Morning report AI error: {e}")
@@ -177,10 +177,35 @@ async def _fetch_total_institutional() -> dict:
     return {}
 
 
-async def _ai_summary(report_body: str) -> str:
+def _rule_based_summary(market_state: str, change_pct: float) -> str:
+    """Anthropic 不可用時的規則式市場簡評"""
+    if change_pct > 2.0:
+        sentiment = "今日台股強勢上攻，市場多頭氣氛濃厚，動能股表現亮眼。"
+    elif change_pct > 0.5:
+        sentiment = "今日台股小幅走揚，多方佔優，短線可留意強勢個股。"
+    elif change_pct < -2.0:
+        sentiment = "今日台股重挫，市場賣壓沉重，建議保守觀望為宜。"
+    elif change_pct < -0.5:
+        sentiment = "今日台股偏弱，空方佔據主導，宜輕倉控制風險。"
+    else:
+        sentiment = "今日台股震盪整理，方向不明，短線宜觀望等待訊號。"
+
+    if change_pct > 1.0:
+        action = "可積極布局具基本面支撐的強勢股，但注意追高風險。"
+    elif change_pct > 0:
+        action = "選擇強於大盤的個股順勢操作，設好停損點。"
+    elif change_pct > -1.0:
+        action = "避免追空，等待支撐確立再考慮進場機會。"
+    else:
+        action = "建議空手觀望，待市場止穩再尋找反彈機會。"
+
+    return f"{sentiment}{action}"
+
+
+async def _ai_summary(report_body: str, market_state: str = "", change_pct: float = 0.0) -> str:
     from ..models.database import settings
     if not settings.anthropic_api_key:
-        return "（未設定 API Key）"
+        return _rule_based_summary(market_state, change_pct)
     try:
         import anthropic
         client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
@@ -199,9 +224,9 @@ async def _ai_summary(report_body: str) -> str:
     except Exception as e:
         if "credit balance is too low" in str(e):
             logger.warning("[MorningReport] Anthropic API 額度不足")
-            return "AI 簡評暫時無法使用（額度不足）"
+            return _rule_based_summary(market_state, change_pct)
         logger.error(f"AI summary error: {e}")
-        return "AI 簡評暫時無法使用"
+        return _rule_based_summary(market_state, change_pct)
 
 
 async def _push_to_users(user_ids: list[str], message: str):
