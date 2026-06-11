@@ -7,10 +7,15 @@ TWSE T86 端點說明：
 
 策略：抓當月 + 前兩個月，合併去重，取最近 days 筆。
 """
+import time
 import httpx
 from datetime import datetime, timedelta
 from loguru import logger
 from .twse_service import fetch_kline
+
+# T86 月份資料 TTL 快取：key=(stock_code, yyyymmdd), value=(timestamp, rows)
+_T86_CACHE: dict[tuple, tuple] = {}
+_T86_TTL = 3600  # 1 hour
 
 
 def _parse_int(v) -> int:
@@ -32,7 +37,14 @@ def _tw_to_iso(raw_date: str) -> str:
 
 
 async def _fetch_t86_month(stock_code: str, yyyymmdd: str) -> list[dict]:
-    """抓 TWSE T86 指定月份資料"""
+    """抓 TWSE T86 指定月份資料（帶 1h TTL 快取）"""
+    cache_key = (stock_code, yyyymmdd)
+    cached = _T86_CACHE.get(cache_key)
+    if cached:
+        ts, rows = cached
+        if time.time() - ts < _T86_TTL:
+            return rows
+
     url = (
         "https://www.twse.com.tw/fund/T86"
         f"?response=json&date={yyyymmdd}&stockNo={stock_code}&selectType=ALLBUT0999"
@@ -64,8 +76,9 @@ async def _fetch_t86_month(stock_code: str, yyyymmdd: str) -> list[dict]:
                     "dealer_net":   _parse_int(row[12]),
                     "total_net":    total_net,
                 })
+        _T86_CACHE[cache_key] = (time.time(), rows_out)
     except Exception as e:
-        logger.error(f"T86 fetch error {stock_code} {yyyymmdd}: {e}")
+        logger.warning(f"T86 fetch error {stock_code} {yyyymmdd}: {type(e).__name__}: {e}")
     return rows_out
 
 
