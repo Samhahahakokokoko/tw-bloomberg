@@ -731,7 +731,7 @@ async def _fetch_rt_cache() -> dict:
                                     pass
                             _log.info("[RT] classic T86 loaded %d stocks", loaded)
                 except Exception as e:
-                    _log.warning("[RT] classic T86 fallback failed: %s", e)
+                    _log.warning("[RT] classic T86 fallback failed: %s: %s", type(e).__name__, e)
 
             if not chips:
                 _log.info("[RT] 三大法人資料無法取得（T86 為盤後資料），嘗試 DB price_history 快取")

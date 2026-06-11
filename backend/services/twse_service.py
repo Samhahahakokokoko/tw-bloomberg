@@ -168,7 +168,7 @@ async def _fetch_twse_daily_quote(stock_code: str) -> dict:
             if item.get("Code") == stock_code:
                 return _normalize_twse_quote(item)
     except Exception as e:
-        logger.error(f"TWSE quote error for {stock_code}: {e}")
+        logger.error(f"TWSE quote error for {stock_code}: {type(e).__name__}: {e}")
     return {}
 
 
@@ -231,7 +231,7 @@ async def _fetch_twse_mi_single(stock_code: str, market: str) -> dict:
             "timestamp": f"{trade_date} {trade_time}".strip(),
         }
     except Exception as e:
-        logger.error(f"MI fetch error ({market}_{stock_code}): {e}")
+        logger.error(f"MI fetch error ({market}_{stock_code}): {type(e).__name__}: {e}")
     return {}
 
 

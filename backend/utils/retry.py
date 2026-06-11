@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import asyncio
 import functools
+import json
 from typing import Callable
 
 import httpx
@@ -79,6 +80,9 @@ def retry(
                     )
                     await asyncio.sleep(delay)
                     last_exc = exc
+
+                except json.JSONDecodeError:
+                    raise  # server returned non-JSON (e.g. HTML error page) — retrying won't help
 
                 except Exception as exc:
                     if attempt >= max_attempts:
