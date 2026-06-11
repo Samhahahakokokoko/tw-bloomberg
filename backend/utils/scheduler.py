@@ -1016,7 +1016,7 @@ async def _run_pipeline_scanner_filter():
         passed      = filter_res["passed"]
 
         logger.info(
-            "[Pipeline 18:15] scanner: core=%d medium=%d sat=%d | filter pass=%d",
+            "[Pipeline 18:15] scanner: core={} medium={} sat={} | filter pass={}",
             len(scan_result.core), len(scan_result.medium),
             len(scan_result.satellite), len(passed),
         )
