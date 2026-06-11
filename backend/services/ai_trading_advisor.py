@@ -303,10 +303,28 @@ async def _get_regime() -> dict:
         return {"current": "unknown"}
 
 
+def _rule_daily_comment(regime: str, candidates: list) -> str:
+    """AI 不可用時的規則式操作心法"""
+    regime_tips = {
+        "bull":     ("多頭格局確立，動能強勁，可積極布局領漲個股。", "操作以順勢追強為主，嚴守停損紀律。"),
+        "bear":     ("市場偏空，賣壓沉重，建議輕倉或空手應對。", "優先保本，切勿逆勢抄底，等待趨勢翻轉訊號。"),
+        "sideways": ("盤整震盪格局，方向不明，操作宜輕倉觀望。", "等待關鍵支撐或壓力區突破再行動，耐心是關鍵。"),
+    }
+    lines = regime_tips.get(regime, ("市場訊號中性，建議謹慎評估後再操作。", "設好停損，控制部位大小，分批進出。"))
+    n = len(candidates)
+    if n >= 3:
+        candidate_tip = f"今日共篩出 {n} 檔候選，優先關注高分且有法人支撐的個股。"
+    elif n > 0:
+        candidate_tip = f"候選標的較少（{n} 檔），宜謹慎篩選，確認多項訊號吻合再進場。"
+    else:
+        candidate_tip = "今日無明確候選，建議觀望等待市場出現清晰訊號。"
+    return "\n".join([lines[0], lines[1], candidate_tip])
+
+
 async def _ai_daily_comment(body: str, regime: str, candidates: list) -> str:
     global _credit_exhausted
     if not settings.anthropic_api_key or _credit_exhausted:
-        return ""
+        return _rule_daily_comment(regime, candidates)
     try:
         import anthropic
         regime_tips = {
@@ -335,7 +353,7 @@ async def _ai_daily_comment(body: str, regime: str, candidates: list) -> str:
             logger.warning("[Advisor] Anthropic credit 耗盡，停止 AI 日報")
         else:
             logger.error(f"[Advisor] AI daily comment error: {e}")
-        return ""
+        return _rule_daily_comment(regime, candidates)
 
 
 async def _ai_stock_advice(code, name, price, chg, trend, chip, tech, score) -> str:
