@@ -124,11 +124,20 @@ async def run_agent_pipeline(uid: str = "system") -> AgentReport:
     market_state = "unknown"
     try:
         from quant.regime_engine import RegimeEngine
+        from backend.services.twse_service import fetch_kline
+        import asyncio as _asyncio
         engine = RegimeEngine()
-        regime = await engine.detect()
-        market_state = regime.regime.lower() if hasattr(regime, "regime") else "unknown"
-        report.market_state = market_state
-        logger.info(f"[agent] Step1 regime={market_state}")
+        kline  = await fetch_kline("2330")   # 台積電作為大盤代理
+        if kline and len(kline) >= 30:
+            closes = [float(k["close"]) for k in kline if k.get("close")]
+            regime = await _asyncio.get_event_loop().run_in_executor(
+                None, engine.detect_from_series, closes
+            )
+            market_state = regime.regime.lower() if hasattr(regime, "regime") else "unknown"
+            report.market_state = market_state
+            logger.info(f"[agent] Step1 regime={market_state}")
+        else:
+            logger.debug("[agent] Step1 regime skipped: insufficient kline data")
     except Exception as e:
         logger.debug(f"[agent] Step1 regime failed: {e}")
 
