@@ -753,12 +753,12 @@ async def _fetch_rt_cache() -> dict:
                             .where(_PH.foreign_net.isnot(None))
                             .group_by(_PH.stock_code)
                         )
-                        for r in _rows.fetchall():
-                            if r.stock_code:
-                                chips[r.stock_code] = {
-                                    "foreign_net": int(r.f or 0),
-                                    "trust_net":   int(r.t or 0),
-                                    "dealer_net":  int(r.d or 0),
+                        for stock_code, f_sum, t_sum, d_sum in _rows.fetchall():
+                            if stock_code:
+                                chips[stock_code] = {
+                                    "foreign_net": int(f_sum or 0),
+                                    "trust_net":   int(t_sum or 0),
+                                    "dealer_net":  int(d_sum or 0),
                                 }
                     if chips:
                         _log.info("[RT] DB price_history chip fallback: %d stocks", len(chips))
