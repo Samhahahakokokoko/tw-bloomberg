@@ -49,7 +49,12 @@ async def _get(dataset: str, stock_id: str, start_date: str, end_date: str = "")
             await asyncio.sleep(_REQUEST_DELAY)
             return payload.get("data", [])
         except Exception as e:
-            logger.error(f"FinMind error {dataset}/{stock_id}: {e}")
+            err_str = str(e)
+            if "422" in err_str or "Unprocessable Entity" in err_str:
+                # 422 = dataset not available on current FinMind plan; expected, not a code bug
+                logger.warning(f"FinMind {dataset}/{stock_id}: plan limit (422), skipping")
+            else:
+                logger.error(f"FinMind error {dataset}/{stock_id}: {type(e).__name__}: {e}")
             return []
 
 

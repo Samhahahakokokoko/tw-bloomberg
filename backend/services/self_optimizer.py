@@ -374,9 +374,15 @@ async def _push_optimizer_report(results: list, changed_count: int, elapsed: flo
         if r.get("detail"):
             lines.append(f"   {r['detail'][:80]}")
 
-    text = "\n".join(lines)
+    text = "\n".join(lines)[:4500]  # LINE text message limit is 5000 chars
     try:
         from .line_push import push_line_messages
-        await push_line_messages(admin_uid, [{"type": "text", "text": text}], timeout=15, context="self_optimizer.report")
+        await push_line_messages(
+            admin_uid,
+            [{"type": "text", "text": text}],
+            token=settings.line_channel_access_token,
+            timeout=15,
+            context="self_optimizer.report",
+        )
     except Exception as e:
         logger.warning(f"[SelfOpt] LINE report push failed: {e}")
