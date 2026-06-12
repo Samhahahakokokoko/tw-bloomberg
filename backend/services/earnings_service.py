@@ -7,7 +7,7 @@
   年報 (全年)：3月31日前（次年）
 
 功能：
-  - sync_portfolio_reminders(line_user_id) — 自動同步持股財報提醒
+  - sync_portfolio_reminders(line_user_id) — 自動同步持股＋自選股財報提醒
   - check_and_push_reminders()            — 14日 / 3日兩階段提醒推播
   - fetch_latest_eps(stock_code)          — TWSE OpenAPI 最新 EPS
   - get_portfolio_earnings_calendar()     — 持股財報日曆（供 /earnings 指令）
@@ -67,22 +67,35 @@ def _upcoming_quarters() -> list[tuple[str, str]]:
 
 async def sync_portfolio_reminders(line_user_id: str) -> int:
     """
-    根據使用者目前持股，自動建立（或補建）未截止季度的財報提醒。
+    根據使用者目前持股＋自選股，自動建立（或補建）未截止季度的財報提醒。
     回傳新建數量。
     """
-    from ..models.models import Portfolio
+    from ..models.models import Portfolio, Watchlist
     async with AsyncSessionLocal() as db:
         r = await db.execute(
             select(Portfolio).where(Portfolio.user_id == line_user_id)
         )
         holdings = r.scalars().all()
+        r2 = await db.execute(
+            select(Watchlist).where(Watchlist.user_id == line_user_id)
+        )
+        watched = r2.scalars().all()
 
-    if not holdings:
+    # Merge portfolio + watchlist, deduplicate by stock_code
+    seen: set[str] = set()
+    all_stocks: list = []
+    for h in list(holdings) + list(watched):
+        code = getattr(h, "stock_code", None)
+        if code and code not in seen:
+            seen.add(code)
+            all_stocks.append(h)
+
+    if not all_stocks:
         return 0
 
     quarters = _upcoming_quarters()
     created = 0
-    for holding in holdings:
+    for holding in all_stocks:
         for period, ann_date in quarters:
             async with AsyncSessionLocal() as db:
                 existing = await db.execute(
