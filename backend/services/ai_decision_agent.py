@@ -10,12 +10,11 @@ from sqlalchemy import select
 from ..models.database import AsyncSessionLocal, settings
 from ..models.models import StockScore
 from .screener_engine import get_top_scores
+from ..utils.credit_guard import is_exhausted as _credit_exhausted, mark_exhausted as _mark_credit_exhausted
 
 
 BATCH_SIZE = 5       # 每次批次送給 Claude（節省 tokens）
 MAX_STOCKS = 30      # 最多產生 AI 理由的股票數
-
-_credit_exhausted: bool = False
 
 
 async def _generate_batch_reasons(stocks: list[dict]) -> dict[str, tuple[str, float]]:
@@ -23,8 +22,7 @@ async def _generate_batch_reasons(stocks: list[dict]) -> dict[str, tuple[str, fl
     對一批股票（最多 BATCH_SIZE）請 Claude 產生推薦理由。
     回傳 {stock_code: (ai_reason, confidence)}
     """
-    global _credit_exhausted
-    if not settings.anthropic_api_key or _credit_exhausted:
+    if not settings.anthropic_api_key or _credit_exhausted():
         return {}
 
     lines = []
@@ -75,7 +73,7 @@ async def _generate_batch_reasons(stocks: list[dict]) -> dict[str, tuple[str, fl
 
     except Exception as e:
         if "credit balance is too low" in str(e):
-            _credit_exhausted = True
+            _mark_credit_exhausted()
             logger.warning("[AgentC] Anthropic credit 耗盡，本 process 停止 AI 理由生成")
         else:
             logger.error(f"[AgentC] Claude error: {e}")
@@ -140,8 +138,7 @@ async def generate_nl_recommendation(query: str, results: list[dict]) -> str:
     """
     針對自然語言查詢結果，讓 Claude 產生一段總結說明。
     """
-    global _credit_exhausted
-    if not settings.anthropic_api_key or _credit_exhausted or not results:
+    if not settings.anthropic_api_key or _credit_exhausted() or not results:
         return ""
     try:
         import anthropic
@@ -170,7 +167,7 @@ async def generate_nl_recommendation(query: str, results: list[dict]) -> str:
         return msg.content[0].text.strip()
     except Exception as e:
         if "credit balance is too low" in str(e):
-            _credit_exhausted = True
+            _mark_credit_exhausted()
             logger.warning("[AgentC] Anthropic credit 耗盡，停止 NL 建議")
         else:
             logger.error(f"[AgentC] NL recommendation error: {e}")

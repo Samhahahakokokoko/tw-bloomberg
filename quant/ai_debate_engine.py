@@ -22,10 +22,10 @@ import os
 from dataclasses import dataclass, field
 from datetime import datetime
 import asyncio
+from backend.utils.credit_guard import is_exhausted as _credit_exhausted, mark_exhausted as _mark_credit_exhausted
 
 logger = logging.getLogger(__name__)
 
-_credit_exhausted: bool = False
 
 
 @dataclass
@@ -110,11 +110,10 @@ async def run_ai_debate(
     context: str = "",
 ) -> DebateResult:
     """呼叫 Claude API 進行多空辯論"""
-    global _credit_exhausted
     api_key = os.getenv("ANTHROPIC_API_KEY", "")
 
-    if not api_key or _credit_exhausted:
-        if _credit_exhausted:
+    if not api_key or _credit_exhausted():
+        if _credit_exhausted():
             logger.debug("[debate] credit exhausted, using fallback for %s", stock_id)
         else:
             logger.info("[debate] no API key, using fallback for %s", stock_id)
@@ -166,7 +165,7 @@ async def run_ai_debate(
 
     except Exception as e:
         if "credit balance is too low" in str(e):
-            _credit_exhausted = True
+            _mark_credit_exhausted()
             logger.warning("[debate] Anthropic credit 耗盡，本 process 停止 AI 辯論")
         else:
             logger.warning("[debate] Claude API failed for %s: %s", stock_id, e)

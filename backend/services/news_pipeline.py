@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Optional
 
 import httpx
+from ..utils.credit_guard import is_exhausted as _credit_exhausted, mark_exhausted as _mark_credit_exhausted
 
 logger = logging.getLogger(__name__)
 
@@ -34,8 +35,6 @@ BASE_URL     = os.getenv("BASE_URL", "")
 STATIC_DIR   = Path(os.getenv("STATIC_DIR", "./static/reports"))
 MAX_NEWS     = 6        # LINE 推送最多 N 則
 MAX_TITLE_LEN = 36      # 每則新聞標題截斷長度（控制 payload 大小）
-
-_credit_exhausted: bool = False
 
 
 # ── 步驟函式 ──────────────────────────────────────────────────────────────────
@@ -59,11 +58,10 @@ async def _step_summarize(run_id: str, news: list[dict]) -> list[dict]:
     步驟 2：為每則新聞生成 ≤ 30 字摘要（Claude API）。
     若 API key 未設定，直接使用標題。
     """
-    global _credit_exhausted
     from backend.models.database import settings
 
     api_key = getattr(settings, "anthropic_api_key", "") or ""
-    if not api_key or _credit_exhausted:
+    if not api_key or _credit_exhausted():
         await _log(run_id, "summarize", "skip", "無 API key 或 credit 耗盡，使用標題")
         return news  # 直接用原標題
 
@@ -90,7 +88,7 @@ async def _step_summarize(run_id: str, news: list[dict]) -> list[dict]:
         return enriched
     except Exception as e:
         if "credit balance is too low" in str(e):
-            _credit_exhausted = True
+            _mark_credit_exhausted()
             logger.warning("[pipeline] Anthropic credit 耗盡，本 process 停止摘要生成")
         else:
             logger.warning("[pipeline] summarize 失敗: %s", e)

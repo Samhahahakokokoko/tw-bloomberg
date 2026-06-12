@@ -14,8 +14,7 @@ import asyncio
 YOUTUBE_API_KEY  = os.getenv("YOUTUBE_API_KEY", "")
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 
-# 熔斷旗標：credit 耗盡後本 process 全程跳過 Anthropic API 呼叫
-_credit_exhausted: bool = False
+from ..utils.credit_guard import is_exhausted as _credit_exhausted, mark_exhausted as _mark_credit_exhausted
 
 # 台股代碼正則（4-5碼數字，常見格式）
 STOCK_CODE_RE = re.compile(r'\b([2-9]\d{3}[A-Z]?)\b')
@@ -101,9 +100,7 @@ def _mock_videos(channel_id: str) -> list[dict]:
 
 async def analyze_with_claude(title: str, description: str) -> dict:
     """用 Claude API 做 NLP 分析，抽取股票和情緒"""
-    global _credit_exhausted
-
-    if _credit_exhausted or not ANTHROPIC_API_KEY:
+    if _credit_exhausted() or not ANTHROPIC_API_KEY:
         return _rule_based_analysis(title, description)
 
     try:
@@ -129,7 +126,7 @@ async def analyze_with_claude(title: str, description: str) -> dict:
         return json.loads(text)
     except Exception as e:
         if "credit balance is too low" in str(e):
-            _credit_exhausted = True
+            _mark_credit_exhausted()
             logger.warning("[youtube] Anthropic credit 耗盡，本 process 停止 AI 分析")
             try:
                 from .system_monitor import log_module_status

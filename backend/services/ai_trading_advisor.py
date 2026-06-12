@@ -13,8 +13,7 @@ from __future__ import annotations
 from datetime import date
 from loguru import logger
 from ..models.database import settings
-
-_credit_exhausted: bool = False
+from ..utils.credit_guard import is_exhausted as _credit_exhausted, mark_exhausted as _mark_credit_exhausted
 
 
 # ── 日報格式化 ────────────────────────────────────────────────────────────────
@@ -322,8 +321,7 @@ def _rule_daily_comment(regime: str, candidates: list) -> str:
 
 
 async def _ai_daily_comment(body: str, regime: str, candidates: list) -> str:
-    global _credit_exhausted
-    if not settings.anthropic_api_key or _credit_exhausted:
+    if not settings.anthropic_api_key or _credit_exhausted():
         return _rule_daily_comment(regime, candidates)
     try:
         import anthropic
@@ -349,7 +347,7 @@ async def _ai_daily_comment(body: str, regime: str, candidates: list) -> str:
         return msg.content[0].text.strip()
     except Exception as e:
         if "credit balance is too low" in str(e):
-            _credit_exhausted = True
+            _mark_credit_exhausted()
             logger.warning("[Advisor] Anthropic credit 耗盡，停止 AI 日報")
         else:
             logger.error(f"[Advisor] AI daily comment error: {e}")
@@ -357,8 +355,7 @@ async def _ai_daily_comment(body: str, regime: str, candidates: list) -> str:
 
 
 async def _ai_stock_advice(code, name, price, chg, trend, chip, tech, score) -> str:
-    global _credit_exhausted
-    if not settings.anthropic_api_key or _credit_exhausted:
+    if not settings.anthropic_api_key or _credit_exhausted():
         # 無 API 時的規則建議
         if "多頭" in trend and "連買" in chip:
             return "多頭籌碼雙強，可考慮逢低布局，注意設好停損。"
@@ -383,7 +380,7 @@ async def _ai_stock_advice(code, name, price, chg, trend, chip, tech, score) -> 
         return msg.content[0].text.strip()
     except Exception as e:
         if "credit balance is too low" in str(e):
-            _credit_exhausted = True
+            _mark_credit_exhausted()
             logger.warning("[Advisor] Anthropic credit 耗盡，停止 AI 個股建議")
         else:
             logger.error(f"[Advisor] AI stock advice error: {e}")
