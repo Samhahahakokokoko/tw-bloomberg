@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any
 
 from loguru import logger
+from ..utils.credit_guard import is_exhausted as _credit_exhausted, mark_exhausted as _mark_credit_exhausted
 
 _PLAN_PATH = Path(__file__).parent.parent.parent / "data" / "pending_fixes.json"
 _PROJECT_ROOT = Path(__file__).parent.parent.parent
@@ -117,7 +118,7 @@ async def analyze_with_claude(errors: list[dict], api_key: str) -> list[dict[str
     傳送錯誤給 Claude，取得結構化修復計劃。
     回傳格式：[{id, severity, title, file_path, description, patch}]
     """
-    if not errors:
+    if not errors or not api_key or _credit_exhausted():
         return []
 
     import anthropic
@@ -158,7 +159,8 @@ async def analyze_with_claude(errors: list[dict], api_key: str) -> list[dict[str
         )
     except Exception as e:
         if "credit balance is too low" in str(e):
-            logger.warning("[FixEngine] Anthropic API 額度不足，回傳空修復清單")
+            _mark_credit_exhausted()
+            logger.warning("[FixEngine] Anthropic credit 耗盡，回傳空修復清單")
             return []
         raise
 

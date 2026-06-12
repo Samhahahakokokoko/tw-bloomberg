@@ -28,6 +28,12 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
+try:
+    from backend.utils.credit_guard import is_exhausted as _credit_exhausted, mark_exhausted as _mark_credit_exhausted
+except ImportError:
+    def _credit_exhausted(): return False
+    def _mark_credit_exhausted(): pass
+
 
 @dataclass
 class CheckItem:
@@ -321,7 +327,7 @@ class ResearchChecklist:
         try:
             from backend.models.database import settings
             api_key = getattr(settings, "anthropic_api_key", "") or ""
-            if not api_key:
+            if not api_key or _credit_exhausted():
                 return ""
 
             import anthropic
@@ -345,7 +351,8 @@ class ResearchChecklist:
             return msg.content[0].text.strip()[:120] if msg.content else ""
         except Exception as e:
             if "credit balance is too low" in str(e):
-                logger.warning("[ResearchChecklist] Anthropic API 額度不足")
+                _mark_credit_exhausted()
+                logger.warning("[ResearchChecklist] Anthropic credit 耗盡")
             return ""
 
 

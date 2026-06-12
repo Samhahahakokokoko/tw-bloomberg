@@ -18,6 +18,12 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
+try:
+    from backend.utils.credit_guard import is_exhausted as _credit_exhausted, mark_exhausted as _mark_credit_exhausted
+except ImportError:
+    def _credit_exhausted(): return False
+    def _mark_credit_exhausted(): pass
+
 # ── PTT 股板設定 ───────────────────────────────────────────────────────────────
 PTT_STOCK_URL = "https://www.ptt.cc/bbs/Stock/index.html"
 PTT_HEADERS   = {
@@ -298,7 +304,7 @@ class AltDataEngine:
         try:
             from backend.models.database import settings
             api_key = getattr(settings, "anthropic_api_key", "") or ""
-            if not api_key:
+            if not api_key or _credit_exhausted():
                 return ""
             import anthropic
             client = anthropic.AsyncAnthropic(api_key=api_key)
@@ -317,7 +323,8 @@ class AltDataEngine:
             return msg.content[0].text.strip()[:100] if msg.content else ""
         except Exception as e:
             if "credit balance is too low" in str(e):
-                logger.warning("[AltData] Anthropic API 額度不足")
+                _mark_credit_exhausted()
+                logger.warning("[AltData] Anthropic credit 耗盡")
             return ""
 
     # ── 新聞熱度 Proxy ────────────────────────────────────────────────────────
