@@ -277,6 +277,89 @@ async def get_stock_consensus(stock_id: str) -> ConsensusResult | None:
     )
 
 
+async def get_stock_analyst_detail(stock_id: str, days: int = 14) -> dict | None:
+    """
+    查詢特定股票的多空觀點明細，供 /analyst {code} 指令使用。
+    回傳 dict：bull_points, bear_points, bull_names, bear_names, conclusion, stock_name。
+    """
+    from ..models.database import AsyncSessionLocal
+    from ..models.models import AnalystCall, Analyst
+
+    cutoff = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+
+    async with AsyncSessionLocal() as db:
+        r = await db.execute(
+            select(AnalystCall)
+            .where(AnalystCall.stock_id == stock_id)
+            .where(AnalystCall.date >= cutoff)
+            .order_by(AnalystCall.date.desc())
+        )
+        calls = r.scalars().all()
+        if not calls:
+            return None
+
+        analyst_ids = list({c.analyst_id for c in calls})
+        r2 = await db.execute(select(Analyst).where(Analyst.analyst_id.in_(analyst_ids)))
+        analysts = r2.scalars().all()
+        name_map = {a.analyst_id: a.name for a in analysts}
+
+    # 取股票名稱
+    stock_name = calls[0].stock_name or stock_id
+    if not stock_name or stock_name == stock_id:
+        try:
+            from .report_screener import _rt_cache
+            stock_name = _rt_cache.get("prices", {}).get(stock_id, {}).get("name", "") or stock_id
+        except Exception:
+            pass
+
+    bull_calls = [c for c in calls if c.sentiment in ("bullish", "strong_bullish")]
+    bear_calls = [c for c in calls if c.sentiment in ("bearish", "strong_bearish")]
+
+    def _extract_points(call_list: list) -> list[str]:
+        pts: list[str] = []
+        for c in call_list:
+            try:
+                pts.extend(json.loads(c.key_points or "[]"))
+            except Exception:
+                pass
+        return list(dict.fromkeys(pts))[:3]
+
+    bull_points = _extract_points(bull_calls)
+    bear_points = _extract_points(bear_calls)
+
+    bull_names = list(dict.fromkeys(
+        name_map.get(c.analyst_id, c.analyst_id) for c in bull_calls
+    ))[:3]
+    bear_names = list(dict.fromkeys(
+        name_map.get(c.analyst_id, c.analyst_id) for c in bear_calls
+    ))[:3]
+
+    b, s, t = len(bull_calls), len(bear_calls), len(calls)
+    if b > s * 2:
+        conclusion = f"多方明顯佔優，{b}/{t} 位分析師看多"
+    elif s > b * 2:
+        conclusion = f"空方明顯佔優，{s}/{t} 位分析師看空"
+    elif b > s:
+        conclusion = f"多空分歧，多方略佔優（看多 {b} vs 看空 {s}）"
+    elif s > b:
+        conclusion = f"多空分歧，空方略佔優（看空 {s} vs 看多 {b}）"
+    else:
+        conclusion = f"多空均衡，分析師觀點中性（各 {b} 位）"
+
+    return {
+        "stock_id":   stock_id,
+        "stock_name": stock_name,
+        "bull_points": bull_points,
+        "bear_points": bear_points,
+        "bull_names":  bull_names,
+        "bear_names":  bear_names,
+        "bull_count":  b,
+        "bear_count":  s,
+        "total":       t,
+        "conclusion":  conclusion,
+    }
+
+
 def get_consensus_boost(consensus: ConsensusResult | None) -> float:
     """計算信心指數調整值（供 decision_engine Step 11 使用）"""
     if consensus is None:

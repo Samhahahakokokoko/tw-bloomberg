@@ -10,12 +10,27 @@
 from __future__ import annotations
 
 import os
+import time
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Optional
 
 import httpx
 from loguru import logger
+
+# ── 24 小時去重機制 ────────────────────────────────────────────────────────────
+_SENT_ALERTS: dict[tuple[str, str], float] = {}  # (stock_id, alert_type) → sent_at
+_DEDUP_TTL = 86400  # 24 小時（秒）
+
+
+def _is_duplicate(stock_id: str, alert_type: str) -> bool:
+    """同一 (stock_id, alert_type) 在 24h 內只發一次"""
+    last = _SENT_ALERTS.get((stock_id, alert_type), 0.0)
+    return (time.time() - last) < _DEDUP_TTL
+
+
+def _mark_sent(stock_id: str, alert_type: str) -> None:
+    _SENT_ALERTS[(stock_id, alert_type)] = time.time()
 
 
 @dataclass
@@ -204,13 +219,22 @@ async def push_alerts_to_subscribers(alerts: list[SmartAlert]):
 
 
 async def run_smart_alert_scan():
-    """排程入口：掃描 + 推送"""
+    """排程入口：掃描 + 去重 + 推送"""
     try:
         alerts = await scan_all_alerts()
-        if alerts:
-            logger.info(f"[smart_alert] found {len(alerts)} alerts")
-            await push_alerts_to_subscribers(alerts)
+
+        # 24h 去重：過濾掉已發過的同類警報
+        new_alerts = [a for a in alerts if not _is_duplicate(a.stock_id, a.alert_type)]
+        deduped = len(alerts) - len(new_alerts)
+        if deduped:
+            logger.debug(f"[smart_alert] deduped {deduped} repeat alerts (24h window)")
+
+        if new_alerts:
+            logger.info(f"[smart_alert] found {len(new_alerts)} new alerts ({deduped} deduped)")
+            await push_alerts_to_subscribers(new_alerts)
+            for a in new_alerts:
+                _mark_sent(a.stock_id, a.alert_type)
         else:
-            logger.debug("[smart_alert] no alerts triggered")
+            logger.debug(f"[smart_alert] no new alerts (checked {len(alerts)}, {deduped} deduped)")
     except Exception as e:
-        logger.error(f"[smart_alert] run failed: {e}")
+        logger.error(f"[smart_alert] run failed: {type(e).__name__}: {e}")

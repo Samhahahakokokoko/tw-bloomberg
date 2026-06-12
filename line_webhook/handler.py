@@ -5282,25 +5282,56 @@ async def _cmd_analyst_stats(analyst_id: str) -> list:
 
 
 async def _cmd_analyst_stock(stock_id: str) -> list:
-    """/analyst [股票代碼] — 查詢特定股票的分析師觀點"""
+    """/analyst [股票代碼] — 彙整該股票所有分析師多空觀點"""
     try:
-        from backend.services.analyst_consensus_engine import get_stock_consensus
+        from backend.services.analyst_consensus_engine import get_stock_analyst_detail
         from backend.services.analyst_tracker import init_default_analysts
         await init_default_analysts()
-        cons = await get_stock_consensus(stock_id)
-        if not cons:
-            return [_text(f"📺 {stock_id} 分析師觀點\n\n近期無分析師提及此股票")]
+
+        detail = await get_stock_analyst_detail(stock_id)
+        if not detail:
+            return [_text(
+                f"📺 分析師觀點彙整 - {stock_id}\n"
+                f"{'─' * 18}\n"
+                f"近期（14天）無分析師提及此股票"
+            )]
+
+        sn = detail["stock_name"]
+
+        # 多方觀點
+        if detail["bull_points"]:
+            bull_str = "、".join(detail["bull_points"])
+            if detail["bull_names"]:
+                bull_str += f"（{' / '.join(detail['bull_names'])}）"
+        elif detail["bull_count"] > 0:
+            bull_str = f"{detail['bull_count']} 位分析師看多（無具體論點）"
+        else:
+            bull_str = "目前無看多觀點"
+
+        # 空方觀點
+        if detail["bear_points"]:
+            bear_str = "、".join(detail["bear_points"])
+            if detail["bear_names"]:
+                bear_str += f"（{' / '.join(detail['bear_names'])}）"
+        elif detail["bear_count"] > 0:
+            bear_str = f"{detail['bear_count']} 位分析師看空（無具體論點）"
+        else:
+            bear_str = "目前無看空觀點"
+
         text = (
-            f"📺 {stock_id} {cons.stock_name} 分析師觀點\n"
+            f"📺 分析師觀點彙整 - {stock_id} {sn}\n"
             f"{'─' * 18}\n"
-            f"{cons.to_line_text()}"
+            f"多方觀點：{bull_str}\n\n"
+            f"空方觀點：{bear_str}\n\n"
+            f"綜合結論：{detail['conclusion']}"
         )
         return [_text(text, _qr_postback(
             (f"🔍 分析 {stock_id}", f"act=recommend_detail&code={stock_id}"),
             ("📊 今日共識",         "consensus"),
         ))]
     except Exception as e:
-        return [_text(f"❌ 查詢失敗：{e}")]
+        logger.error(f"[analyst_stock] {stock_id}: {type(e).__name__}: {e}")
+        return [_text(f"❌ 查詢失敗：{type(e).__name__}")]
 
 
 async def _cmd_consensus_heatmap(uid: str) -> list:
