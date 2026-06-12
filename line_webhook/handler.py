@@ -1399,18 +1399,10 @@ async def _cmd_analysis(uid: str) -> list:
             except Exception as e:
                 pass
 
-        # Sector concentration
-        SECTOR = {
-            "2330":"半導體","2454":"半導體","2379":"半導體","2303":"半導體",
-            "3034":"半導體","6770":"半導體","3711":"半導體",
-            "2317":"電子零組件","3231":"電子零組件","2308":"電子零組件",
-            "2882":"金融","2884":"金融","2886":"金融","2885":"金融",
-            "2912":"民生消費","1216":"民生消費","2207":"汽車",
-            "0050":"ETF","00878":"ETF","006208":"ETF",
-        }
+        # Sector concentration — use shared _SECTOR_MAP (defined at module level)
         sector_mv: dict[str, float] = {}
         for h in holdings:
-            s = SECTOR.get(h["stock_code"], "其他")
+            s = _SECTOR_MAP.get(h["stock_code"], "其他")
             sector_mv[s] = sector_mv.get(s, 0) + h["market_value"]
         top_sector     = max(sector_mv, key=sector_mv.get)
         top_pct        = sector_mv[top_sector] / total_mv * 100 if total_mv else 0
@@ -1478,13 +1470,15 @@ async def _cmd_analysis(uid: str) -> list:
             text += f"\n🤖 AI建議\n{ai_advice}"
 
         return [_text(text[:5000], qr_items(
-            ("💼 庫存", "/p"),
-            ("📋 歷史", "/history"),
-            ("🔄 回測", "/backtest"),
+            ("🛡 風控報告", "/risk"),
+            ("💼 庫存",     "/p"),
+            ("📋 歷史",     "/history"),
+            ("🔄 回測",     "/backtest"),
         ))]
     except Exception as e:
         logger.error("[cmd_analysis] {}", e)
-        return [_text(f"❌ 分析失敗：{e}")]
+        return [_text(f"❌ 分析失敗：{e}",
+                      qr_items(("重試", "/analysis"), ("💼 庫存", "/p")))]
 
 
 async def _cmd_tax(uid: str) -> list:
