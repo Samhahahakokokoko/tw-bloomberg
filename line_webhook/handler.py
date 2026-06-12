@@ -592,8 +592,8 @@ async def _handle_text(text: str, uid: str) -> list:
     if cmd == "/profile":                       return await _cmd_profile(uid)
     if cmd == "/alert":
         # /alert CODE buy PRICE stop STOP target TARGET
-        if len(parts) >= 7 and parts[2].lower() == "buy":
-            return await _cmd_alert_buy(parts[1].upper(), parts[3], parts[5], parts[6], uid)
+        if len(parts) >= 8 and parts[2].lower() == "buy":
+            return await _cmd_alert_buy(parts[1].upper(), parts[3], parts[5], parts[7], uid)
         # /alert clear CODE
         if len(parts) >= 3 and parts[1].lower() == "clear":
             return await _cmd_alert_clear(parts[2].upper(), uid)
