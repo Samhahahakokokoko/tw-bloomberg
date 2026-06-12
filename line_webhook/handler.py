@@ -977,19 +977,29 @@ async def _cmd_market() -> list:
     try:
         ov = await fetch_market_overview()
         if not ov:
-            return [TextMessage(text="功能暫時無法使用，請稍後再試")]
-        value = ov.get("value", ov.get("index", 0))
+            return [_text("❌ 大盤資料暫時無法取得，請稍後再試", _home_qr())]
+        value  = ov.get("value", ov.get("index", 0))
         change = ov.get("change", 0)
-        pct = ov.get("change_pct", 0)
-        sign = "+" if change >= 0 else "-"
+        pct    = ov.get("change_pct", 0)
+        sign   = "+" if change >= 0 else "-"
+        vol    = ov.get("volume", 0) or ov.get("trading_value", 0)
+        vol_str = f"\n成交量：{vol/1e8:.1f}億" if vol else ""
+        state  = "強多 🚀" if pct > 1.5 else "多頭 📈" if pct > 0.3 else "強空 🔻" if pct < -1.5 else "空頭 📉" if pct < -0.3 else "盤整 ↔️"
         text = (
-            "📊 台股大盤行情\n"
+            f"📊 台股大盤  {state}\n"
             f"加權指數：{value:,.2f}\n"
             f"漲跌：{sign}{abs(change):.2f}點 ({sign}{abs(pct):.2f}%)"
+            f"{vol_str}"
         )
-        return [TextMessage(text=text)]
+        return [_text(text, qr_items(
+            ("📰 新聞", "/n"),
+            ("🎯 選股", "/r"),
+            ("💼 庫存", "/p"),
+            ("🤖 AI分析", "/ai 今日台股操作策略"),
+        ))]
     except Exception as e:
-        return [TextMessage(text="功能暫時無法使用，請稍後再試")]
+        logger.warning("[cmd_market] {}", e)
+        return [_text("❌ 大盤資料暫時無法取得，請稍後再試", _home_qr())]
 
 
 async def _cmd_market_card(uid) -> list:
@@ -1073,6 +1083,7 @@ async def _cmd_portfolio(uid: str) -> list:
         total_pct = total_pnl / total_cost * 100 if total_cost else 0
         lines += [
             "─" * 20,
+            f"總市值：{total_mv:,.0f}",
             f"總損益：{total_pnl:+,.0f} ({total_pct:+.1f}%)",
         ]
 
@@ -2331,8 +2342,15 @@ async def _cmd_news_feed(uid: str) -> list:
         news = await get_recent_news(limit=6)
         msg  = format_news_for_line(news)
     except Exception as e:
-        return [TextMessage(text="功能暫時無法使用，請稍後再試")]
-    return [TextMessage(text=msg[:5000])]
+        logger.warning("[cmd_news_feed] {}", e)
+        return [_text("❌ 新聞暫時無法讀取，請稍後再試",
+                      qr_items(("📊 大盤", "/market"), ("💼 庫存", "/p")))]
+    return [_text(msg[:5000], qr_items(
+        ("🤖 AI分析", "/ai 今日市場重點"),
+        ("📊 大盤", "/market"),
+        ("💼 庫存", "/p"),
+        ("🎯 選股", "/r"),
+    ))]
 
 
 async def _cmd_news_stock(code: str, uid: str) -> list:
