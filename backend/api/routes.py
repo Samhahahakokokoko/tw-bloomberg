@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..models.database import get_db, AsyncSessionLocal, settings
 from ..models.models import Alert, NewsArticle, Subscriber
 from ..services import twse_service, portfolio_service
+from ..utils.credit_guard import is_exhausted as _credit_exhausted, mark_exhausted as _mark_credit_exhausted
 from sqlalchemy import select
 from loguru import logger
 import asyncio
@@ -177,6 +178,8 @@ async def ai_ask(payload: AskRequest):
     from ..models.database import settings
     if not settings.anthropic_api_key:
         raise HTTPException(503, "ANTHROPIC_API_KEY not configured")
+    if _credit_exhausted():
+        raise HTTPException(503, "AI 服務額度不足，請稍後再試")
     try:
         import anthropic
         client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
@@ -190,6 +193,7 @@ async def ai_ask(payload: AskRequest):
     except Exception as e:
         logger.error(f"AI ask error: {e}")
         if "credit balance is too low" in str(e):
+            _mark_credit_exhausted()
             raise HTTPException(503, "AI 服務額度不足，請稍後再試")
         raise HTTPException(500, str(e))
 
@@ -199,6 +203,8 @@ async def ai_portfolio_analysis(db: AsyncSession = Depends(get_db)):
     from ..models.database import settings
     if not settings.anthropic_api_key:
         raise HTTPException(503, "ANTHROPIC_API_KEY not configured")
+    if _credit_exhausted():
+        raise HTTPException(503, "AI 服務額度不足，請稍後再試")
 
     holdings = await portfolio_service.get_portfolio(db)
     if not holdings:
@@ -239,6 +245,7 @@ async def ai_portfolio_analysis(db: AsyncSession = Depends(get_db)):
     except Exception as e:
         logger.error(f"AI portfolio analysis error: {e}")
         if "credit balance is too low" in str(e):
+            _mark_credit_exhausted()
             raise HTTPException(503, "AI 服務額度不足，請稍後再試")
         raise HTTPException(500, str(e))
 
