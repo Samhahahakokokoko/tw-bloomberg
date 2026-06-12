@@ -1312,10 +1312,45 @@ async def _push_watchlist_morning():
 
 
 async def _push_sector_strength():
-    """15:05 — 盤後產業強度推送"""
+    """15:05 — 盤後產業強度文字排行推送"""
     try:
-        from ..services.sector_heatmap import push_heatmap
-        await push_heatmap()
+        from ..services.sector_heatmap import fetch_sector_changes
+        from ..models.database import AsyncSessionLocal, settings
+        from ..models.models import Subscriber
+        from sqlalchemy import select
+        import httpx
+        from ..services.line_push import push_line_messages
+
+        sector_chg = await fetch_sector_changes()
+        if not sector_chg:
+            return
+
+        sorted_sectors = sorted(sector_chg.items(), key=lambda x: x[1], reverse=True)
+        from datetime import datetime as _dt
+        today = _dt.now().strftime("%m/%d")
+        lines = [f"📊 產業強弱排行 {today}", "─" * 18]
+        for i, (name, chg) in enumerate(sorted_sectors, 1):
+            bar = "🔴" if chg >= 2 else ("🟠" if chg >= 0.5 else ("⚪" if chg > -0.5 else ("🟢" if chg > -2 else "🟣")))
+            sign = "+" if chg >= 0 else ""
+            lines.append(f"{bar} {i:2d}. {name:<6} {sign}{chg:.1f}%")
+        text = "\n".join(lines)
+
+        async with AsyncSessionLocal() as db:
+            r = await db.execute(select(Subscriber).where(Subscriber.subscribed_morning == True))
+            subs = r.scalars().all()
+        if not subs:
+            return
+
+        qr = {"items": [
+            {"type": "action", "action": {"type": "message", "label": "🔍 選股", "text": "/screen"}},
+            {"type": "action", "action": {"type": "message", "label": "📈 大盤", "text": "/market"}},
+            {"type": "action", "action": {"type": "message", "label": "🌡️ 熱力圖", "text": "/heatmap"}},
+        ]}
+        async with httpx.AsyncClient(timeout=20) as c:
+            for sub in subs:
+                await push_line_messages(sub.line_user_id, [{"type": "text", "text": text, "quickReply": qr}],
+                                         client=c, context="sector_strength_push")
+        logger.info(f"[sector_strength] pushed to {len(subs)} subscribers")
     except Exception as e:
         logger.error(f"Sector strength push failed: {e}")
 
