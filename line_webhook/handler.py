@@ -1415,7 +1415,7 @@ async def _cmd_analysis(uid: str) -> list:
         ai_advice = ""
         try:
             from backend.models.database import settings as _s
-            if _s.anthropic_api_key:
+            if _s.anthropic_api_key and not _credit_exhausted():
                 import anthropic as _ant
                 client = _ant.AsyncAnthropic(api_key=_s.anthropic_api_key)
                 hold_summary = "; ".join([
@@ -1436,7 +1436,8 @@ async def _cmd_analysis(uid: str) -> list:
                 ai_advice = msg.content[0].text.strip()[:200] if msg.content else ""
         except Exception as e:
             if "credit balance is too low" in str(e):
-                logger.warning("[cmd_analysis] Anthropic 額度不足")
+                _mark_credit_exhausted()
+                logger.warning("[cmd_analysis] Anthropic credit 耗盡")
 
         # Format
         bench_block = ""
