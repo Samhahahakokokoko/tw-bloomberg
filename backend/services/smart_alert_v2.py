@@ -179,8 +179,25 @@ async def scan_all_alerts() -> list[SmartAlert]:
     return results
 
 
+async def _get_user_watched_codes(uid: str) -> set[str]:
+    """取得用戶自選股 + 庫存代碼的聯集"""
+    from ..models.database import AsyncSessionLocal
+    from ..models.models import Watchlist, Portfolio
+    from sqlalchemy import select
+    codes: set[str] = set()
+    try:
+        async with AsyncSessionLocal() as db:
+            r = await db.execute(select(Watchlist.stock_code).where(Watchlist.user_id == uid))
+            codes.update(row[0] for row in r.fetchall() if row[0])
+            r = await db.execute(select(Portfolio.stock_code).where(Portfolio.user_id == uid))
+            codes.update(row[0] for row in r.fetchall() if row[0])
+    except Exception as e:
+        logger.debug("[smart_alert] could not load watched codes for {}: {}", uid, e)
+    return codes
+
+
 async def push_alerts_to_subscribers(alerts: list[SmartAlert]):
-    """把警報推送給所有訂閱者"""
+    """把警報推送給訂閱者（個人化：優先推送自選股/庫存相關警報）"""
     if not alerts:
         return
 
@@ -195,27 +212,39 @@ async def push_alerts_to_subscribers(alerts: list[SmartAlert]):
     if not subs:
         return
 
-    # 只推最重要的 3 個警報，避免訊息轟炸
-    top_alerts = sorted(alerts, key=lambda a: 0 if a.severity == "warning" else 1)[:3]
+    # severity 排序：warning 優先於 opportunity/info
+    all_sorted = sorted(alerts, key=lambda a: 0 if a.severity == "warning" else 1)
+
+    from .line_push import push_line_messages
+    pushed_count = 0
 
     async with httpx.AsyncClient(timeout=20) as c:
         for sub in subs:
-            msgs = []
-            for alert in top_alerts:
-                msgs.append({
-                    "type": "text",
-                    "text": alert.to_line_text(),
-                    "quickReply": alert.to_line_qr(),
-                })
-            from .line_push import push_line_messages
-            await push_line_messages(
-                sub.line_user_id,
-                msgs[:5],
-                client=c,
-                context="smart_alert",
-            )
+            uid = sub.line_user_id
 
-    logger.info(f"[smart_alert] pushed {len(top_alerts)} alerts to {len(subs)} subscribers")
+            # 1. 找出和此用戶相關的警報（自選股 + 庫存）
+            watched = await _get_user_watched_codes(uid)
+            if watched:
+                personal = [a for a in all_sorted if a.stock_id in watched]
+                # 2. 若無個人化警報，fallback 到 warning 級別的市場警報（最多1條）
+                market_warn = [a for a in all_sorted if a.severity == "warning"][:1]
+                to_send = (personal + [a for a in market_warn if a not in personal])[:3]
+            else:
+                # 未設自選股：只推最重要的 2 條
+                to_send = all_sorted[:2]
+
+            if not to_send:
+                continue
+
+            msgs = [
+                {"type": "text", "text": a.to_line_text(), "quickReply": a.to_line_qr()}
+                for a in to_send
+            ]
+            ok = await push_line_messages(uid, msgs[:5], client=c, context="smart_alert")
+            if ok:
+                pushed_count += 1
+
+    logger.info("[smart_alert] pushed to {}/{} subscribers (personalized)", pushed_count, len(subs))
 
 
 async def run_smart_alert_scan():
