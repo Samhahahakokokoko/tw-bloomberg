@@ -2288,13 +2288,31 @@ async def _cmd_screener(preset_or_top: str = "top") -> list:
                 qr_items(("💼 庫存", "/portfolio"), ("📊 大盤", "/market"))
             )]
 
-        lines = ["🎯 多維度選股結果\n" + "─" * 20]
+        # 嘗試從 RT 快取補充今日即時漲跌幅
+        rt_prices: dict = {}
+        try:
+            from backend.services.report_screener import _rt_cache
+            rt_prices = _rt_cache.get("prices", {})
+        except Exception:
+            pass
+
+        score_date = results[0].get("score_date", "")
+        date_note  = f"（評分日：{score_date}）" if score_date else ""
+        lines = [f"🎯 多維度選股結果{date_note}\n" + "─" * 20]
         for i, r in enumerate(results[:8], 1):
             ma  = "✓" if r.get("ma_aligned") else "✗"
             kd  = "✓" if r.get("kd_golden_cross") else "✗"
             vol = "✓" if r.get("vol_breakout") else "✗"
+            code = r["stock_code"]
+            price_tag = ""
+            if code in rt_prices:
+                pct = float(rt_prices[code].get("change_pct", 0) or 0)
+                prc = float(rt_prices[code].get("close", 0) or 0)
+                if prc > 0:
+                    sign = "+" if pct >= 0 else ""
+                    price_tag = f"  {prc:.0f}({sign}{pct:.1f}%)"
             lines.append(
-                f"{i}. {r['stock_code']} {r['stock_name']}\n"
+                f"{i}. {code} {r['stock_name']}{price_tag}\n"
                 f"   總分:{r['total_score']:.0f} "
                 f"基:{r['fundamental_score']:.0f} "
                 f"籌:{r['chip_score']:.0f} "
