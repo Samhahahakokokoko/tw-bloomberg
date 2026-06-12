@@ -1801,13 +1801,45 @@ async def _cmd_margin(code: str) -> list:
     from backend.services.margin_service import fetch_margin_today
     d = await fetch_margin_today(code)
     if not d:
-        return [_text(f"❌ 查無 {code} 融資券")]
-    return [_text(
-        f"📊 {code} 融資券\n"
-        f"融資餘額：{d.get('margin_balance',0):,}\n"
-        f"融券餘額：{d.get('short_balance',0):,}",
-        qr_items(("📈 報價", f"/quote {code}"), ("🏛 法人", f"/inst {code}"))
-    )]
+        return [_text(f"❌ 查無 {code} 融資券", qr_items(("📈 報價", f"/quote {code}")))]
+
+    m_bal  = d.get("margin_balance", 0)
+    m_chg  = d.get("margin_change",  0)
+    m_buy  = d.get("margin_buy",     0)
+    m_sell = d.get("margin_sell",    0)
+    s_bal  = d.get("short_balance",  0)
+    s_chg  = d.get("short_change",   0)
+    s_sell = d.get("short_sell",     0)
+    s_buy  = d.get("short_buy",      0)
+    date   = d.get("date", "")[:10]
+
+    def _sgn(v: int) -> str:
+        return f"+{v:,}" if v >= 0 else f"{v:,}"
+
+    ratio_note = ""
+    if s_bal > 0 and m_bal > 0:
+        ratio = s_bal / m_bal * 100
+        if ratio > 30:
+            ratio_note = f"\n⚠️ 融券/融資 = {ratio:.0f}%（偏高，留意軋空）"
+        elif ratio > 15:
+            ratio_note = f"\n融券/融資 = {ratio:.0f}%"
+
+    lines = [
+        f"📊 {code} 融資券（{date}）",
+        "─" * 20,
+        f"融資餘額：{m_bal:,}張  {_sgn(m_chg)}",
+        f"  今日買進 {m_buy:,}  賣出 {m_sell:,}",
+        f"融券餘額：{s_bal:,}張  {_sgn(s_chg)}",
+        f"  今日賣出 {s_sell:,}  回補 {s_buy:,}",
+    ]
+    if ratio_note:
+        lines.append(ratio_note)
+
+    return [_text("\n".join(lines), qr_items(
+        ("📈 報價",   f"/quote {code}"),
+        ("🏛 法人",   f"/inst {code}"),
+        ("🤖 AI解讀", f"/ai {code} 融資券數據解讀"),
+    ))]
 
 
 async def _cmd_morning() -> list:
@@ -4350,7 +4382,7 @@ def _build_text_fallback(rows, label: str, page: int, total: int) -> TextMessage
 def _build_stock_list_msg(
     rows: list, label: str, page: int, total_pages: int, screen_type: str,
 ) -> TextMessage:
-    """文字股票列表。"""
+    """文字股票列表，附翻頁 Quick Reply 按鈕。"""
     lines = [f"📊 {label}  第{page}/{total_pages}頁", "─" * 18]
     for i, r in enumerate(rows[:10], 1):
         arrow = "▲" if r.change_pct > 0 else ("▼" if r.change_pct < 0 else "─")
@@ -4361,7 +4393,19 @@ def _build_stock_list_msg(
             f"   {close_str}元  AI{r.confidence:.0f}分  {arrow}{sign}{r.change_pct:.1f}%"
         )
 
-    return TextMessage(text="\n".join(lines)[:5000])
+    nav_items: list[dict] = []
+    if page > 1:
+        nav_items.append({"type": "action", "action": {
+            "type": "postback", "label": "← 上一頁", "data": "act=report_prev",
+            "displayText": "← 上一頁"}})
+    if page < total_pages:
+        nav_items.append({"type": "action", "action": {
+            "type": "postback", "label": "→ 下一頁", "data": "act=report_next",
+            "displayText": "→ 下一頁"}})
+    nav_items.append({"type": "action", "action": {"type": "message", "label": "🔍 選股選單", "text": "/screen"}})
+    nav_items.append({"type": "action", "action": {"type": "message", "label": "💼 庫存",   "text": "/p"}})
+    qr = {"items": nav_items} if nav_items else None
+    return _text("\n".join(lines), qr)
 
 
 async def _cmd_custom_screen(conditions: str, uid: str) -> list:
@@ -5280,6 +5324,11 @@ async def _cmd_feedback(content: str, uid: str, kind: str = "feedback") -> list:
 
 async def _cmd_analyst_today() -> list:
     """/analyst — 今日分析師共識報告"""
+    _analyst_qr = qr_items(
+        ("🏆 可信度排行", "/analyst ranking"),
+        ("📋 追蹤清單",   "/analyst list"),
+        ("📊 選股",       "/r"),
+    )
     try:
         from backend.services.analyst_heatmap import (
             calculate_daily_consensus_with_alpha, _format_consensus_report
@@ -5288,10 +5337,10 @@ async def _cmd_analyst_today() -> list:
         await init_default_analysts()
         clist = await calculate_daily_consensus_with_alpha()
         text  = await _format_consensus_report(clist)
-        return [TextMessage(text=text[:5000])]
+        return [_text(text, _analyst_qr)]
     except Exception as e:
         logger.error(f"[analyst_today] {e}")
-        return [TextMessage(text="功能暫時無法使用，請稍後再試")]
+        return [_text("功能暫時無法使用，請稍後再試", _analyst_qr)]
 
 
 async def _cmd_analyst_list() -> list:
