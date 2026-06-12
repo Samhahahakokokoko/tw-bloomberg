@@ -950,7 +950,8 @@ async def _cmd_quote(code: str) -> list:
     try:
         quote = await fetch_realtime_quote(code)
         if not quote:
-            return [TextMessage(text=f"查無 {code} 報價")]
+            return [_text(f"❌ 查無 {code} 報價（請確認代碼正確）",
+                          qr_items(("2330 台積電", "2330"), ("大盤", "/market"), ("🔍 選股", "/r")))]
 
         name = quote.get("name") or code
         price = float(quote.get("close") or quote.get("price") or 0)
@@ -4258,17 +4259,21 @@ async def _cmd_report(screen_type: str, uid: str, sector: str = "") -> list:
     from backend.services.report_tracker import batch_record
 
     label = get_label(screen_type, sector)
+    _retry_qr = qr_items(("🔄 重試", f"/report {screen_type}"), ("🔍 選股選單", "/screen"), ("💼 庫存", "/p"))
     try:
         rows = await asyncio.wait_for(
             async_run_screener(screen_type, sector=sector), timeout=22)
     except asyncio.TimeoutError:
-        return [TextMessage(text="功能暫時無法使用，請稍後再試")]
+        return [_text("⏱ 選股逾時，請稍後再試", _retry_qr)]
     except Exception as e:
         logger.error("[report] {}", e)
-        return [TextMessage(text="功能暫時無法使用，請稍後再試")]
+        return [_text("❌ 選股暫時無法使用，請稍後再試", _retry_qr)]
 
     if not rows:
-        return [TextMessage(text="📊 選股列表\n目前沒有符合條件的股票")]
+        return [_text(
+            f"📊 {label}\n目前沒有符合條件的股票\n（資料每日 18:30 更新）",
+            qr_items(("🔍 全維度", "/report all"), ("📈 動能", "/report momentum"), ("🔍 選股選單", "/screen")),
+        )]
 
     page_rows, total_pages = paginate(rows, 1)
     _report_pages[uid] = {"rows": rows, "page": 1, "total_pages": total_pages,
@@ -4287,13 +4292,18 @@ async def _cmd_report_page(uid: str, delta: int = 0, go_to: int = 0) -> list:
 
     cache = _report_pages.get(uid)
     if not cache:
-        return [TextMessage(text="沒有進行中的選股，請先輸入 /report")]
+        return [_text("📊 請先執行選股，例如 /report 或 /screen",
+                      qr_items(("🔍 全維度", "/report all"), ("🔍 選股選單", "/screen")))]
     current = cache["page"]
     total_p = cache["total_pages"]
     next_p  = go_to if go_to > 0 else current + delta
     next_p  = max(1, min(next_p, total_p))
     if next_p == current and delta != 0:
-        return [TextMessage(text=f"已是最{'後' if delta > 0 else '前'}一頁（第 {current}/{total_p} 頁）")]
+        direction = "後" if delta > 0 else "前"
+        return [_text(
+            f"已是最{direction}一頁（第 {current}/{total_p} 頁）",
+            qr_items(("🔍 選股選單", "/screen"), ("💼 庫存", "/p")),
+        )]
 
     rows        = cache["rows"]
     screen_type = cache["screen_type"]
