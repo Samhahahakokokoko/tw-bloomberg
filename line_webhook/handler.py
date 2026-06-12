@@ -1550,15 +1550,66 @@ async def _cmd_alert_list(uid: str) -> list:
 
 
 async def _cmd_inst(code: str) -> list:
-    d = await fetch_institutional(code)
-    if not d:
-        return [_text(f"❌ 查無 {code} 三大法人")]
-    return [_text(
-        f"🏛 {code} 三大法人\n外資 {d.get('foreign_net',0):+,}\n"
-        f"投信 {d.get('investment_trust_net',0):+,}\n"
-        f"自營 {d.get('dealer_net',0):+,}\n合計 {d.get('total_net',0):+,}",
-        qr_items(("📈 報價", f"/quote {code}"), ("🤖 AI", f"/ai {code} 法人動向解讀"))
-    )]
+    try:
+        from backend.services.chip_service import fetch_chip_history
+        chips = await fetch_chip_history(code, days=10)
+    except Exception as e:
+        chips = []
+
+    if not chips:
+        d = await fetch_institutional(code)
+        if not d:
+            return [_text(f"❌ 查無 {code} 三大法人",
+                          qr_items(("📈 報價", f"/quote {code}")))]
+        return [_text(
+            f"🏛 {code} 三大法人\n外資 {d.get('foreign_net',0):+,}\n"
+            f"投信 {d.get('investment_trust_net',0):+,}\n"
+            f"自營 {d.get('dealer_net',0):+,}\n合計 {d.get('total_net',0):+,}",
+            qr_items(("📈 報價", f"/quote {code}"), ("🤖 AI", f"/ai {code} 法人動向解讀"))
+        )]
+
+    latest = chips[-1]
+    f_net = latest.get("foreign_net", 0)
+    t_net = latest.get("trust_net", 0)
+    d_net = latest.get("dealer_net", 0)
+    total  = f_net + t_net + d_net
+    date_str = latest.get("date", "")[:10]
+
+    # 計算連買/連賣天數
+    def _consec(series: list[int]) -> str:
+        if not series:
+            return ""
+        sign = 1 if series[-1] > 0 else -1
+        count = sum(1 for v in reversed(series) if (v > 0) == (sign > 0))
+        label = "連買" if sign > 0 else "連賣"
+        return f"{label}{count}日" if count >= 2 else ""
+
+    f_series = [r.get("foreign_net", 0) for r in chips]
+    t_series = [r.get("trust_net", 0) for r in chips]
+    f_tag = _consec(f_series)
+    t_tag = _consec(t_series)
+
+    # 近5日累計
+    recent5 = chips[-5:] if len(chips) >= 5 else chips
+    f_5d = sum(r.get("foreign_net", 0) for r in recent5)
+    t_5d = sum(r.get("trust_net", 0) for r in recent5)
+
+    lines = [
+        f"🏛 {code} 三大法人（{date_str}）",
+        "─" * 20,
+        f"外資：{f_net:+,}張  {f_tag}",
+        f"投信：{t_net:+,}張  {t_tag}",
+        f"自營：{d_net:+,}張",
+        f"合計：{total:+,}張",
+        f"\n近5日累計",
+        f"外資 {f_5d:+,}  投信 {t_5d:+,}",
+    ]
+
+    return [_text("\n".join(lines), qr_items(
+        ("📈 報價",   f"/quote {code}"),
+        ("🤖 AI解讀", f"/ai {code} 法人動向解讀"),
+        ("📰 新聞",   f"/news {code}"),
+    ))]
 
 
 async def _cmd_pe(code: str) -> list:
@@ -1568,16 +1619,34 @@ async def _cmd_pe(code: str) -> list:
             r = await c.get("https://openapi.twse.com.tw/v1/exchangeReport/BWIBBU_d")
             item = next((x for x in r.json() if x.get("Code") == code), None)
         if item:
+            pe  = item.get('PEratio', 'N/A')
+            pb  = item.get('PBratio', 'N/A')
+            dy  = item.get('DividendYield', 'N/A')
+            # PE interpretation hint
+            pe_note = ""
+            try:
+                pe_f = float(pe)
+                if pe_f < 15:    pe_note = "（偏低）"
+                elif pe_f < 25:  pe_note = "（合理）"
+                else:            pe_note = "（偏高）"
+            except (ValueError, TypeError):
+                pass
             return [_text(
                 f"📐 {item.get('Name',code)} ({code})\n"
-                f"本益比：{item.get('PEratio','N/A')}\n"
-                f"股淨比：{item.get('PBratio','N/A')}\n"
-                f"殖利率：{item.get('DividendYield','N/A')}%",
-                qr_items(("📈 報價", f"/quote {code}"))
+                f"本益比：{pe}{pe_note}\n"
+                f"股淨比：{pb}\n"
+                f"殖利率：{dy}%",
+                qr_items(
+                    ("📈 報價",    f"/quote {code}"),
+                    ("🏛 法人",    f"/inst {code}"),
+                    ("💰 配息",    f"/dividend {code}"),
+                    ("🤖 AI估值",  f"/ai {code} 估值合理嗎"),
+                )
             )]
     except Exception as e:
         pass
-    return [_text(f"❌ 查無 {code} 估值資料")]
+    return [_text(f"❌ 查無 {code} 估值資料",
+                  qr_items(("📈 報價", f"/quote {code}")))]
 
 
 async def _cmd_dividend(code: str, uid: str = "") -> list:
