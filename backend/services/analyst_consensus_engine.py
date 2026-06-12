@@ -309,7 +309,7 @@ async def get_stock_analyst_detail(stock_id: str, days: int = 14) -> dict | None
         try:
             from .report_screener import _rt_cache
             stock_name = _rt_cache.get("prices", {}).get(stock_id, {}).get("name", "") or stock_id
-        except Exception:
+        except Exception as e:
             pass
 
     bull_calls = [c for c in calls if c.sentiment in ("bullish", "strong_bullish")]
@@ -320,7 +320,7 @@ async def get_stock_analyst_detail(stock_id: str, days: int = 14) -> dict | None
         for c in call_list:
             try:
                 pts.extend(json.loads(c.key_points or "[]"))
-            except Exception:
+            except Exception as e:
                 pass
         return list(dict.fromkeys(pts))[:3]
 

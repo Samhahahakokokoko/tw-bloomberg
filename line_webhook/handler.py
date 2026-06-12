@@ -1646,7 +1646,7 @@ async def _cmd_alert_list(uid: str) -> list:
             p = q.get("price") or q.get("close") or 0
             if p:
                 prices[code] = float(p)
-        except Exception:
+        except Exception as e:
             pass
 
     lines = [f"🔔 我的警報（{len(alerts)} 個）", "─" * 20]
@@ -2463,7 +2463,7 @@ async def _cmd_screener(preset_or_top: str = "top") -> list:
         try:
             from backend.services.report_screener import _rt_cache
             rt_prices = _rt_cache.get("prices", {})
-        except Exception:
+        except Exception as e:
             pass
 
         score_date = results[0].get("score_date", "")
