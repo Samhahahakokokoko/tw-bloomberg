@@ -6,6 +6,23 @@ from datetime import datetime
 from loguru import logger
 
 
+async def _fetch_rsi(code: str) -> float | None:
+    """取得個股 RSI(14)，失敗回傳 None"""
+    try:
+        from .twse_service import fetch_kline
+        from ..services.health_service import _calc_rsi
+        klines = await fetch_kline(code)
+        if not klines or len(klines) < 15:
+            return None
+        closes = [float(k.get("close", 0) or 0) for k in klines if k.get("close")]
+        if len(closes) < 15:
+            return None
+        return round(_calc_rsi(closes), 1)
+    except Exception as e:
+        logger.debug(f"[watchlist_monitor] RSI fetch failed for {code}: {e}")
+        return None
+
+
 async def scan_user_watchlist(uid: str) -> list[dict]:
     """掃描單一用戶的自選股，回傳分析結果列表"""
     from ..models.database import AsyncSessionLocal
@@ -29,6 +46,9 @@ async def scan_user_watchlist(uid: str) -> list[dict]:
         except Exception as e:
             price, chg, name, vol = 0, 0, item.stock_name or code, 0
 
+        # 取得 RSI（非同步，失敗不影響其他欄位）
+        rsi = await _fetch_rsi(code)
+
         # 判斷訊號
         signal = _evaluate_signal(price, chg, vol, item.target_price, item.stop_loss)
 
@@ -37,6 +57,7 @@ async def scan_user_watchlist(uid: str) -> list[dict]:
             "name":          name,
             "price":         price,
             "change_pct":    chg,
+            "rsi":           rsi,
             "signal":        signal["label"],
             "signal_icon":   signal["icon"],
             "detail":        signal["detail"],
@@ -75,8 +96,20 @@ def format_watchlist_report(uid: str, results: list[dict]) -> str:
     for r in results:
         price = r.get("price", 0)
         chg   = r.get("change_pct", 0)
+        rsi   = r.get("rsi")
         sign  = "+" if chg >= 0 else ""
         price_str = f"{price:,.0f}元 ({sign}{chg:.1f}%)" if price else "--"
+
+        # RSI 標籤
+        if rsi is not None:
+            if rsi <= 30:
+                rsi_str = f"  RSI:{rsi:.0f}（超賣）"
+            elif rsi >= 70:
+                rsi_str = f"  RSI:{rsi:.0f}（超買）"
+            else:
+                rsi_str = f"  RSI:{rsi:.0f}"
+        else:
+            rsi_str = "  RSI:--"
 
         status = ""
         if r["sl_triggered"]:
@@ -84,7 +117,7 @@ def format_watchlist_report(uid: str, results: list[dict]) -> str:
         elif r["tp_triggered"]:
             status = "  🎯目標達！"
 
-        lines.append(f"{r['signal_icon']} {r['code']} {r['name']}  {price_str}{status}")
+        lines.append(f"{r['signal_icon']} {r['code']} {r['name']}  {price_str}{rsi_str}{status}")
         lines.append(f"   └ {r['detail']}")
     return "\n".join(lines)
 

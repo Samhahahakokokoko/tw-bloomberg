@@ -590,9 +590,18 @@ async def _handle_text(text: str, uid: str) -> list:
     if cmd == "/history":                       return await _cmd_history(uid, parts[1] if len(parts)>1 else None)
     if cmd == "/tax":                           return await _cmd_tax(uid)
     if cmd == "/profile":                       return await _cmd_profile(uid)
-    if cmd == "/alert"    and len(parts) == 4:  return await _cmd_alert(parts[1], parts[2], parts[3], uid)
+    if cmd == "/alert":
+        # /alert CODE buy PRICE stop STOP target TARGET
+        if len(parts) >= 7 and parts[2].lower() == "buy":
+            return await _cmd_alert_buy(parts[1].upper(), parts[3], parts[5], parts[6], uid)
+        # /alert clear CODE
+        if len(parts) >= 3 and parts[1].lower() == "clear":
+            return await _cmd_alert_clear(parts[2].upper(), uid)
+        # /alert CODE type value
+        if len(parts) == 4:
+            return await _cmd_alert(parts[1], parts[2], parts[3], uid)
     if cmd == "/alert_guide":                   return [_alert_guide()]
-    if cmd == "/alert_list":                    return await _cmd_alert_list(uid)
+    if cmd in ("/alert_list", "/alerts"):       return await _cmd_alert_list(uid)
     if cmd in ("/inst", "/institutional") and len(parts) >= 2: return await _cmd_inst(parts[1])
     if cmd == "/pe"       and len(parts) >= 2:  return await _cmd_pe(parts[1])
     if cmd == "/etf":
@@ -676,7 +685,22 @@ async def _handle_text(text: str, uid: str) -> list:
         if re.match(r"^\d{4,6}[A-Z]?$", arg.upper()):
             return await _cmd_track_history(arg)
         return await _cmd_track(" ".join(parts[1:]))
-    if cmd == "/optimize":                      return await _cmd_optimize(uid)
+    if cmd == "/optimize":
+        if len(parts) >= 3 and parts[2].upper() == "RSI":
+            code = parts[1].upper()
+            try:
+                import asyncio, functools
+                loop = asyncio.get_event_loop()
+                result = await loop.run_in_executor(None, functools.partial(_run_rsi_optimizer, code))
+                return [_text(result, qr_items(
+                    ("📊 RSI回測", f"/test {code} RSI"),
+                    ("🤖 AI分析",  f"/ai {code}"),
+                    ("🔬 最佳化",  f"/optimize"),
+                ))]
+            except Exception as e:
+                logger.error(f"[optimize RSI] {code} error: {e}")
+                return [_text(f"❌ RSI優化失敗：{e}")]
+        return await _cmd_optimize(uid)
     if cmd == "/var":                           return await _cmd_var(uid)
     if cmd == "/correlation":                   return await _cmd_correlation(uid)
 
@@ -804,6 +828,7 @@ async def _handle_text(text: str, uid: str) -> list:
         code = parts[1] if len(parts) > 1 else "2330"
         return await _cmd_pipeline(code, uid)
     if cmd == "/sector":              return await _cmd_sector(uid)
+    if cmd == "/sentiment":           return await _cmd_sentiment(uid)
     if cmd == "/flow":                return await _cmd_flow(uid)
     if cmd == "/alpha":               return await _cmd_alpha_health(uid)
     if cmd == "/conviction":
@@ -1525,6 +1550,65 @@ async def _cmd_alert(code: str, atype: str, threshold: str, uid: str) -> list:
         }
         return [_text(f"🔔 {code} {labels[atype]} 觸發時通知",
                       qr_items(("📈 報價", f"/quote {code}"), ("📋 警報列表", "/alert_list")))]
+    except Exception as e:
+        return [_text(f"❌ {e}")]
+
+
+async def _cmd_alert_buy(code: str, price: str, stop: str, target: str, uid: str) -> list:
+    """/alert CODE buy PRICE stop STOP target TARGET — 建立停損/停利雙警報"""
+    created = []
+    errors = []
+    try:
+        stop_val = float(stop)
+        async with AsyncSessionLocal() as db:
+            a = Alert(stock_code=code, alert_type="price_below",
+                      threshold=stop_val, user_id=uid, line_user_id=uid)
+            db.add(a)
+            await db.commit()
+        created.append(f"停損 {stop_val:g} 元（跌破通知）")
+    except Exception as e:
+        errors.append(f"停損設定失敗：{e}")
+
+    try:
+        target_val = float(target)
+        async with AsyncSessionLocal() as db:
+            a = Alert(stock_code=code, alert_type="price_above",
+                      threshold=target_val, user_id=uid, line_user_id=uid)
+            db.add(a)
+            await db.commit()
+        created.append(f"目標 {target_val:g} 元（突破通知）")
+    except Exception as e:
+        errors.append(f"目標設定失敗：{e}")
+
+    if errors:
+        return [_text(f"⚠️ 部分設定失敗：\n" + "\n".join(errors))]
+
+    lines = [f"🔔 {code} 買入計劃警報已建立"]
+    lines.append(f"買入價：{price} 元")
+    for c in created:
+        lines.append(f"  · {c}")
+    return [_text("\n".join(lines), qr_items(
+        ("📋 警報列表", "/alert_list"),
+        ("📈 報價", f"/quote {code}"),
+    ))]
+
+
+async def _cmd_alert_clear(code: str, uid: str) -> list:
+    """/alert clear CODE — 移除該股票所有警報"""
+    from sqlalchemy import delete
+    try:
+        async with AsyncSessionLocal() as db:
+            result = await db.execute(
+                delete(Alert).where(Alert.stock_code == code, Alert.user_id == uid)
+            )
+            await db.commit()
+            count = result.rowcount
+        if count:
+            return [_text(f"✅ 已移除 {code} 的 {count} 個警報",
+                          qr_items(("📋 警報列表", "/alert_list")))]
+        else:
+            return [_text(f"ℹ️ {code} 無啟用中的警報",
+                          qr_items(("📋 警報列表", "/alert_list")))]
     except Exception as e:
         return [_text(f"❌ {e}")]
 
@@ -3068,6 +3152,23 @@ async def _cmd_sector(uid: str) -> list:
         return [_text(engine.format_report(strengths, signal))]
 
 
+async def _cmd_sentiment(uid: str) -> list:
+    """/sentiment — 大盤情緒指數（0-100）"""
+    try:
+        from backend.services.market_sentiment import get_sentiment_score, format_sentiment
+        data = await get_sentiment_score()
+        text = format_sentiment(data)
+        return [_text(text, qr_items(
+            ("🔥 族群輪動", "/sector"),
+            ("💰 資金流向", "/flow"),
+            ("📊 大盤",     "/market"),
+        ))]
+    except Exception as e:
+        logger.error("[sentiment] {}", e)
+        return [_text(f"❌ 情緒指數取得失敗：{e}",
+                      qr_items(("🔥 族群輪動", "/sector"), ("📊 大盤", "/market")))]
+
+
 async def _cmd_flow(uid: str) -> list:
     """/flow — 今日資金流向"""
     try:
@@ -3405,6 +3506,78 @@ def _run_yf_backtest(code: str, strategy: str) -> str:
         f"勝率：{win_rate:.1f}%\n"
         f"平均每筆：{'+' if avg_ret>=0 else ''}{avg_ret:.2f}%\n"
         f"{'─'*24}"
+    )
+
+
+def _run_rsi_optimizer(code: str) -> str:
+    """RSI 參數網格搜尋（同步，跑在 executor）"""
+    import yfinance as yf
+    import ta as ta_lib
+    import pandas as pd
+    import itertools
+
+    ticker = f"{code}.TW"
+    df = yf.download(ticker, period="3y", progress=False, auto_adjust=True)
+    if df.empty:
+        return f"❌ 無法取得 {code} 資料"
+    if isinstance(df.columns, pd.MultiIndex):
+        df.columns = df.columns.get_level_values(0)
+    df = df.dropna(subset=["Close"])
+    if len(df) < 60:
+        return f"❌ {code} 資料不足"
+
+    close = df["Close"]
+    best = {"return": -999, "params": None, "win_rate": 0, "trades": 0}
+
+    windows = [7, 10, 14, 21]
+    oversolds = [20, 25, 30, 35]
+    overboughts = [65, 70, 75, 80]
+
+    for window, oversold, overbought in itertools.product(windows, oversolds, overboughts):
+        rsi = ta_lib.momentum.RSIIndicator(close, window=window).rsi()
+        signal = pd.Series(0, index=df.index)
+        signal[rsi < oversold] = 1
+        signal[rsi > overbought] = -1
+
+        capital, position, entry_px = 1_000_000.0, 0, 0.0
+        trades = []
+        for date, row in df.iterrows():
+            sig = signal.get(date, 0)
+            px = float(row["Close"])
+            if sig == 1 and position == 0:
+                position = int(capital / px)
+                entry_px = px
+                capital -= position * px
+            elif sig == -1 and position > 0:
+                pnl = position * (px - entry_px)
+                trades.append({"ret": (px - entry_px) / entry_px, "pnl": pnl})
+                capital += position * px
+                position = 0
+
+        final_px = float(df["Close"].iloc[-1])
+        total_val = capital + position * final_px
+        total_ret = (total_val - 1_000_000) / 1_000_000 * 100
+        win_rate = sum(1 for t in trades if t["pnl"] > 0) / len(trades) * 100 if trades else 0
+
+        if total_ret > best["return"]:
+            best = {"return": total_ret, "params": (window, oversold, overbought),
+                    "win_rate": win_rate, "trades": len(trades)}
+
+    if not best["params"]:
+        return "❌ 無法找到最佳參數"
+
+    w, os_, ob = best["params"]
+    return (
+        f"🔬 {code} RSI 參數優化（3年回測）\n"
+        f"{'─'*24}\n"
+        f"最佳參數：\n"
+        f"  RSI 週期：{w} 天\n"
+        f"  超賣線：{os_}（買入）\n"
+        f"  超買線：{ob}（賣出）\n"
+        f"{'─'*24}\n"
+        f"報酬率：{best['return']:+.1f}%\n"
+        f"勝率：{best['win_rate']:.1f}%\n"
+        f"交易次數：{best['trades']} 次"
     )
 
 

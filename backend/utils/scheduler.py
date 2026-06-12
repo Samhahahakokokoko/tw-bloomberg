@@ -519,6 +519,20 @@ def start_scheduler() -> AsyncIOScheduler:
         id="dividend_reminder", replace_existing=True,
     )
 
+    # 自選股晨報推送 — 週一到週五 08:45（盤前）
+    scheduler.add_job(
+        _push_watchlist_morning,
+        CronTrigger(day_of_week="mon-fri", hour=8, minute=45, timezone="Asia/Taipei"),
+        id="watchlist_morning", replace_existing=True,
+    )
+
+    # 產業強度推送 — 週一到週五 15:05（盤後）
+    scheduler.add_job(
+        _push_sector_strength,
+        CronTrigger(day_of_week="mon-fri", hour=15, minute=5, timezone="Asia/Taipei"),
+        id="sector_strength_push", replace_existing=True,
+    )
+
     _apply_line_quota_safe_mode(scheduler)
     scheduler.start()
     logger.info("Scheduler started (morning report 08:30 / weekly report Fri 14:30)")
@@ -1286,6 +1300,24 @@ async def _push_watchlist_daily():
         await push_daily_watchlist_reports()
     except Exception as e:
         logger.error(f"Watchlist daily push failed: {e}")
+
+
+async def _push_watchlist_morning():
+    """08:45 — 盤前自選股狀態推送（含 RSI）"""
+    try:
+        from ..services.watchlist_monitor import push_daily_watchlist_reports
+        await push_daily_watchlist_reports()
+    except Exception as e:
+        logger.error(f"Watchlist morning push failed: {e}")
+
+
+async def _push_sector_strength():
+    """15:05 — 盤後產業強度推送"""
+    try:
+        from ..services.sector_heatmap import push_heatmap
+        await push_heatmap()
+    except Exception as e:
+        logger.error(f"Sector strength push failed: {e}")
 
 
 async def _run_breadth_check():
