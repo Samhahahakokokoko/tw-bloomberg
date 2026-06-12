@@ -968,9 +968,14 @@ async def _cmd_quote(code: str) -> list:
             f"漲跌：{sign}{abs(change):.2f} ({sign}{abs(change_pct):.2f}%)\n"
             f"資料：{source_label} {data_time}{stale_note}"
         )
-        return [TextMessage(text=text)]
+        return [_text(text, qr_items(
+            (f"🤖 AI分析", f"/ai {code} 現在值得買嗎"),
+            (f"🏦 法人",   f"/inst {code}"),
+            (f"📰 新聞",   f"/news {code}"),
+            (f"⭐ 自選",   f"/watch {code}"),
+        ))]
     except Exception as e:
-        return [TextMessage(text="功能暫時無法使用，請稍後再試")]
+        return [_text("❌ 報價查詢失敗，請稍後再試", qr_items(("📊 大盤", "/market")))]
 
 
 async def _cmd_market() -> list:
@@ -1957,9 +1962,14 @@ async def _cmd_ai_stock(stock_code: str) -> list:
         text     = analysis
         if alerts:
             text += "\n\n⚡ 即時訊號\n" + "\n".join(alerts)
-        return [TextMessage(text=text[:5000])]
+        return [_text(text[:5000], qr_items(
+            (f"📊 報價", f"/quote {stock_code}"),
+            ("💼 庫存", "/p"),
+            ("🎯 選股", "/r"),
+        ))]
     except Exception as e:
-        return [TextMessage(text="功能暫時無法使用，請稍後再試")]
+        return [_text("❌ 個股分析失敗，請稍後再試",
+                      qr_items(("重試", f"/aistock {stock_code}"), ("💼 庫存", "/p")))]
 
 
 async def _cmd_accuracy() -> list:
@@ -2763,12 +2773,16 @@ async def _cmd_daily(uid: str) -> list:
     try:
         from quant.decision_engine import DecisionEngine
         daily = await asyncio.wait_for(DecisionEngine().run(uid), timeout=25)
-        return [TextMessage(text=daily.format_line()[:5000])]
+        return [_text(daily.format_line()[:5000], qr_items(
+            ("🔍 動能股", "/movers"),
+            ("📊 選股",   "/r"),
+            ("💼 庫存",   "/p"),
+        ))]
     except asyncio.TimeoutError:
-        return [TextMessage(text="功能暫時無法使用，請稍後再試")]
+        return [_text("⏱ 決策報告逾時，請稍後再試", qr_items(("重試", "/daily"), ("💼 庫存", "/p")))]
     except Exception as e:
         logger.error("[daily] {}", e, exc_info=True)
-        return [TextMessage(text="功能暫時無法使用，請稍後再試")]
+        return [_text("❌ 決策報告生成失敗，請稍後再試", qr_items(("重試", "/daily"), ("💼 庫存", "/p")))]
 
 
 async def _daily_bg(uid: str) -> None:
@@ -2835,10 +2849,15 @@ async def _cmd_overlay(uid: str) -> list:
         overlay  = PortfolioOverlay()
         signals  = await overlay.scan(uid)
         report   = overlay.format_report(signals)
-        return [TextMessage(text=report[:5000])]
+        return [_text(report[:5000], qr_items(
+            ("🛡 風控", "/risk"),
+            ("📈 決策", "/daily"),
+            ("💼 庫存", "/p"),
+        ))]
     except Exception as e:
         logger.error("[overlay] {}", e)
-        return [TextMessage(text="功能暫時無法使用，請稍後再試")]
+        return [_text("❌ 持倉健康檢查失敗，請稍後再試",
+                      qr_items(("重試", "/overlay"), ("💼 庫存", "/p")))]
 
 
 async def _cmd_research(code: str, uid: str) -> list:
@@ -3986,11 +4005,16 @@ async def _cmd_risk_report(uid: str) -> list:
             f"市場狀態：{market_note}，建議持股 {hold_pct}%",
         ]
 
-        return [TextMessage(text="\n".join(lines)[:5000])]
+        return [_text("\n".join(lines)[:5000], qr_items(
+            ("🔄 查看優化建議", "/risk_optimize"),
+            ("💼 庫存",         "/p"),
+            ("📊 VaR分析",      "/var"),
+        ))]
 
     except Exception as e:
         logger.error("[risk_report] {}", e)
-        return [TextMessage(text="功能暫時無法使用，請稍後再試")]
+        return [_text("功能暫時無法使用，請稍後再試",
+                      qr_items(("重試", "/risk"), ("💼 庫存", "/p")))]
 
 
 async def _risk_optimize_bg(uid: str) -> None:
