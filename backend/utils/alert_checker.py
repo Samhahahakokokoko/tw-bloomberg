@@ -173,11 +173,19 @@ def _type_label(alert_type: str) -> str:
 
 # ── 自選股停損停利檢查 ────────────────────────────────────────────────────────
 
+# 去重：(user_id, stock_code, trigger_type) → 上次觸發時間（unix ts）
+# 同一股票同一用戶同類型警報，4 小時內只緩衝一次
+_WATCHLIST_TRIGGERED: dict[tuple[str, str, str], float] = {}
+_WATCHLIST_COOLDOWN = 4 * 3600  # 4 小時（秒）
+
+
 async def check_watchlist_triggers():
     """
     定時（交易時段每 5 分鐘）掃描自選股，
     若觸及停損或目標價，加入緩衝區等待批次推送。
+    同一觸發條件 4 小時內只緩衝一次，避免重複淹沒通知。
     """
+    import time
     from ..models.models import Watchlist
 
     async with AsyncSessionLocal() as db:
@@ -188,6 +196,7 @@ async def check_watchlist_triggers():
         )
         items = result.scalars().all()
 
+    now = time.time()
     for item in items:
         try:
             quote = await fetch_realtime_quote(item.stock_code)
@@ -197,17 +206,21 @@ async def check_watchlist_triggers():
 
             triggered_msgs = []
             if item.stop_loss and price <= item.stop_loss:
-                triggered_msgs.append(
-                    f"🔻 [{item.stock_code}] {item.stock_name or ''}\n"
-                    f"現價 {price} 已觸及停損價 {item.stop_loss}！"
-                )
+                key = (item.user_id or "", item.stock_code, "sl")
+                if now - _WATCHLIST_TRIGGERED.get(key, 0) >= _WATCHLIST_COOLDOWN:
+                    triggered_msgs.append((key, (
+                        f"🔻 [{item.stock_code}] {item.stock_name or ''}\n"
+                        f"現價 {price} 已觸及停損價 {item.stop_loss}！"
+                    )))
             if item.target_price and price >= item.target_price:
-                triggered_msgs.append(
-                    f"🚀 [{item.stock_code}] {item.stock_name or ''}\n"
-                    f"現價 {price} 已達目標價 {item.target_price}！"
-                )
+                key = (item.user_id or "", item.stock_code, "tp")
+                if now - _WATCHLIST_TRIGGERED.get(key, 0) >= _WATCHLIST_COOLDOWN:
+                    triggered_msgs.append((key, (
+                        f"🚀 [{item.stock_code}] {item.stock_name or ''}\n"
+                        f"現價 {price} 已達目標價 {item.target_price}！"
+                    )))
 
-            for msg in triggered_msgs:
+            for key, msg in triggered_msgs:
                 if item.user_id and settings.line_channel_access_token:
                     async with AsyncSessionLocal() as db2:
                         res = await db2.execute(
@@ -219,6 +232,7 @@ async def check_watchlist_triggers():
                         if uid not in _ALERT_BUFFER:
                             _ALERT_BUFFER[uid] = []
                         _ALERT_BUFFER[uid].append(msg)
+                        _WATCHLIST_TRIGGERED[key] = now
                         logger.info(f"Watchlist trigger buffered: {msg[:60]}")
 
         except Exception as e:

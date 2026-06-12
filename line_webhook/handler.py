@@ -201,7 +201,7 @@ async def _handle_postback(data: str, uid: str) -> list:
         return await _handle_postback_inner(data, uid)
     except Exception as e:
         logger.error(f"[postback] EXCEPTION act data={data!r} uid={uid[:8]} err={e}", exc_info=True)
-        return [TextMessage(text=f"⚠️ 處理失敗\n{type(e).__name__}: {str(e)[:120]}")]
+        return [_text(f"⚠️ 處理失敗\n{type(e).__name__}: {str(e)[:120]}", _home_qr())]
 
 
 async def _handle_postback_inner(data: str, uid: str) -> list:
