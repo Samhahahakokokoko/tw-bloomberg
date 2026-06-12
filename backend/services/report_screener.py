@@ -582,6 +582,8 @@ _POOL_IDS: set[str] = {unify_ticker_format(d["stock_id"]) for d in _POOL_RAW}
 # 快取結構：{ts, prices:{code:{close,change_pct,volume}}, chips:{code:{...}}}
 _rt_cache: dict = {"ts": None, "prices": {}, "chips": {}}
 _RT_TTL_SECONDS = 300   # 5 分鐘快取
+# TPEX 上次成功資料（用於 TPEX 失敗時的 fallback）
+_tpex_last_prices: dict = {}
 
 
 async def _fetch_rt_cache() -> dict:
@@ -770,6 +772,7 @@ async def _fetch_rt_cache() -> dict:
 
             if tpex_data is not None:
                 tpex_before = len(prices)
+                tpex_fresh: dict = {}
                 for item in tpex_data:
                     code = unify_ticker_format(item.get("SecuritiesCompanyCode", ""))
                     if not code or code in prices:   # 已有 TWSE 資料的不覆蓋
@@ -783,18 +786,32 @@ async def _fetch_rt_cache() -> dict:
                             continue
                         prev = close - change
                         pct  = round(change / prev * 100, 2) if prev and prev != 0 else 0.0
-                        prices[code] = {
+                        entry = {
                             "close":      close,
                             "change_pct": pct,
                             "volume":     vol // 1000,   # 股 → 張
                             "name":       str(item.get("CompanyName", "") or ""),
                         }
+                        prices[code] = entry
+                        tpex_fresh[code] = entry
                         _valid_ticker_cache.add(code)
                     except Exception as e:
                         pass
+                if tpex_fresh:
+                    _tpex_last_prices.clear()
+                    _tpex_last_prices.update(tpex_fresh)
                 _log.info("[RT] TPEX added %d OTC stocks", len(prices) - tpex_before)
             else:
-                _log.warning("[RT] TPEX mainboard: all endpoints failed, OTC stocks skipped")
+                # TPEX 失敗時用上次成功的快取補充 OTC 股
+                if _tpex_last_prices:
+                    fallback_added = 0
+                    for code, entry in _tpex_last_prices.items():
+                        if code not in prices:
+                            prices[code] = entry
+                            fallback_added += 1
+                    _log.info("[RT] TPEX failed, using %d cached OTC stocks", fallback_added)
+                else:
+                    _log.warning("[RT] TPEX mainboard: all endpoints failed, OTC stocks skipped")
 
     except Exception as e:
         _log.error("[RT] httpx session failed: %s", e)
