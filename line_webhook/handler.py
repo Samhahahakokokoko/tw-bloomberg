@@ -1894,14 +1894,16 @@ async def _cmd_rec_full(uid: str, reply_token: str):
 
 async def _cmd_ai_ask(question: str, uid: str = "") -> TextMessage:
     if not settings.anthropic_api_key or _credit_exhausted():
-        return TextMessage(text="AI 分析暫時無法使用，請稍後再試")
+        return _text("❌ AI 分析暫時無法使用，請稍後再試",
+                     qr_items(("💼 庫存", "/p"), ("📊 大盤", "/market")))
     try:
         # 1. 找相似舊答案
         if uid:
             async with AsyncSessionLocal() as db:
                 cached = await find_similar_answer(db, uid, question)
             if cached:
-                return TextMessage(text=f"（3天內的分析）\n{cached}"[:5000])
+                return _text(f"（3天內的分析）\n{cached}"[:5000],
+                             qr_items(("💼 庫存", "/p"), ("📊 選股", "/r"), ("📈 大盤", "/market")))
 
         # 2. 帶入用戶背景
         user_context = ""
@@ -1928,12 +1930,17 @@ async def _cmd_ai_ask(question: str, uid: str = "") -> TextMessage:
             async with AsyncSessionLocal() as db:
                 await save_query(db, uid, question, answer)
 
-        return TextMessage(text=answer[:5000])
+        return _text(answer[:5000], qr_items(
+            ("💼 庫存",   "/p"),
+            ("📊 選股",   "/r"),
+            ("📈 大盤",   "/market"),
+        ))
     except Exception as e:
         if "credit balance is too low" in str(e):
             _mark_credit_exhausted()
             logger.warning("[AI] Anthropic credit 耗盡")
-        return TextMessage(text="AI 分析暫時無法使用，請稍後再試")
+        return _text("❌ AI 分析暫時無法使用，請稍後再試",
+                     qr_items(("💼 庫存", "/p"), ("📊 大盤", "/market")))
 
 
 async def _cmd_ai_portfolio(uid: str) -> TextMessage:
