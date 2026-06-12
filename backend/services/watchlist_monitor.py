@@ -71,14 +71,20 @@ def format_watchlist_report(uid: str, results: list[dict]) -> str:
     if not results:
         return f"👁️ 自選股日報 {today}\n\n尚未加入自選股\n輸入 /watch 代碼 加入"
 
-    lines = [f"👁️ 自選股日報 {today}", "─" * 18]
+    lines = [f"👁️ 自選股日報 {today}（{len(results)} 檔）", "─" * 18]
     for r in results:
-        line = f"{r['signal_icon']} {r['code']} {r['name']}：{r['signal']}"
+        price = r.get("price", 0)
+        chg   = r.get("change_pct", 0)
+        sign  = "+" if chg >= 0 else ""
+        price_str = f"{price:,.0f}元 ({sign}{chg:.1f}%)" if price else "--"
+
+        status = ""
         if r["sl_triggered"]:
-            line += "  🛑停損"
+            status = "  🛑停損！"
         elif r["tp_triggered"]:
-            line += "  🎯目標"
-        lines.append(line)
+            status = "  🎯目標達！"
+
+        lines.append(f"{r['signal_icon']} {r['code']} {r['name']}  {price_str}{status}")
         lines.append(f"   └ {r['detail']}")
     return "\n".join(lines)
 

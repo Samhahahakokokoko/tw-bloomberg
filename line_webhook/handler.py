@@ -1537,11 +1537,57 @@ async def _cmd_alert_list(uid: str) -> list:
         )
         alerts = r.scalars().all()
     if not alerts:
-        return [_text("目前無啟用警報", qr_items(("🔔 新增", "/alert_guide")))]
-    lines = ["🔔 我的警報"]
+        return [_text(
+            "🔔 目前無啟用警報\n\n設定方式：\n/alert 2330 price_above 2500\n/alert 2330 change_pct_below -3",
+            qr_items(("🔔 設定說明", "/alert_guide"), ("💼 庫存", "/portfolio")),
+        )]
+
+    _TYPE_LABEL = {
+        "price_above":      "突破",
+        "price_below":      "跌破",
+        "change_pct_above": "漲幅≥",
+        "change_pct_below": "跌幅≤",
+    }
+    _TYPE_UNIT = {
+        "price_above": "元", "price_below": "元",
+        "change_pct_above": "%", "change_pct_below": "%",
+    }
+
+    # Batch-fetch current prices (best-effort, skip on failure)
+    prices: dict[str, float] = {}
+    codes = list({a.stock_code for a in alerts})
+    for code in codes[:8]:
+        try:
+            q = await fetch_realtime_quote(code)
+            p = q.get("price") or q.get("close") or 0
+            if p:
+                prices[code] = float(p)
+        except Exception:
+            pass
+
+    lines = [f"🔔 我的警報（{len(alerts)} 個）", "─" * 20]
     for a in alerts[:10]:
-        lines.append(f"• {a.stock_code}  {a.alert_type}  @ {a.threshold}")
-    return [_text("\n".join(lines), qr_items(("🔔 新增警報", "/alert_guide"), ("💼 庫存", "/portfolio")))]
+        label = _TYPE_LABEL.get(a.alert_type, a.alert_type)
+        unit  = _TYPE_UNIT.get(a.alert_type, "")
+        thr   = a.threshold
+        price = prices.get(a.stock_code, 0)
+
+        dist_str = ""
+        if price > 0:
+            if a.alert_type in ("price_above", "price_below"):
+                diff = thr - price
+                pct  = diff / price * 100
+                dist_str = f"  （現 {price:,.0f}，差 {diff:+,.0f} / {pct:+.1f}%）"
+            else:
+                dist_str = f"  （現 {price:,.0f}）"
+
+        lines.append(f"• {a.stock_code}  {label} {thr:g}{unit}{dist_str}")
+
+    return [_text("\n".join(lines), qr_items(
+        ("🔔 新增警報", "/alert_guide"),
+        ("💼 庫存",     "/portfolio"),
+        ("📈 選股",     "/r"),
+    ))]
 
 
 async def _cmd_inst(code: str) -> list:
