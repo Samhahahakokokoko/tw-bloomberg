@@ -43,6 +43,7 @@ from line_webhook.flex_messages import (
     flex_rec_carousel, flex_profile_setup, qr_items,
     quick_reply_quote, quick_reply_portfolio,
 )
+from backend.utils.credit_guard import is_exhausted as _credit_exhausted, mark_exhausted as _mark_credit_exhausted
 
 router = APIRouter()
 configuration = Configuration(access_token=settings.line_channel_access_token)
@@ -1812,8 +1813,8 @@ async def _cmd_rec_full(uid: str, reply_token: str):
 
 
 async def _cmd_ai_ask(question: str, uid: str = "") -> TextMessage:
-    if not settings.anthropic_api_key:
-        return TextMessage(text="功能暫時無法使用，請稍後再試")
+    if not settings.anthropic_api_key or _credit_exhausted():
+        return TextMessage(text="AI 分析暫時無法使用，請稍後再試")
     try:
         # 1. 找相似舊答案
         if uid:
@@ -1850,12 +1851,15 @@ async def _cmd_ai_ask(question: str, uid: str = "") -> TextMessage:
         return TextMessage(text=answer[:5000])
     except Exception as e:
         if "credit balance is too low" in str(e):
-            logger.warning("[AI] Anthropic API 額度不足")
-        return TextMessage(text="功能暫時無法使用，請稍後再試")
+            _mark_credit_exhausted()
+            logger.warning("[AI] Anthropic credit 耗盡")
+        return TextMessage(text="AI 分析暫時無法使用，請稍後再試")
 
 
 async def _cmd_ai_portfolio(uid: str) -> TextMessage:
     from backend.models.database import settings as s
+    if not s.anthropic_api_key or _credit_exhausted():
+        return _text("❌ AI 分析暫時無法使用，請稍後再試")
     async with AsyncSessionLocal() as db:
         holdings = await portfolio_service.get_portfolio(db, uid)
     if not holdings:
@@ -1871,7 +1875,7 @@ async def _cmd_ai_portfolio(uid: str) -> TextMessage:
         import anthropic
         client = anthropic.AsyncAnthropic(api_key=s.anthropic_api_key)
         msg = await client.messages.create(
-            model="claude-sonnet-4-6", max_tokens=600,
+            model="claude-haiku-4-5-20251001", max_tokens=600,
             system="你是台股投資分析師，用繁體中文條列分析（500字內）。",
             messages=[{"role": "user", "content":
                 f"分析此投資組合並給操作建議：\n{summary}\n"
@@ -1881,7 +1885,8 @@ async def _cmd_ai_portfolio(uid: str) -> TextMessage:
                      qr_items(("💼 庫存", "/portfolio"), ("📋 策略推薦", "/rec")))
     except Exception as e:
         if "credit balance is too low" in str(e):
-            logger.warning("[AI] Anthropic API 額度不足")
+            _mark_credit_exhausted()
+            logger.warning("[AI] Anthropic credit 耗盡")
             return _text("❌ AI 分析暫時無法使用（額度不足），請稍後再試")
         return _text(f"❌ AI 錯誤：{e}")
 

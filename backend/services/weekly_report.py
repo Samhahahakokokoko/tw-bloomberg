@@ -2,6 +2,7 @@
 from datetime import datetime
 from loguru import logger
 from .twse_service import fetch_realtime_quote
+from ..utils.credit_guard import is_exhausted as _credit_exhausted, mark_exhausted as _mark_credit_exhausted
 
 
 async def generate_weekly_report() -> str:
@@ -94,7 +95,7 @@ async def push_weekly_report():
 
 async def _weekly_ai_comment(summary: str) -> str:
     from ..models.database import settings
-    if not settings.anthropic_api_key:
+    if not settings.anthropic_api_key or _credit_exhausted():
         return ""
     try:
         import anthropic
@@ -110,5 +111,6 @@ async def _weekly_ai_comment(summary: str) -> str:
         return msg.content[0].text.strip()
     except Exception as e:
         if "credit balance is too low" in str(e):
-            logger.warning("[WeeklyReport] Anthropic API 額度不足")
+            _mark_credit_exhausted()
+            logger.warning("[WeeklyReport] Anthropic credit 耗盡")
         return ""

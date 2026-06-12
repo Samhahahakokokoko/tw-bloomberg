@@ -13,6 +13,7 @@ import re
 from loguru import logger
 from .screener_engine import ScreenerFilter, run_screener
 from .ai_decision_agent import generate_nl_recommendation
+from ..utils.credit_guard import is_exhausted as _credit_exhausted, mark_exhausted as _mark_credit_exhausted
 
 
 # 自然語言 → 篩選條件的 prompt
@@ -50,7 +51,7 @@ async def parse_nl_to_filter(query: str) -> ScreenerFilter:
     如果 Claude 不可用，嘗試簡單的關鍵字比對作 fallback
     """
     from ..models.database import settings
-    if settings.anthropic_api_key:
+    if settings.anthropic_api_key and not _credit_exhausted():
         try:
             import anthropic
             client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
@@ -70,7 +71,8 @@ async def parse_nl_to_filter(query: str) -> ScreenerFilter:
                 return _dict_to_filter(data)
         except Exception as e:
             if "credit balance is too low" in str(e):
-                logger.warning("[NLParser] Anthropic API 額度不足，使用關鍵字 fallback")
+                _mark_credit_exhausted()
+                logger.warning("[NLParser] Anthropic credit 耗盡，使用關鍵字 fallback")
             else:
                 logger.error(f"[NLParser] Claude parse error: {e}")
 
