@@ -3483,28 +3483,36 @@ def _run_yf_backtest(code: str, strategy: str) -> str:
         signal[(macd > sig) & (macd.shift(1) <= sig.shift(1))] =  1
         signal[(macd < sig) & (macd.shift(1) >= sig.shift(1))] = -1
 
-    # 回測引擎
+    # 回測引擎（vectorized）
+    import numpy as _np
+    close_arr = close.values.astype(float)
+    sig_arr   = signal.values
     capital, position, entry_px = 1_000_000.0, 0, 0.0
-    trades = []
-    for date, row in df.iterrows():
-        sig = signal.get(date, 0)
-        px  = float(row["Close"])
-        if sig == 1 and position == 0:
-            position  = int(capital / px)
-            entry_px  = px
-            capital  -= position * px
-        elif sig == -1 and position > 0:
+    wins = total_trades = 0
+    sum_ret = 0.0
+    for i in range(len(close_arr)):
+        px = close_arr[i]
+        s  = sig_arr[i]
+        if s == 1 and position == 0:
+            position = int(capital / px)
+            entry_px = px
+            capital -= position * px
+        elif s == -1 and position > 0:
+            ret = (px - entry_px) / entry_px
             pnl = position * (px - entry_px)
-            trades.append({"ret": (px - entry_px) / entry_px, "pnl": pnl})
+            if pnl > 0:
+                wins += 1
+            sum_ret += ret
+            total_trades += 1
             capital += position * px
             position = 0
 
-    final_px    = float(df["Close"].iloc[-1])
+    final_px    = close_arr[-1]
     total_value = capital + position * final_px
     total_ret   = (total_value - 1_000_000) / 1_000_000 * 100
-    n           = len(trades)
-    win_rate    = sum(1 for t in trades if t["pnl"] > 0) / n * 100 if n else 0
-    avg_ret     = sum(t["ret"] for t in trades) / n * 100 if n else 0
+    n           = total_trades
+    win_rate    = wins / n * 100 if n else 0
+    avg_ret     = sum_ret / n * 100 if n else 0
     sign        = "+" if total_ret >= 0 else ""
     start       = df.index[0].strftime("%Y-%m-%d")
     end         = df.index[-1].strftime("%Y-%m-%d")
