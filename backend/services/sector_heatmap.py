@@ -44,19 +44,26 @@ SECTOR_REPR: dict[str, list[str]] = {
 
 async def fetch_sector_changes() -> dict[str, float]:
     """抓各族群今日平均漲跌幅"""
+    import asyncio as _asyncio
     sector_chg: dict[str, float] = {}
     try:
         from .twse_service import fetch_realtime_quote
+
+        # Collect unique codes and batch-fetch in parallel
+        all_codes = list({c for codes in SECTOR_REPR.values() for c in codes[:2]})
+
+        async def _safe_fetch(code):
+            try:
+                q = await fetch_realtime_quote(code)
+                return code, float(q.get("change_pct", 0) or 0) if q else (code, 0.0)
+            except Exception:
+                return code, 0.0
+
+        results = await _asyncio.gather(*[_safe_fetch(c) for c in all_codes])
+        chg_map = dict(results)
+
         for sector, codes in SECTOR_REPR.items():
-            changes = []
-            for code in codes[:2]:
-                try:
-                    q   = await fetch_realtime_quote(code)
-                    chg = q.get("change_pct", 0) if q else 0
-                    if chg is not None:
-                        changes.append(float(chg))
-                except Exception as e:
-                    pass
+            changes = [chg_map[c] for c in codes[:2] if c in chg_map]
             sector_chg[sector] = sum(changes) / len(changes) if changes else 0.0
     except Exception as e:
         logger.warning(f"[heatmap] fetch_sector_changes failed: {e}")
