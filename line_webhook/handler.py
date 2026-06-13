@@ -2335,7 +2335,10 @@ async def _cmd_ai_stock(stock_code: str) -> list:
         if alerts:
             text += "\n\n⚡ 即時訊號\n" + "\n".join(alerts)
         return [_text(text[:5000], qr_items(
-            (f"📊 報價", f"/quote {stock_code}"),
+            (f"📊 報價 {stock_code}", f"/quote {stock_code}"),
+            (f"⭐ 自選 {stock_code}", f"/watch {stock_code}"),
+            (f"🛒 買 {stock_code}",   f"/buy {stock_code} "),
+            (f"🏦 法人 {stock_code}", f"/inst {stock_code}"),
             ("💼 庫存", "/p"),
             ("🎯 選股", "/r"),
         ))]

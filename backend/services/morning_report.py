@@ -236,12 +236,19 @@ async def _push_to_users(user_ids: list[str], message: str):
     from .line_push import multicast_line_messages
     if not settings.line_channel_access_token or not user_ids:
         return
+    qr = {"items": [
+        {"type": "action", "action": {"type": "message", "label": "🌡️ 情緒指數", "text": "/sentiment"}},
+        {"type": "action", "action": {"type": "message", "label": "🎯 今日選股", "text": "/r"}},
+        {"type": "action", "action": {"type": "message", "label": "💼 庫存",     "text": "/p"}},
+        {"type": "action", "action": {"type": "message", "label": "👁️ 自選股",   "text": "/watchlist"}},
+        {"type": "action", "action": {"type": "message", "label": "📋 決策報告", "text": "/daily"}},
+    ]}
     for i in range(0, len(user_ids), 500):
         batch = user_ids[i:i+500]
         async with httpx.AsyncClient(timeout=15) as client:
             ok = await multicast_line_messages(
                 batch,
-                [{"type": "text", "text": message}],
+                [{"type": "text", "text": message, "quickReply": qr}],
                 client=client,
                 context="morning_report",
             )
