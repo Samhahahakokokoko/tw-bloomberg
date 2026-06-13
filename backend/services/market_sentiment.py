@@ -93,6 +93,23 @@ async def get_sentiment_score() -> dict:
     except Exception as e:
         logger.debug(f"[sentiment] margin factor skip: {e}")
 
+    # Factor 4: Advance/Decline breadth (weight: ±12)
+    try:
+        from .report_screener import _rt_cache
+        prices = _rt_cache.get("prices", {})
+        if prices:
+            up   = sum(1 for v in prices.values() if float(v.get("change_pct", 0) or 0) > 0)
+            down = sum(1 for v in prices.values() if float(v.get("change_pct", 0) or 0) < 0)
+            total_bd = up + down
+            if total_bd >= 100:
+                ratio = up / total_bd
+                # 70%+ advancing → +12, 30%- → -12, linear
+                delta = max(-12, min(12, (ratio - 0.5) * 24))
+                score += delta
+                factors["breadth"] = f"漲{up}跌{down}({ratio*100:.0f}%漲)"
+    except Exception as e:
+        logger.debug(f"[sentiment] breadth factor skip: {e}")
+
     score = max(0, min(100, round(score)))
 
     if score >= 80:
