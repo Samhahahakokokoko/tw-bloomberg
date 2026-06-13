@@ -1096,13 +1096,31 @@ async def _cmd_market_card(uid) -> list:
 
 async def _cmd_portfolio(uid: str) -> list:
     try:
+        from backend.models.models import Alert
+        from sqlalchemy import select as _select
+
         async with AsyncSessionLocal() as db:
             holdings = await portfolio_service.get_portfolio(db, uid)
+            # Batch-load all active alerts for this user
+            r = await db.execute(
+                _select(Alert).where(Alert.user_id == uid, Alert.is_active == True)
+            )
+            all_alerts = r.scalars().all()
+
         if not holdings:
             return [_text(
                 "📂 庫存為空，請用 /buy 新增持股\n\n例：/buy 2330 10 850",
                 qr_items(("📊 大盤", "/market"), ("📈 報價", "2330")),
             )]
+
+        # Build per-stock alert lookup {code: {stop: float, target: float}}
+        alert_map: dict[str, dict] = {}
+        for a in all_alerts:
+            entry = alert_map.setdefault(a.stock_code, {})
+            if a.alert_type == "price_below":
+                entry["stop"] = a.threshold
+            elif a.alert_type == "price_above":
+                entry["target"] = a.threshold
 
         lines = ["💼 我的持股", "─" * 20]
         total_cost = total_mv = total_pnl = 0.0
@@ -1122,11 +1140,26 @@ async def _cmd_portfolio(uid: str) -> list:
                 qty_str = f"{shares // 1000}張{shares % 1000}股"
             else:
                 qty_str = f"{shares}股"
+
+            # Stop/target annotation
+            alerts = alert_map.get(code, {})
+            sl_str = tp_str = ""
+            if price > 0:
+                if "stop" in alerts:
+                    sl = alerts["stop"]
+                    dist = (price - sl) / price * 100
+                    warn = " ⚠️" if dist < 5 else ""
+                    sl_str = f"  🛑停損{sl:.0f}({dist:.1f}%↓){warn}"
+                if "target" in alerts:
+                    tp = alerts["target"]
+                    dist = (tp - price) / price * 100
+                    tp_str = f"  🎯目標{tp:.0f}({dist:.1f}%↑)"
+
             lines.append(
                 f"{icon} {code} {name}  {qty_str}\n"
                 f"   成本{cost:.0f} 現價{price:.0f}"
                 f"  損益：{pnl:+,.0f} ({pct:+.1f}%)\n"
-                f"   持有：{days}天"
+                f"   持有：{days}天{sl_str}{tp_str}"
             )
             total_cost += cost * shares
             total_mv   += price * shares
@@ -1142,6 +1175,7 @@ async def _cmd_portfolio(uid: str) -> list:
         return [_text("\n".join(lines), qr_items(
             ("📊 效益分析", "/analysis"),
             ("📋 交易紀錄", "/history"),
+            ("🔔 我的警報", "/alerts"),
             ("💰 稅務", "/tax"),
         ))]
     except Exception as e:
