@@ -2163,11 +2163,24 @@ async def _cmd_ai_ask(question: str, uid: str = "") -> TextMessage:
             async with AsyncSessionLocal() as db:
                 await save_query(db, uid, question, answer)
 
-        return _text(answer[:5000], qr_items(
-            ("💼 庫存",   "/p"),
-            ("📊 選股",   "/r"),
-            ("📈 大盤",   "/market"),
-        ))
+        # Context-sensitive QR: if question mentions a stock code, show stock actions
+        import re as _re
+        codes_in_q = _re.findall(r'\b(\d{4,5})\b', question)
+        if codes_in_q:
+            c0 = codes_in_q[0]
+            reply_qr = qr_items(
+                (f"⭐ 自選 {c0}",   f"/watch {c0}"),
+                (f"🏦 法人 {c0}",   f"/inst {c0}"),
+                (f"📈 估值 {c0}",   f"/pe {c0}"),
+                ("💼 庫存",         "/p"),
+            )
+        else:
+            reply_qr = qr_items(
+                ("💼 庫存",   "/p"),
+                ("📊 選股",   "/r"),
+                ("📈 大盤",   "/market"),
+            )
+        return _text(answer[:5000], reply_qr)
     except Exception as e:
         if "credit balance is too low" in str(e):
             _mark_credit_exhausted()
