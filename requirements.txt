@@ -48,6 +48,9 @@ google-auth>=2.23.0
 # Stock price - Yahoo Finance
 yfinance>=0.2.40
 
+# Technical analysis (RSI optimizer)
+ta>=0.11.0
+
 # Stock price - TradingView history data
 git+https://github.com/rongardF/tvdatafeed.git
 websocket-client>=1.6.0
