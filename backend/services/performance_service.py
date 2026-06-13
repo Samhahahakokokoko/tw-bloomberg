@@ -33,6 +33,8 @@ async def get_leaderboard() -> list[dict]:
 
 
 async def _calc_user_performance(user_id: str) -> dict | None:
+    import asyncio as _asyncio
+
     async with AsyncSessionLocal() as db:
         result = await db.execute(
             select(Portfolio).where(Portfolio.user_id == user_id)
@@ -42,17 +44,23 @@ async def _calc_user_performance(user_id: str) -> dict | None:
     if not holdings:
         return None
 
+    async def _safe_price(h):
+        try:
+            q = await fetch_realtime_quote(h.stock_code)
+            return h.stock_code, float(q.get("price", 0) or h.cost_price)
+        except Exception:
+            return h.stock_code, float(h.cost_price)
+
+    price_results = await _asyncio.gather(*[_safe_price(h) for h in holdings])
+    price_map = dict(price_results)
+
     total_mv = total_cost = 0.0
     best_code = worst_code = ""
     best_pct  = float("-inf")
     worst_pct = float("inf")
 
     for h in holdings:
-        try:
-            quote = await fetch_realtime_quote(h.stock_code)
-            price = quote.get("price", h.cost_price) or h.cost_price
-        except Exception as e:
-            price = h.cost_price
+        price = price_map.get(h.stock_code, h.cost_price)
 
         mv   = price * h.shares
         cost = h.cost_price * h.shares
