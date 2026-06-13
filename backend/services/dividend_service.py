@@ -267,10 +267,11 @@ async def scan_dividend_reminders() -> int:
                 ex_date = div.ex_date
                 days_left = (date.fromisoformat(ex_date) - today).days
 
-                # 判斷是 7天提醒 還是 1天提醒
-                if days_left == 7:
+                # 7天提醒：days_left 5-7（週末/假日落差容錯）
+                # 1天提醒：days_left 1-2（週五→週一 gap 補足）
+                if 5 <= days_left <= 7:
                     remind_type = 7
-                elif days_left == 1:
+                elif 1 <= days_left <= 2:
                     remind_type = 1
                 else:
                     continue
@@ -313,9 +314,25 @@ async def scan_dividend_reminders() -> int:
                         est_cash   = estimated_cash,
                     )
 
+                    qr = {"items": [
+                        {"type": "action", "action": {
+                            "type": "message", "label": "📋 查除息清單", "text": "/exdiv",
+                        }},
+                        {"type": "action", "action": {
+                            "type": "message", "label": "💼 看庫存", "text": "/p",
+                        }},
+                        {"type": "action", "action": {
+                            "type": "message", "label": f"💰 {div.stock_code}除息",
+                            "text": f"/dividend {div.stock_code}",
+                        }},
+                        {"type": "action", "action": {
+                            "type": "message", "label": "🔍 AI分析",
+                            "text": f"/ai {div.stock_code} 除息值不值得參與？",
+                        }},
+                    ]}
                     await push_line_messages(
                         uid,
-                        [{"type": "text", "text": msg}],
+                        [{"type": "text", "text": msg, "quickReply": qr}],
                         timeout=10, context="dividend_reminder",
                     )
 
