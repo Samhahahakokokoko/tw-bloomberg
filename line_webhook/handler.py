@@ -2629,13 +2629,19 @@ async def _cmd_screener(preset_or_top: str = "top") -> list:
                 f"   均線{ma} KD{kd} 量能{vol}"
             )
 
+        # Top-3 stocks as actionable QR + preset filters
+        top3_qr = [
+            (f"🔍{r['stock_code']}", f"/quote {r['stock_code']}")
+            for r in results[:3]
+        ]
         return [_text(
             "\n".join(lines),
             qr_items(
-                ("🔍 基本面強", "/screener strong_fundamental"),
-                ("🏦 法人偏愛", "/screener institutional_favorite"),
+                *top3_qr,
                 ("📈 技術突破", "/screener technical_breakout"),
-                ("💼 庫存", "/portfolio"),
+                ("🏦 法人偏愛", "/screener institutional_favorite"),
+                ("🔍 基本面強", "/screener strong_fundamental"),
+                ("💼 庫存", "/p"),
             )
         )]
     except Exception as e:
