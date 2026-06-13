@@ -42,7 +42,7 @@ async def scan_user_watchlist(uid: str) -> list[dict]:
     async def _fetch_quote_safe(code):
         try:
             return code, await fetch_realtime_quote(code)
-        except Exception:
+        except Exception as e:
             return code, {}
 
     quote_results, rsi_results = await _asyncio.gather(

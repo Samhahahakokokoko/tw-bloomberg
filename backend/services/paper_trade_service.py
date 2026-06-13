@@ -17,7 +17,7 @@ async def record_trade(uid: str, action: str, code: str, shares: int, price: flo
         q = await fetch_realtime_quote(code)
         if q:
             name = q.get("name", code) or code
-    except Exception:
+    except Exception as e:
         pass
 
     amount = shares * price * 1000  # 1張 = 1000股
@@ -109,7 +109,7 @@ async def get_pnl(uid: str) -> dict:
         try:
             q = await fetch_realtime_quote(c)
             return c, float(q.get("price", 0) or 0) if q else (c, 0.0)
-        except Exception:
+        except Exception as e:
             return c, 0.0
 
     if open_codes:

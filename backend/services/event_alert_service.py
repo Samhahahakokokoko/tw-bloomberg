@@ -115,7 +115,7 @@ async def scan_event_alerts() -> list:
         async def _safe_inst(c):
             try:
                 return c, await fetch_institutional(c)
-            except Exception:
+            except Exception as e:
                 return c, {}
 
         inst_results = await _asyncio.gather(*[_safe_inst(c) for c in WATCH_CODES])
@@ -159,7 +159,7 @@ async def push_event_alerts_to_subscribers(alerts: list, token: str):
                 async with AsyncSessionLocal() as db:
                     r = await db.execute(select(Watchlist.stock_code).where(Watchlist.user_id == uid))
                     return uid, {row[0] for row in r.fetchall() if row[0]}
-            except Exception:
+            except Exception as e:
                 return uid, set()
 
         watched_results = await _asyncio.gather(*[_get_watched(s.line_user_id) for s in subs if s.line_user_id])

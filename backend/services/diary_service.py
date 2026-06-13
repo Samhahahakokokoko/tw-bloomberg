@@ -2,6 +2,7 @@
 import os
 from datetime import datetime
 from loguru import logger
+import asyncio
 
 
 async def generate_diary(uid: str = "") -> str:
@@ -109,7 +110,7 @@ async def generate_diary(uid: str = "") -> str:
         def _n(v):
             try:
                 return int(str(v).replace(",", "").replace("+", "") or 0)
-            except Exception:
+            except Exception as e:
                 return 0
 
         foreign_net = None

@@ -42,7 +42,7 @@ async def get_portfolio(db: AsyncSession, user_id: str = "") -> list[dict]:
         if raw_buy_date:
             try:
                 holding_days = (today - datetime.strptime(raw_buy_date, "%Y-%m-%d").date()).days
-            except Exception:
+            except Exception as e:
                 pass
         if holding_days == 0 and h.created_at:
             holding_days = max(0, (today - h.created_at.date()).days)

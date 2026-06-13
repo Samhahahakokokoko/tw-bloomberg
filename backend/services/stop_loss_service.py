@@ -84,7 +84,7 @@ async def get_stops(user_id: str) -> list[dict]:
         try:
             q = await fetch_realtime_quote(code)
             return code, float(q.get("price", 0) or 0)
-        except Exception:
+        except Exception as e:
             return code, 0.0
 
     price_results = await _asyncio.gather(*[_safe_price(a.stock_code) for a in alerts])
@@ -159,7 +159,7 @@ async def scan_and_alert() -> int:
         async def _safe_quote(code: str):
             try:
                 return code, await fetch_realtime_quote(code)
-            except Exception:
+            except Exception as e:
                 return code, {}
 
         quote_results = await _asyncio.gather(*[_safe_quote(c) for c in codes])

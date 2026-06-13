@@ -56,7 +56,7 @@ async def fetch_sector_changes() -> dict[str, float]:
             try:
                 q = await fetch_realtime_quote(code)
                 return code, float(q.get("change_pct", 0) or 0) if q else (code, 0.0)
-            except Exception:
+            except Exception as e:
                 return code, 0.0
 
         results = await _asyncio.gather(*[_safe_fetch(c) for c in all_codes])

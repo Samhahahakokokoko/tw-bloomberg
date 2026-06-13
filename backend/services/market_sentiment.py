@@ -83,7 +83,7 @@ async def get_sentiment_score() -> dict:
                         if prev > 1e6:  # only the 融資金額(仟元) row is large enough
                             margin_chg_bil = (today - prev) / 1e6  # billions NTD
                             break
-                    except Exception:
+                    except Exception as e:
                         continue
         # Rising margin (+1B) → -1 sentiment pt (overheating), capped ±8
         delta = max(-8, min(4, -margin_chg_bil))

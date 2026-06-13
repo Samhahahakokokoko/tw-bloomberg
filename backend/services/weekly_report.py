@@ -23,7 +23,7 @@ async def generate_weekly_report() -> str:
         try:
             q = await fetch_realtime_quote(h.stock_code)
             return h.stock_code, float(q.get("price", 0) or h.cost_price)
-        except Exception:
+        except Exception as e:
             return h.stock_code, float(h.cost_price)
 
     price_results = await _asyncio.gather(*[_safe_price(h) for h in holdings])
@@ -99,7 +99,7 @@ async def generate_enhanced_weekly_report(uid: str = "") -> str:
                 try:
                     q = await fetch_realtime_quote(code)
                     return code, float(q.get("change_pct", 0) or 0), q.get("name", code) or code
-                except Exception:
+                except Exception as e:
                     return code, 0.0, code
 
             codes = list({i.stock_code for i in items})[:20]
@@ -168,7 +168,7 @@ async def generate_enhanced_weekly_report(uid: str = "") -> str:
                     lines.append(f"  💰 {ev.stock_name}({ev.stock_code}) 除息 {ev.ex_date}")
             else:
                 lines.append("  （除息資料暫無）")
-        except Exception:
+        except Exception as e:
             lines.append("  （除息資料暫無）")
         lines.append("  📊 注意：週五為最後交易日，留意結算風險")
         lines.append("")
@@ -181,7 +181,7 @@ async def generate_enhanced_weekly_report(uid: str = "") -> str:
         ai = await _weekly_ai_comment(summary_for_ai + "\n請給出下週市場展望和操作建議（30字內）")
         if ai:
             lines.append(f"🤖 AI展望：{ai}")
-    except Exception:
+    except Exception as e:
         pass
 
     return "\n".join(lines)
@@ -196,7 +196,7 @@ async def push_weekly_report():
 
     try:
         report = await generate_enhanced_weekly_report()
-    except Exception:
+    except Exception as e:
         report = await generate_weekly_report()
 
     async with AsyncSessionLocal() as db:

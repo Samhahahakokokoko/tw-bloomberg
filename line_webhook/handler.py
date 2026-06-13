@@ -1033,7 +1033,7 @@ def _lookup_stock_code(name: str) -> str | None:
         for n, code in _name_cache.items():
             if n.startswith(name) and len(name) >= 2:
                 return code
-    except Exception:
+    except Exception as e:
         pass
     return None
 
@@ -1792,7 +1792,7 @@ async def _cmd_alert_list(uid: str) -> list:
             q = await fetch_realtime_quote(c)
             p = q.get("price") or q.get("close") or 0
             return c, float(p) if p else 0.0
-        except Exception:
+        except Exception as e:
             return c, 0.0
 
     results = await _asyncio.gather(*[_safe_price(c) for c in codes])
@@ -4598,7 +4598,7 @@ async def _cmd_risk_report(uid: str) -> list:
                         r = await db2.execute(select(Stock).where(Stock.code == code))
                         s = r.scalar_one_or_none()
                         sector = (s.industry or "其他") if s else "其他"
-                except Exception:
+                except Exception as e:
                     sector = "其他"
             sector_mv[sector] = sector_mv.get(sector, 0.0) + float(mv)
 
@@ -4678,7 +4678,7 @@ async def _cmd_risk_report(uid: str) -> list:
             if var_data:
                 max_daily_loss = abs(var_data.get("hist_var_amount") or var_data.get("param_var_amount", 0))
                 var_95         = abs(var_data.get("param_var_amount", 0))
-        except Exception:
+        except Exception as e:
             max_daily_loss = total_mv * 0.025
             var_95         = total_mv * 0.018
 
@@ -4706,7 +4706,7 @@ async def _cmd_risk_report(uid: str) -> list:
                     "volatile": ("高波動", 40),
                 }
                 market_note, hold_pct = regime_map.get(reg.regime.value, ("未知", 50))
-        except Exception:
+        except Exception as e:
             pass
 
         # ── 建議操作 ─────────────────────────────────────────────────

@@ -89,7 +89,7 @@ async def check_all_alerts():
     async def _safe_quote(code):
         try:
             return code, await fetch_realtime_quote(code)
-        except Exception:
+        except Exception as e:
             return code, {}
 
     quote_results = await _asyncio.gather(*[_safe_quote(c) for c in codes])

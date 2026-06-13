@@ -48,7 +48,7 @@ async def _calc_user_performance(user_id: str) -> dict | None:
         try:
             q = await fetch_realtime_quote(h.stock_code)
             return h.stock_code, float(q.get("price", 0) or h.cost_price)
-        except Exception:
+        except Exception as e:
             return h.stock_code, float(h.cost_price)
 
     price_results = await _asyncio.gather(*[_safe_price(h) for h in holdings])

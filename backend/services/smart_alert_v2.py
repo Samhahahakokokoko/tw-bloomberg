@@ -77,7 +77,7 @@ async def detect_foreign_selling(threshold_billion: float = 5.0) -> list[SmartAl
         async def _fetch_inst_safe(code):
             try:
                 return code, await fetch_institutional(code)
-            except Exception:
+            except Exception as e:
                 return code, {}
 
         inst_results = await _asyncio.gather(*[_fetch_inst_safe(c) for c in codes])
@@ -88,7 +88,7 @@ async def detect_foreign_selling(threshold_billion: float = 5.0) -> list[SmartAl
                 try:
                     q = await fetch_realtime_quote(code)
                     return code, q.get("name", code) if q else code
-                except Exception:
+                except Exception as e:
                     return code, code
 
             name_results = await _asyncio.gather(*[_name_safe(c) for c, _ in triggered])
