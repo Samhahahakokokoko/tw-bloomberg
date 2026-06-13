@@ -5099,11 +5099,14 @@ async def _cmd_watch_add(code: str, uid: str) -> list:
             item = await add_to_watchlist(db, uid, code, stock_name=name)
         return [_text(
             f"✅ 已加入自選股\n{code} {name}\n\n輸入 /watchlist 查看清單",
-            _qr_postback(
-                ("📋 查看清單", "watchlist"),
-                ("🔍 分析", f"act=recommend_detail&code={code}"),
-                ("❌ 移除",  f"/unwatch {code}"),
-            ),
+            {"items": [
+                {"type": "action", "action": {"type": "postback", "label": "📋 查看清單",
+                  "data": "act=watchlist", "displayText": "查看自選股"}},
+                {"type": "action", "action": {"type": "postback", "label": "🔍 分析",
+                  "data": f"act=recommend_detail&code={code}", "displayText": f"分析 {code}"}},
+                {"type": "action", "action": {"type": "message", "label": "❌ 移除",
+                  "text": f"/unwatch {code}"}},
+            ]},
         )]
     except Exception as e:
         logger.error(f"[watch_add] {e}")
