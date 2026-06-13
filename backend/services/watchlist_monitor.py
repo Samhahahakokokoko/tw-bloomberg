@@ -25,31 +25,45 @@ async def _fetch_rsi(code: str) -> float | None:
 
 async def scan_user_watchlist(uid: str) -> list[dict]:
     """掃描單一用戶的自選股，回傳分析結果列表"""
+    import asyncio as _asyncio
     from ..models.database import AsyncSessionLocal
     from ..models.models import Watchlist
     from sqlalchemy import select
     from .twse_service import fetch_realtime_quote
 
-    results = []
     async with AsyncSessionLocal() as db:
         r     = await db.execute(select(Watchlist).where(Watchlist.user_id == uid))
         items = r.scalars().all()
 
-    for item in items:
-        code = item.stock_code
+    if not items:
+        return []
+
+    # Fetch quotes and RSI for all stocks in parallel
+    async def _fetch_quote_safe(code):
         try:
-            q     = await fetch_realtime_quote(code)
-            price = q.get("price", 0) if q else 0
-            chg   = q.get("change_pct", 0) if q else 0
-            name  = item.stock_name or (q.get("name", code) if q else code)
-            vol   = q.get("volume", 0) if q else 0
-        except Exception as e:
-            price, chg, name, vol = 0, 0, item.stock_name or code, 0
+            return code, await fetch_realtime_quote(code)
+        except Exception:
+            return code, {}
 
-        # 取得 RSI（非同步，失敗不影響其他欄位）
-        rsi = await _fetch_rsi(code)
+    quote_results, rsi_results = await _asyncio.gather(
+        _asyncio.gather(*[_fetch_quote_safe(item.stock_code) for item in items]),
+        _asyncio.gather(*[_fetch_rsi(item.stock_code) for item in items]),
+    )
+    quotes = {c: q for c, q in quote_results}
+    rsi_map = {item.stock_code: rsi for item, rsi in zip(items, rsi_results)}
 
-        # 判斷訊號
+    results = []
+    for item in items:
+        code  = item.stock_code
+        q     = quotes.get(code) or {}
+        price = q.get("price", 0) or 0
+        chg   = q.get("change_pct", 0) or 0
+        name  = item.stock_name or q.get("name", code) or code
+        vol   = q.get("volume", 0) or 0
+        rsi   = rsi_map.get(code)
+        if isinstance(rsi, Exception):
+            rsi = None
+
         signal = _evaluate_signal(price, chg, vol, item.target_price, item.stop_loss)
 
         results.append({
