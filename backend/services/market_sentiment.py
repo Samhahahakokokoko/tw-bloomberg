@@ -63,21 +63,33 @@ async def get_sentiment_score() -> dict:
     except Exception as e:
         logger.debug(f"[sentiment] institutional factor skip: {e}")
 
-    # Factor 3: Margin balance change (weight: 15) — rising margin = overheated
+    # Factor 3: Margin balance change — rising margin = overheated (tables[0].data row 2)
     try:
-        import httpx
+        import httpx, json as _json2
         url2 = "https://www.twse.com.tw/exchangeReport/MI_MARGN?response=json&type=ALL"
         async with httpx.AsyncClient(timeout=10) as c:
-            data2 = (await c.get(url2)).json()
-        total_chg = sum(
-            int(str(r[5]).replace(",", "") or 0)
-            for r in data2.get("data", [])
-            if len(r) > 5 and str(r[5]).lstrip("-").replace(",", "").isdigit()
-        )
-        # Margin increasing = overheated bearish, decreasing = deleveraging (mild bullish)
-        delta = max(-10, min(5, -total_chg / 5e5))
+            raw2 = await c.get(url2)
+        data2 = _json2.loads(raw2.content)
+        tables = data2.get("tables", [])
+        margin_chg_bil = 0.0
+        if tables:
+            rows2 = tables[0].get("data", [])
+            # Row index 2: 融資金額(仟元) — [label, buy, sell, repay, prev_bal, today_bal]
+            for r2 in rows2:
+                if len(r2) >= 6:
+                    try:
+                        prev = int(str(r2[4]).replace(",", "") or 0)
+                        today = int(str(r2[5]).replace(",", "") or 0)
+                        if prev > 1e6:  # only the 融資金額(仟元) row is large enough
+                            margin_chg_bil = (today - prev) / 1e6  # billions NTD
+                            break
+                    except Exception:
+                        continue
+        # Rising margin (+1B) → -1 sentiment pt (overheating), capped ±8
+        delta = max(-8, min(4, -margin_chg_bil))
         score += delta
-        factors["margin"] = f"融資增減{total_chg:+,}"
+        sign = "+" if margin_chg_bil >= 0 else ""
+        factors["margin"] = f"融資{sign}{margin_chg_bil:.1f}億"
     except Exception as e:
         logger.debug(f"[sentiment] margin factor skip: {e}")
 
