@@ -707,8 +707,19 @@ async def _handle_text(text: str, uid: str) -> list:
     # ── 新功能指令 ────────────────────────────────────────────────────────
     if cmd == "/watch":
         code = parts[1].upper() if len(parts) > 1 else ""
-        return await _cmd_watch_add(code, uid) if code else [_text(
-            "請輸入股票代碼，例：/watch 2330",
+        if code:
+            sl = tp = None
+            for _p in parts[2:]:
+                _pl = _p.lower()
+                if _pl.startswith("sl="):
+                    try: sl = float(_p[3:])
+                    except ValueError: pass
+                elif _pl.startswith("tp="):
+                    try: tp = float(_p[3:])
+                    except ValueError: pass
+            return await _cmd_watch_add(code, uid, stop_loss=sl, target_price=tp)
+        return [_text(
+            "請輸入股票代碼，例：/watch 2330\n加停損停利：/watch 2330 sl=800 tp=950",
             qr_items(("加入台積電", "/watch 2330"), ("查看清單", "/watchlist"))
         )]
     if cmd == "/watchlist":             return await _cmd_watchlist(uid)
@@ -5231,17 +5242,23 @@ async def _cmd_strategy_analyze(code: str) -> list:
 
 # ── 新功能 Handler 函數 ────────────────────────────────────────────────────────
 
-async def _cmd_watch_add(code: str, uid: str) -> list:
-    """/watch CODE — 加入自選股"""
+async def _cmd_watch_add(code: str, uid: str,
+                         stop_loss: float | None = None,
+                         target_price: float | None = None) -> list:
+    """/watch CODE [sl=X] [tp=Y] — 加入自選股"""
     from backend.services.watchlist_service import add_to_watchlist
     from backend.services.twse_service import fetch_realtime_quote
     try:
         q    = await fetch_realtime_quote(code)
         name = q.get("name", code) if q else code
         async with AsyncSessionLocal() as db:
-            item = await add_to_watchlist(db, uid, code, stock_name=name)
+            await add_to_watchlist(db, uid, code, stock_name=name,
+                                   stop_loss=stop_loss, target_price=target_price)
+        sl_tp = ""
+        if stop_loss   is not None: sl_tp += f"\n🔻 停損：{stop_loss:,.0f}"
+        if target_price is not None: sl_tp += f"\n🚀 目標：{target_price:,.0f}"
         return [_text(
-            f"✅ 已加入自選股\n{code} {name}\n\n輸入 /watchlist 查看清單",
+            f"✅ 已加入自選股\n{code} {name}{sl_tp}\n\n輸入 /watchlist 查看清單",
             {"items": [
                 {"type": "action", "action": {"type": "postback", "label": "📋 查看清單",
                   "data": "act=watchlist", "displayText": "查看自選股"}},
