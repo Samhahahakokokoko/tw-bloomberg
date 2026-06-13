@@ -526,6 +526,13 @@ def start_scheduler() -> AsyncIOScheduler:
         id="watchlist_morning", replace_existing=True,
     )
 
+    # 大盤情緒指數晨間推送 — 週一到週五 08:47（盤前，緊接自選股晨報）
+    scheduler.add_job(
+        _push_morning_sentiment,
+        CronTrigger(day_of_week="mon-fri", hour=8, minute=47, timezone="Asia/Taipei"),
+        id="morning_sentiment", replace_existing=True,
+    )
+
     # 產業強度推送 — 週一到週五 15:05（盤後）
     scheduler.add_job(
         _push_sector_strength,
@@ -1309,6 +1316,39 @@ async def _push_watchlist_morning():
         await push_daily_watchlist_reports()
     except Exception as e:
         logger.error(f"Watchlist morning push failed: {e}")
+
+
+async def _push_morning_sentiment():
+    """08:47 — 盤前大盤情緒指數推送給所有訂閱者"""
+    try:
+        from ..services.market_sentiment import get_sentiment_score, format_sentiment
+        from ..models.database import AsyncSessionLocal
+        from ..models.models import Subscriber
+        from sqlalchemy import select
+        import httpx
+        from ..services.line_push import push_line_messages
+
+        data = await get_sentiment_score()
+        text = format_sentiment(data)
+        qr = {"items": [
+            {"type": "action", "action": {"type": "message", "label": "🔍 選股", "text": "/screen"}},
+            {"type": "action", "action": {"type": "message", "label": "📋 自選股", "text": "/watchlist"}},
+            {"type": "action", "action": {"type": "message", "label": "📈 大盤", "text": "/market"}},
+        ]}
+
+        async with AsyncSessionLocal() as db:
+            r = await db.execute(select(Subscriber).where(Subscriber.subscribed_morning == True))
+            subs = r.scalars().all()
+        if not subs:
+            return
+
+        async with httpx.AsyncClient(timeout=20) as c:
+            for sub in subs:
+                await push_line_messages(sub.line_user_id, [{"type": "text", "text": text, "quickReply": qr}],
+                                         client=c, context="morning_sentiment")
+        logger.info(f"[morning_sentiment] pushed to {len(subs)} subscribers")
+    except Exception as e:
+        logger.error(f"Morning sentiment push failed: {e}")
 
 
 async def _push_sector_strength():
