@@ -154,6 +154,190 @@ async def fetch_chip_history(stock_code: str, days: int = 20) -> list[dict]:
     return sorted_rows[-days:] if len(sorted_rows) > days else sorted_rows
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+# 籌碼追蹤升級版（/chip CODE — 增強版）
+# ══════════════════════════════════════════════════════════════════════════════
+
+from dataclasses import dataclass
+from typing import Optional as _Optional
+
+
+@dataclass
+class ChipSummary:
+    stock_id: str
+    stock_name: str
+    # 融資融券
+    margin_balance: int      # 融資餘額（張）
+    margin_change: int       # 融資增減
+    short_balance: int       # 融券餘額
+    short_change: int        # 融券增減
+    margin_ratio: float      # 融資使用率 (0-1)
+    # 法人
+    foreign_net: float       # 外資買超（張）
+    trust_net: float         # 投信買超（張）
+    dealer_net: float        # 自營商買超（張）
+    foreign_consec: int      # 外資連買/賣天數（正=連買，負=連賣）
+    # AI 判斷
+    verdict: str             # "建倉" / "出貨" / "觀察" / "洗盤"
+    verdict_reason: str
+    chip_score: float        # 籌碼強度 0-100
+
+
+async def get_chip_summary(code: str) -> _Optional[ChipSummary]:
+    """取得籌碼摘要（增強版）"""
+    try:
+        from backend.services.twse_service import fetch_realtime_quote, fetch_institutional, fetch_margin
+        import asyncio as _asyncio
+
+        quote_task = fetch_realtime_quote(code)
+        inst_task = fetch_institutional(code)
+        margin_task = fetch_margin(code)
+        chip_hist_task = fetch_chip_history(code, days=10)
+
+        quote, inst, margin, chip_hist = await _asyncio.gather(
+            quote_task, inst_task, margin_task, chip_hist_task,
+            return_exceptions=True
+        )
+
+        name = code
+        if isinstance(quote, dict):
+            name = quote.get("name", code)
+
+        # 融資融券
+        margin_bal = margin_change_val = short_bal = short_change_val = 0
+        margin_ratio = 0.0
+        if isinstance(margin, dict):
+            margin_bal = int(margin.get("margin_balance", 0) or 0)
+            margin_change_val = int(margin.get("margin_change", 0) or 0)
+            short_bal = int(margin.get("short_balance", 0) or 0)
+            short_change_val = int(margin.get("short_change", 0) or 0)
+            margin_limit = margin.get("margin_limit", 0) or 0
+            margin_ratio = margin_bal / margin_limit if margin_limit > 0 else 0.0
+
+        # 法人
+        foreign_net = trust_net = dealer_net = 0.0
+        if isinstance(inst, dict):
+            foreign_net = float(inst.get("foreign_net", 0) or 0) / 1000  # 轉換為張
+            trust_net = float(inst.get("trust_net", 0) or 0) / 1000
+            dealer_net = float(inst.get("dealer_net", 0) or 0) / 1000
+
+        # 計算外資連買天數
+        foreign_consec = 0
+        if isinstance(chip_hist, list):
+            for day in chip_hist:
+                fn = float(day.get("foreign_net", 0) or 0)
+                if fn > 0:
+                    if foreign_consec >= 0:
+                        foreign_consec += 1
+                    else:
+                        break
+                elif fn < 0:
+                    if foreign_consec <= 0:
+                        foreign_consec -= 1
+                    else:
+                        break
+
+        # AI 判斷邏輯
+        verdict, reason = _judge_chip(
+            foreign_net, trust_net, margin_change_val, short_change_val,
+            margin_ratio, foreign_consec
+        )
+
+        # 籌碼強度分數
+        score = _calc_chip_score(foreign_net, trust_net, dealer_net, margin_change_val, short_change_val, foreign_consec)
+
+        return ChipSummary(
+            stock_id=code,
+            stock_name=name,
+            margin_balance=margin_bal,
+            margin_change=margin_change_val,
+            short_balance=short_bal,
+            short_change=short_change_val,
+            margin_ratio=margin_ratio,
+            foreign_net=round(foreign_net, 0),
+            trust_net=round(trust_net, 0),
+            dealer_net=round(dealer_net, 0),
+            foreign_consec=foreign_consec,
+            verdict=verdict,
+            verdict_reason=reason,
+            chip_score=round(score, 1),
+        )
+    except Exception as e:
+        logger.error("[chip_service.get_chip_summary] %s: %s", code, e)
+        return None
+
+
+def _judge_chip(foreign_net, trust_net, margin_change, short_change, margin_ratio, foreign_consec) -> tuple:
+    """AI 判斷主力行為"""
+    # 建倉訊號：外資買超 + 投信跟進 + 融資沒有大幅增加（主力不希望散戶跟風）
+    if foreign_net > 500 and trust_net > 0 and margin_change < foreign_net * 0.3:
+        return "建倉", f"外資買超{abs(foreign_net):.0f}張，投信同步進場，融資未大量跟進（主力悄悄布局）"
+    # 出貨訊號：外資賣超 + 但融資大增（散戶搶進，主力出貨）
+    if foreign_net < -200 and margin_change > 200:
+        return "出貨", f"外資賣超{abs(foreign_net):.0f}張，但融資增加{margin_change}張（主力借散戶人氣出貨）"
+    # 洗盤訊號：股價跌但融資減少 + 外資持續買
+    if foreign_consec >= 3 and margin_change < -100:
+        return "洗盤", f"外資連買{foreign_consec}日，融資減少{abs(margin_change)}張（可能在洗盤）"
+    # 融資過高警戒
+    if margin_ratio > 0.7:
+        return "警戒", f"融資使用率{margin_ratio*100:.0f}%偏高，散戶擠入，注意風險"
+    # 法人撤退
+    if foreign_net < -1000 and trust_net < 0:
+        return "出貨", f"外資+投信同步賣超，法人撤退訊號明顯"
+    return "觀察", "籌碼無明顯異動，持續追蹤"
+
+
+def _calc_chip_score(foreign_net, trust_net, dealer_net, margin_change, short_change, foreign_consec) -> float:
+    """計算籌碼強度分數 0-100"""
+    score = 50.0
+    # 外資方向（最重要，±30分）
+    if foreign_net > 0:
+        score += min(foreign_net / 100, 30)
+    else:
+        score += max(foreign_net / 100, -30)
+    # 投信方向（±15分）
+    if trust_net > 0:
+        score += min(trust_net / 50, 15)
+    else:
+        score += max(trust_net / 50, -15)
+    # 外資連買加分（±10分）
+    score += min(max(foreign_consec * 2, -10), 10)
+    return round(min(max(score, 0), 100), 1)
+
+
+def format_chip(chip: ChipSummary) -> str:
+    """格式化籌碼報告"""
+    verdict_icon = {"建倉": "🟢", "出貨": "🔴", "洗盤": "🟡", "警戒": "⚠️", "觀察": "📊"}.get(chip.verdict, "📊")
+    margin_arrow = "▲" if chip.margin_change > 0 else ("▼" if chip.margin_change < 0 else "─")
+    short_arrow = "▲" if chip.short_change > 0 else ("▼" if chip.short_change < 0 else "─")
+    foreign_arrow = "▲" if chip.foreign_net > 0 else ("▼" if chip.foreign_net < 0 else "─")
+    consec_str = (
+        f"連買{chip.foreign_consec}日" if chip.foreign_consec > 0
+        else (f"連賣{abs(chip.foreign_consec)}日" if chip.foreign_consec < 0 else "持平")
+    )
+
+    score_bar = "█" * int(chip.chip_score / 10)
+    lines = [
+        f"🔬 籌碼追蹤｜{chip.stock_name}（{chip.stock_id}）",
+        "─" * 22,
+        f"籌碼強度：{chip.chip_score:.0f}分  {score_bar}",
+        "",
+        "📊 三大法人（今日）",
+        f"  外資 {foreign_arrow}{chip.foreign_net:+.0f}張  {consec_str}",
+        f"  投信 {'▲' if chip.trust_net>0 else '▼'}{chip.trust_net:+.0f}張",
+        f"  自營 {'▲' if chip.dealer_net>0 else '▼'}{chip.dealer_net:+.0f}張",
+        "",
+        "💳 融資融券",
+        f"  融資餘額 {chip.margin_balance:,}張  {margin_arrow}{chip.margin_change:+}張",
+        f"  融券餘額 {chip.short_balance:,}張  {short_arrow}{chip.short_change:+}張",
+        f"  融資使用率 {chip.margin_ratio*100:.0f}%",
+        "",
+        f"{verdict_icon} AI研判：{chip.verdict}",
+        f"   {chip.verdict_reason}",
+    ]
+    return "\n".join(lines)
+
+
 async def estimate_main_force_cost(stock_code: str) -> dict:
     """
     主力成本估算：

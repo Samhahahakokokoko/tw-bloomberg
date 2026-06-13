@@ -670,7 +670,27 @@ async def _handle_text(text: str, uid: str) -> list:
     if cmd == "/test":
         return await _cmd_test(parts)
     if cmd == "/chip" and len(parts) >= 2:
-        return await _cmd_chip(parts[1])
+        return await _cmd_chip_enhanced(parts[1].upper(), uid)
+    if cmd == "/chip":
+        return [_text("請輸入股票代碼\n例：/chip 2330", qr_items(("台積電", "/chip 2330"), ("聯發科", "/chip 2454")))]
+    if cmd == "/pattern" and len(parts) >= 2:
+        return await _cmd_pattern(parts[1].upper(), uid)
+    if cmd == "/pattern":
+        return [_text("請輸入股票代碼\n例：/pattern 2330", qr_items(("台積電", "/pattern 2330"), ("聯發科", "/pattern 2454")))]
+    if cmd == "/trade":
+        sub = parts[1].lower() if len(parts) >= 2 else ""
+        if sub == "buy" and len(parts) >= 5:
+            return await _cmd_trade_buy(uid, parts[2].upper(), int(parts[3]), float(parts[4]))
+        if sub == "sell" and len(parts) >= 5:
+            return await _cmd_trade_sell(uid, parts[2].upper(), int(parts[3]), float(parts[4]))
+        if sub == "history":
+            return await _cmd_trade_history(uid)
+        if sub == "pnl":
+            return await _cmd_trade_pnl(uid)
+        return [_text(
+            "📊 模擬交易指令：\n/trade buy 2330 100 1800  買入\n/trade sell 2330 50 2000  賣出\n/trade history  交易記錄\n/trade pnl  損益統計",
+            qr_items(("交易記錄", "/trade history"), ("損益", "/trade pnl"))
+        )]
     if cmd == "/ai_guide":                      return [_ai_guide()]
     if cmd == "/help":                          return [_text(_help_text(), _home_qr())]
     if cmd == "/screener":                      return await _cmd_screener(parts[1] if len(parts) > 1 else "top")
@@ -6960,3 +6980,95 @@ async def _cmd_odd_v2(code: str, budget_str: str, uid: str) -> list:
         ("💼 庫存", "/portfolio"),
         ("再試算", f"/odd {code} {budget_str}"),
     ))]
+
+
+# ── 籌碼追蹤升級版 ────────────────────────────────────────────────────────────
+
+async def _cmd_chip_enhanced(code: str, uid: str) -> list:
+    """/chip CODE — 籌碼追蹤升級版"""
+    try:
+        from backend.services.chip_service import get_chip_summary, format_chip
+        chip = await get_chip_summary(code)
+        if not chip:
+            return [_text(f"⚠️ 無法取得 {code} 籌碼資料", qr_items(("重試", f"/chip {code}"), ("報價", f"/q {code}")))]
+        text = format_chip(chip)
+        qr = qr_items(
+            ("📈 報價", f"/q {code}"),
+            ("🏛 法人", f"/inst {code}"),
+            ("💳 融資", f"/margin {code}"),
+            ("🎯 AI分析", f"/ai {code}"),
+        )
+        return [_text(text[:4800], qr)]
+    except Exception as e:
+        logger.error(f"[chip_enhanced] {e}")
+        return [_text(f"⚠️ 籌碼查詢失敗：{code}", qr_items(("重試", f"/chip {code}")))]
+
+
+# ── K線型態辨識 ───────────────────────────────────────────────────────────────
+
+async def _cmd_pattern(code: str, uid: str) -> list:
+    """/pattern CODE — K線型態辨識"""
+    try:
+        from backend.services.pattern_service import detect_patterns, format_pattern
+        result = await detect_patterns(code)
+        if not result:
+            return [_text(f"⚠️ 無法取得 {code} K線資料", qr_items(("重試", f"/pattern {code}"), ("報價", f"/q {code}")))]
+        text = format_pattern(result)
+        qr = qr_items(
+            ("📈 報價", f"/q {code}"),
+            ("🔬 籌碼", f"/chip {code}"),
+            ("🏛 法人", f"/inst {code}"),
+            ("🎯 AI分析", f"/ai {code}"),
+        )
+        return [_text(text[:4800], qr)]
+    except Exception as e:
+        logger.error(f"[pattern] {e}")
+        return [_text(f"⚠️ 型態分析失敗：{code}", qr_items(("重試", f"/pattern {code}")))]
+
+
+# ── 模擬交易 ─────────────────────────────────────────────────────────────────
+
+async def _cmd_trade_buy(uid: str, code: str, shares: int, price: float) -> list:
+    from backend.services.paper_trade_service import record_trade
+    try:
+        result = await record_trade(uid, "buy", code, shares, price)
+        qr = qr_items(("📊 損益", "/trade pnl"), ("📜 記錄", "/trade history"), ("💼 庫存", "/p"))
+        return [_text(result["message"], qr)]
+    except Exception as e:
+        logger.error(f"[trade_buy] {e}")
+        return [_text(f"❌ 記錄失敗：{e}")]
+
+
+async def _cmd_trade_sell(uid: str, code: str, shares: int, price: float) -> list:
+    from backend.services.paper_trade_service import record_trade
+    try:
+        result = await record_trade(uid, "sell", code, shares, price)
+        qr = qr_items(("📊 損益", "/trade pnl"), ("📜 記錄", "/trade history"), ("💼 庫存", "/p"))
+        return [_text(result["message"], qr)]
+    except Exception as e:
+        logger.error(f"[trade_sell] {e}")
+        return [_text(f"❌ 記錄失敗：{e}")]
+
+
+async def _cmd_trade_history(uid: str) -> list:
+    from backend.services.paper_trade_service import get_trade_history, format_history
+    try:
+        trades = await get_trade_history(uid)
+        text = format_history(trades)
+        qr = qr_items(("📊 損益", "/trade pnl"), ("💼 庫存", "/p"))
+        return [_text(text[:4800], qr)]
+    except Exception as e:
+        logger.error(f"[trade_history] {e}")
+        return [_text("❌ 取得記錄失敗")]
+
+
+async def _cmd_trade_pnl(uid: str) -> list:
+    from backend.services.paper_trade_service import get_pnl, format_pnl
+    try:
+        pnl = await get_pnl(uid)
+        text = format_pnl(pnl)
+        qr = qr_items(("📜 記錄", "/trade history"), ("💼 庫存", "/p"), ("🎯 選股", "/r"))
+        return [_text(text[:4800], qr)]
+    except Exception as e:
+        logger.error(f"[trade_pnl] {e}")
+        return [_text("❌ 損益計算失敗")]

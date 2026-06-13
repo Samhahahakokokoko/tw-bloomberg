@@ -280,6 +280,11 @@ def start_scheduler() -> AsyncIOScheduler:
         id="smart_alert_v2", replace_existing=True,
     )
     scheduler.add_job(
+        _run_event_alert_scan,
+        CronTrigger(day_of_week="mon-fri", hour="9-13", minute="*/30", timezone="Asia/Taipei"),
+        id="event_alert_scan", replace_existing=True,
+    )
+    scheduler.add_job(
         _push_watchlist_daily,
         CronTrigger(day_of_week="mon-fri", hour=19, minute=0, timezone="Asia/Taipei"),
         id="watchlist_daily", replace_existing=True,
@@ -1343,6 +1348,16 @@ async def _run_smart_alert():
         await run_smart_alert_scan()
     except Exception as e:
         logger.error(f"Smart Alert scan failed: {e}")
+
+
+async def _run_event_alert_scan():
+    try:
+        from ..models.database import settings
+        from ..services.event_alert_service import run_event_scan
+        token = settings.line_channel_access_token if settings else ""
+        await run_event_scan(token=token)
+    except Exception as e:
+        logger.error(f"Event Alert scan failed: {e}")
 
 
 async def _push_watchlist_daily():

@@ -1143,3 +1143,18 @@ class PushLog(Base):
     content_hash = Column(String(64), nullable=False)              # SHA-256 前 64 chars
     period_key   = Column(String(10), nullable=False, index=True)  # YYYY-MM-DD or YYYY-WNN
     pushed_at    = Column(DateTime, default=datetime.utcnow)
+
+
+class PaperTrade(Base):
+    """模擬交易記錄"""
+    __tablename__ = "paper_trades"
+    id         = Column(Integer, primary_key=True, index=True)
+    user_id    = Column(String, index=True, nullable=False)
+    stock_code = Column(String(10), nullable=False)
+    stock_name = Column(String(50), default="")
+    action     = Column(String(4), nullable=False)   # "buy" / "sell"
+    shares     = Column(Integer, nullable=False)      # 張數
+    price      = Column(Float,   nullable=False)      # 成交價
+    amount     = Column(Float,   nullable=False)      # 總金額
+    traded_at  = Column(DateTime, default=datetime.utcnow)
+    note       = Column(String(200), default="")

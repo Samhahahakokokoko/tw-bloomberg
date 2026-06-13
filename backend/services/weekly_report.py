@@ -71,6 +71,122 @@ async def generate_weekly_report() -> str:
     return "\n".join(lines)
 
 
+async def generate_enhanced_weekly_report(uid: str = "") -> str:
+    """增強版週報：自選股排行 + 族群 + 事件 + AI展望"""
+    now = datetime.now()
+    week_str = now.strftime("W/E %m/%d")
+    lines = [f"📋 週報  {week_str}", "─" * 24]
+
+    # 1. 自選股週漲跌排行
+    try:
+        from ..models.database import AsyncSessionLocal
+        from ..models.models import Watchlist
+        from .twse_service import fetch_realtime_quote
+        from sqlalchemy import select
+        import asyncio as _asyncio
+
+        if uid:
+            async with AsyncSessionLocal() as db:
+                r = await db.execute(select(Watchlist).where(Watchlist.user_id == uid))
+                items = r.scalars().all()
+        else:
+            async with AsyncSessionLocal() as db:
+                r = await db.execute(select(Watchlist))
+                items = r.scalars().all()
+
+        if items:
+            async def _safe_q(code):
+                try:
+                    q = await fetch_realtime_quote(code)
+                    return code, float(q.get("change_pct", 0) or 0), q.get("name", code) or code
+                except Exception:
+                    return code, 0.0, code
+
+            codes = list({i.stock_code for i in items})[:20]
+            results = await _asyncio.gather(*[_safe_q(c) for c in codes])
+            results_sorted = sorted(results, key=lambda x: x[1], reverse=True)
+            lines.append("👁️ 自選股週漲跌排行")
+            for code, chg, name in results_sorted[:5]:
+                icon = "▲" if chg >= 0 else "▼"
+                lines.append(f"  {icon} {name} {chg:+.1f}%")
+            lines.append("")
+    except Exception as e:
+        logger.warning(f"[weekly_report] watchlist section failed: {e}")
+
+    # 2. 最強族群
+    try:
+        from backend.services.report_screener import _rt_cache
+        prices = _rt_cache.get("prices", {})
+        sector_changes: dict = {}
+        SECTOR_KW = {
+            "AI/雲端":  ["AI", "伺服器", "雲端"],
+            "半導體":   ["半導體", "晶圓", "IC"],
+            "金融":     ["金融", "銀行", "保險"],
+            "航運":     ["航運", "貨櫃", "海運"],
+            "生技":     ["生技", "醫療", "製藥"],
+            "散熱":     ["散熱", "機殼"],
+        }
+        for code, data in list(prices.items())[:3000]:
+            sector = str(data.get("sector", "") or "")
+            chg = float(data.get("change_pct", 0) or 0)
+            for sname, kws in SECTOR_KW.items():
+                if any(kw in sector for kw in kws):
+                    sector_changes.setdefault(sname, []).append(chg)
+        if sector_changes:
+            avg_changes = [(s, sum(cs)/len(cs)) for s, cs in sector_changes.items() if cs]
+            avg_changes.sort(key=lambda x: x[1], reverse=True)
+            lines.append("🔥 本週最強族群")
+            for sname, chg in avg_changes[:4]:
+                icon = "▲" if chg >= 0 else "▼"
+                lines.append(f"  {icon} {sname} {chg:+.1f}%")
+            lines.append("")
+    except Exception as e:
+        logger.warning(f"[weekly_report] sector section: {e}")
+
+    # 3. 下週重要事件
+    try:
+        from datetime import timedelta
+        next_week_start = now + timedelta(days=(7 - now.weekday()))
+        next_week_end   = next_week_start + timedelta(days=4)
+        lines.append(f"📅 下週重要事件 ({next_week_start.strftime('%m/%d')}–{next_week_end.strftime('%m/%d')})")
+        try:
+            from ..models.database import AsyncSessionLocal
+            from ..models.models import DividendCalendar
+            from sqlalchemy import select, and_
+            async with AsyncSessionLocal() as db:
+                r = await db.execute(
+                    select(DividendCalendar).where(
+                        and_(
+                            DividendCalendar.ex_date >= next_week_start.strftime("%Y-%m-%d"),
+                            DividendCalendar.ex_date <= next_week_end.strftime("%Y-%m-%d"),
+                        )
+                    ).limit(5)
+                )
+                events = r.scalars().all()
+            if events:
+                for ev in events:
+                    lines.append(f"  💰 {ev.stock_name}({ev.stock_code}) 除息 {ev.ex_date}")
+            else:
+                lines.append("  （除息資料暫無）")
+        except Exception:
+            lines.append("  （除息資料暫無）")
+        lines.append("  📊 注意：週五為最後交易日，留意結算風險")
+        lines.append("")
+    except Exception as e:
+        logger.warning(f"[weekly_report] events section: {e}")
+
+    # 4. AI 展望
+    try:
+        summary_for_ai = "\n".join(lines[:20])
+        ai = await _weekly_ai_comment(summary_for_ai + "\n請給出下週市場展望和操作建議（30字內）")
+        if ai:
+            lines.append(f"🤖 AI展望：{ai}")
+    except Exception:
+        pass
+
+    return "\n".join(lines)
+
+
 async def push_weekly_report():
     from ..models.database import AsyncSessionLocal, settings
     from ..models.models import Subscriber
@@ -78,7 +194,10 @@ async def push_weekly_report():
     from .morning_report import _push_to_users
     from sqlalchemy import select
 
-    report = await generate_weekly_report()
+    try:
+        report = await generate_enhanced_weekly_report()
+    except Exception:
+        report = await generate_weekly_report()
 
     async with AsyncSessionLocal() as db:
         result = await db.execute(
