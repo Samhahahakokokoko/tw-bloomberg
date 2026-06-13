@@ -50,9 +50,14 @@ async def flush_alert_buffer(session: str = "") -> int:
             label = f"（{session}）" if session else ""
             header = f"⚠️ 股價警報整合{label}\n{'─'*22}\n\n"
             text = header + "\n\n".join(msgs)
+            qr = {"items": [
+                {"type": "action", "action": {"type": "message", "label": "💼 查庫存",   "text": "/p"}},
+                {"type": "action", "action": {"type": "message", "label": "🔔 警報列表", "text": "/alerts"}},
+                {"type": "action", "action": {"type": "message", "label": "📊 大盤",     "text": "/market"}},
+            ]}
             ok = await push_line_messages(
                 uid,
-                [{"type": "text", "text": text[:5000]}],
+                [{"type": "text", "text": text[:5000], "quickReply": qr}],
                 client=c,
                 context="alert_checker.batch",
             )
