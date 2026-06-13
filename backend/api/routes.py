@@ -747,6 +747,13 @@ async def get_revenue(stock_code: str, months: int = Query(13, ge=3, le=36)):
 
 # ── Industry Sentiment ────────────────────────────────────────────────────────
 
+@router.get("/market/sentiment")
+async def market_sentiment_score():
+    """大盤情緒指數（0-100 composite score）"""
+    from ..services.market_sentiment import get_sentiment_score
+    return await get_sentiment_score()
+
+
 @router.get("/industry/sentiment")
 async def industry_sentiment():
     from ..services.industry_sentiment import get_all_sentiments
