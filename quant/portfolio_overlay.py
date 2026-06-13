@@ -301,7 +301,12 @@ class PortfolioOverlay:
             return
         from backend.services.line_push import push_line_messages
         report = self.format_report(signals)
-        await push_line_messages(uid, [{"type": "text", "text": report[:4800]}], token=token, timeout=15, context="portfolio_overlay.push")
+        qr = {"items": [
+            {"type": "action", "action": {"type": "message", "label": "💼 庫存",      "text": "/p"}},
+            {"type": "action", "action": {"type": "message", "label": "🛡️ 風控",      "text": "/risk"}},
+            {"type": "action", "action": {"type": "message", "label": "📋 決策報告",  "text": "/daily"}},
+        ]}
+        await push_line_messages(uid, [{"type": "text", "text": report[:4800], "quickReply": qr}], token=token, timeout=15, context="portfolio_overlay.push")
 
     async def push_all_subscribers(self, token: str) -> int:
         try:

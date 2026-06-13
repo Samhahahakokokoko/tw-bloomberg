@@ -337,7 +337,12 @@ class SectorRotationEngine:
 
             uids = [s.line_user_id for s in subs if s.line_user_id]
             if uids:
-                await multicast_line_messages(uids, [{"type": "text", "text": report[:4800]}], token=token, timeout=15, context="sector_rotation.push_report")
+                qr = {"items": [
+                    {"type": "action", "action": {"type": "message", "label": "📊 選股",     "text": "/r"}},
+                    {"type": "action", "action": {"type": "message", "label": "💰 資金流向", "text": "/flow"}},
+                    {"type": "action", "action": {"type": "message", "label": "💼 庫存",     "text": "/p"}},
+                ]}
+                await multicast_line_messages(uids, [{"type": "text", "text": report[:4800], "quickReply": qr}], token=token, timeout=15, context="sector_rotation.push_report")
         except Exception as e:
             logger.error("[SectorRotation] push failed: %s", e)
 
