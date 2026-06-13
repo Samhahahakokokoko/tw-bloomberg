@@ -1,4 +1,5 @@
 """庫存服務 — 完全 user_id 隔離，每個 LINE 用戶看到自己的資料"""
+import asyncio
 from datetime import date, datetime
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -14,11 +15,21 @@ async def get_portfolio(db: AsyncSession, user_id: str = "") -> list[dict]:
     result = await db.execute(q)
     holdings = result.scalars().all()
 
+    if not holdings:
+        return []
+
+    # Fetch all quotes in parallel
+    quotes = await asyncio.gather(
+        *[fetch_realtime_quote(h.stock_code) for h in holdings],
+        return_exceptions=True,
+    )
+
     output = []
     today = date.today()
-    for h in holdings:
-        quote = await fetch_realtime_quote(h.stock_code)
-        current_price = quote.get("price", h.cost_price)
+    for h, quote in zip(holdings, quotes):
+        if isinstance(quote, Exception) or not quote:
+            quote = {}
+        current_price = float(quote.get("price") or quote.get("close") or h.cost_price or 0)
         market_value  = current_price * h.shares
         cost          = h.cost_price * h.shares
         pnl           = market_value - cost
@@ -31,7 +42,7 @@ async def get_portfolio(db: AsyncSession, user_id: str = "") -> list[dict]:
         if raw_buy_date:
             try:
                 holding_days = (today - datetime.strptime(raw_buy_date, "%Y-%m-%d").date()).days
-            except Exception as e:
+            except Exception:
                 pass
         if holding_days == 0 and h.created_at:
             holding_days = max(0, (today - h.created_at.date()).days)
