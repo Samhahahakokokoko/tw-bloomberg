@@ -68,31 +68,44 @@ class SmartAlert:
 
 async def detect_foreign_selling(threshold_billion: float = 5.0) -> list[SmartAlert]:
     """外資突然大量賣超（超過 threshold 億）"""
+    import asyncio as _asyncio
     alerts: list[SmartAlert] = []
     try:
-        from .twse_service import fetch_institutional
+        from .twse_service import fetch_institutional, fetch_realtime_quote
         codes = ["2330", "2454", "2317", "2308", "3034"]
-        for code in codes:
+
+        async def _fetch_inst_safe(code):
             try:
-                data = await fetch_institutional(code)
-                if not data:
-                    continue
-                fn = data.get("foreign_net", 0) or 0
-                if fn < -(threshold_billion * 1e8):
-                    from .twse_service import fetch_realtime_quote
-                    q    = await fetch_realtime_quote(code)
-                    name = q.get("name", code) if q else code
-                    alerts.append(SmartAlert(
-                        alert_type  = "foreign_sell",
-                        stock_id    = code,
-                        stock_name  = name,
-                        severity    = "warning",
-                        headline    = f"{name} 外資大量賣超",
-                        detail      = f"外資今日賣超 {abs(fn)/1e8:.1f}億（異常大量）",
-                        action_hint = "注意觀察，評估是否減碼",
-                    ))
-            except Exception as e:
-                continue
+                return code, await fetch_institutional(code)
+            except Exception:
+                return code, {}
+
+        inst_results = await _asyncio.gather(*[_fetch_inst_safe(c) for c in codes])
+
+        triggered = [(c, d) for c, d in inst_results if d and (d.get("foreign_net", 0) or 0) < -(threshold_billion * 1e8)]
+        if triggered:
+            async def _name_safe(code):
+                try:
+                    q = await fetch_realtime_quote(code)
+                    return code, q.get("name", code) if q else code
+                except Exception:
+                    return code, code
+
+            name_results = await _asyncio.gather(*[_name_safe(c) for c, _ in triggered])
+            name_map = dict(name_results)
+
+            for code, data in triggered:
+                fn   = data.get("foreign_net", 0) or 0
+                name = name_map.get(code, code)
+                alerts.append(SmartAlert(
+                    alert_type  = "foreign_sell",
+                    stock_id    = code,
+                    stock_name  = name,
+                    severity    = "warning",
+                    headline    = f"{name} 外資大量賣超",
+                    detail      = f"外資今日賣超 {abs(fn)/1e8:.1f}億（異常大量）",
+                    action_hint = "注意觀察，評估是否減碼",
+                ))
     except Exception as e:
         logger.warning(f"[smart_alert] foreign_selling scan failed: {e}")
     return alerts
