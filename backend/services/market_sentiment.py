@@ -164,6 +164,17 @@ def format_sentiment(data: dict) -> str:
         f"",
         f"建議：{data['advice']}",
     ]
+    score = data["score"]
+    if score >= 70:
+        position = "📈 建議倉位：滿倉（90%+）"
+    elif score >= 50:
+        position = "📊 建議倉位：七成倉（70%）"
+    elif score >= 30:
+        position = "📉 建議倉位：五成倉（50%）"
+    else:
+        position = "🛡️ 建議倉位：三成倉或空手（≤30%）"
+    lines.append("")
+    lines.append(position)
     if data.get("factors"):
         lines.append("")
         lines.append("構成因子：")

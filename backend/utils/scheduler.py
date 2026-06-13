@@ -540,6 +540,13 @@ def start_scheduler() -> AsyncIOScheduler:
         id="sector_strength_push", replace_existing=True,
     )
 
+    # 操盤日記推播 — 週一到週五 21:00
+    scheduler.add_job(
+        _push_diary_report,
+        CronTrigger(day_of_week="mon-fri", hour=21, minute=0, timezone="Asia/Taipei"),
+        id="diary_report", replace_existing=True,
+    )
+
     _apply_line_quota_safe_mode(scheduler)
     scheduler.start()
     logger.info("Scheduler started (morning report 08:30 / weekly report Fri 14:30)")
@@ -592,6 +599,43 @@ def _apply_line_quota_safe_mode(scheduler: AsyncIOScheduler) -> None:
         f"[Scheduler] LINE quota safe mode ({mode_label}) removed {len(removed)} push jobs: "
         f"{','.join(sorted(removed))}"
     )
+
+
+async def _push_diary_report():
+    """週一到週五 21:00 — 推播操盤日記給所有訂閱者"""
+    try:
+        from ..services.diary_service import generate_diary
+        from ..models.models import Subscriber
+        from sqlalchemy import select
+
+        async with AsyncSessionLocal() as db:
+            r = await db.execute(
+                select(Subscriber).where(Subscriber.subscribed_morning == True)
+            )
+            subs = r.scalars().all()
+
+        if not subs:
+            logger.info("[Diary] 無訂閱者，跳過推播")
+            return
+
+        # Generate diary once (no uid = market-wide view)
+        text = await generate_diary("")
+        msg = [{"type": "text", "text": text[:4800]}]
+
+        import httpx
+        async with httpx.AsyncClient(timeout=20) as c:
+            for sub in subs:
+                try:
+                    await push_line_messages(
+                        sub.line_user_id, msg,
+                        client=c, context="scheduler.diary_report",
+                    )
+                except Exception as e:
+                    logger.warning(f"[Diary] push failed for {sub.line_user_id[:8]}: {e}")
+
+        logger.info(f"[Diary] 操盤日記已推播給 {len(subs)} 位訂閱者")
+    except Exception as e:
+        logger.error(f"[Diary] job failed: {e}")
 
 
 async def _run_db_backup():

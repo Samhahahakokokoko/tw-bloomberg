@@ -679,6 +679,10 @@ async def _handle_text(text: str, uid: str) -> list:
     if cmd == "/advice":                        return await _cmd_daily_advice()
     if cmd == "/broker"   and len(parts) >= 2:  return await _cmd_broker(parts[1])
     if cmd == "/smart":                         return await _cmd_smart_money()
+    if cmd in ("/smart_screen", "/smartscreen"): return await _cmd_smart_screen(uid)
+    if cmd in ("/corr", "/correlation_code") and len(parts) >= 2:
+        return await _cmd_corr_code(parts[1].upper(), uid)
+    if cmd == "/diary":                         return await _cmd_diary(uid)
     # [FIX] /track 依參數型態分派：4~6 碼純數字 → 股票歷史；否則 → 分點追蹤
     if cmd == "/track" and len(parts) >= 2:
         arg = parts[1]
@@ -851,9 +855,14 @@ async def _handle_text(text: str, uid: str) -> list:
 
     # ── 選股系統 ──────────────────────────────────────────────────────────
     if cmd == "/screen":
+        sub = parts[1].lower() if len(parts) > 1 else ""
+        if sub == "smart":
+            return await _cmd_smart_screen(uid)
         return [_flex_screen_menu()]
     if cmd == "/report":
         sub = parts[1].lower() if len(parts) > 1 else "all"
+        if sub == "smart":
+            return await _cmd_smart_screen(uid)
         # 分頁指令
         if sub == "next":
             return await _cmd_report_page(uid, delta=+1)
@@ -4419,6 +4428,74 @@ def _build_backtest_result_flex(
     }
 
 
+# ── 智慧選股 ─────────────────────────────────────────────────────────────────
+
+async def _cmd_smart_screen(uid: str) -> list:
+    """/smart_screen — 智慧選股引擎：RSI+MACD+外資+量能"""
+    try:
+        from backend.services.smart_screener_service import smart_screen, format_smart_screen
+        results = await smart_screen(limit=5)
+        text = format_smart_screen(results)
+        qr_codes = []
+        for r in results[:3]:
+            qr_codes.append((r["code"], f"/ai {r['code']}"))
+        return [_text(text, qr_items(
+            *[(f"AI分析{c}", cmd) for c, cmd in qr_codes],
+            ("📊 選股選單", "/r"),
+            ("💼 庫存", "/p"),
+        ))]
+    except Exception as e:
+        logger.error(f"[smart_screen] {e}")
+        return [_text("智慧選股暫時無法使用，請稍後再試",
+                      qr_items(("📊 選股", "/r"), ("💼 庫存", "/p")))]
+
+
+# ── 個股相關性分析 ────────────────────────────────────────────────────────────
+
+async def _cmd_corr_code(code: str, uid: str) -> list:
+    """/corr CODE — 個股相關性分析"""
+    if not code or not code.isdigit() or not (4 <= len(code) <= 6):
+        return [_text(
+            "請輸入有效的股票代碼\n例：/corr 2330",
+            qr_items(("台積電", "/corr 2330"), ("聯發科", "/corr 2454")),
+        )]
+    try:
+        from backend.services.correlation_service import calc_correlation, format_correlation
+        data = await calc_correlation(code, n_stocks=20)
+        text = format_correlation(data)
+        pos = data.get("positive", [])
+        neg = data.get("negative", [])
+        qr_list = []
+        for item in pos[:2]:
+            qr_list.append((f"分析{item['code']}", f"/ai {item['code']}"))
+        for item in neg[:1]:
+            qr_list.append((f"分析{item['code']}", f"/ai {item['code']}"))
+        qr_list.append(("💼 庫存", "/p"))
+        return [_text(text, qr_items(*qr_list))]
+    except Exception as e:
+        logger.error(f"[corr_code] {e}")
+        return [_text("相關性分析暫時無法使用，請稍後再試",
+                      qr_items(("重試", f"/corr {code}"), ("💼 庫存", "/p")))]
+
+
+# ── AI 操盤日記 ───────────────────────────────────────────────────────────────
+
+async def _cmd_diary(uid: str) -> list:
+    """/diary — 今日操盤日記"""
+    try:
+        from backend.services.diary_service import generate_diary
+        text = await generate_diary(uid)
+        return [_text(text, qr_items(
+            ("明日選股", "/r"),
+            ("大盤情緒", "/sentiment"),
+            ("💼 庫存", "/p"),
+        ))]
+    except Exception as e:
+        logger.error(f"[diary] {e}")
+        return [_text("日記生成失敗，請稍後再試",
+                      qr_items(("大盤情緒", "/sentiment"), ("💼 庫存", "/p")))]
+
+
 # ── 風控分析 ──────────────────────────────────────────────────────────────────
 
 # 常見台股產業對照表（快速 fallback）
@@ -4453,8 +4530,7 @@ _SECTOR_SUGGEST: dict[str, str] = {
 
 async def _cmd_risk_report(uid: str) -> list:
     """
-    🛡️ 風控分析報告：集中度 + VaR + 市場狀態 + 建議
-    點「查看優化建議」觸發背景 Markowitz 推送
+    🛡️ 風險儀表板：持股集中度 + 產業集中度 + Beta 值 + 建議操作
     """
     try:
         # ── 取庫存 ───────────────────────────────────────────────────
@@ -4467,11 +4543,28 @@ async def _cmd_risk_report(uid: str) -> list:
                 qr_items(("新增示範", "/buy 2330 1000 850"), ("💼 庫存", "/p")),
             )]
 
-        # ── 產業集中度 ───────────────────────────────────────────────
+        if len(holdings) < 2:
+            return [_text(
+                "🛡️ 風控分析\n\n持股不足 2 支，無法計算分散度\n請新增更多持股後再試",
+                qr_items(("📊 選股", "/r"), ("💼 庫存", "/p")),
+            )]
+
+        # ── 計算市值 ─────────────────────────────────────────────────
         total_mv = sum(h.get("market_value", 0) or 0 for h in holdings)
         if total_mv <= 0:
             total_mv = sum(h["shares"] * h["cost_price"] for h in holdings)
 
+        # ── 持股集中度（前三大占比）──────────────────────────────────
+        holding_mv = []
+        for h in holdings:
+            mv = h.get("market_value") or (h["shares"] * h["cost_price"])
+            holding_mv.append((h.get("stock_code", ""), h.get("stock_name", ""), float(mv)))
+        holding_mv.sort(key=lambda x: x[2], reverse=True)
+        top3_mv = sum(x[2] for x in holding_mv[:3])
+        top3_pct = top3_mv / total_mv * 100 if total_mv > 0 else 0.0
+        stock_conc_note = "⚠️ 偏高" if top3_pct > 60 else ("注意" if top3_pct > 40 else "✓ 正常")
+
+        # ── 產業集中度 ───────────────────────────────────────────────
         sector_mv: dict[str, float] = {}
         for h in holdings:
             code   = h.get("stock_code", "")
@@ -4485,14 +4578,75 @@ async def _cmd_risk_report(uid: str) -> list:
                         r = await db2.execute(select(Stock).where(Stock.code == code))
                         s = r.scalar_one_or_none()
                         sector = (s.industry or "其他") if s else "其他"
-                except Exception as e:
+                except Exception:
                     sector = "其他"
             sector_mv[sector] = sector_mv.get(sector, 0.0) + float(mv)
 
         top_sector    = max(sector_mv, key=sector_mv.get)
         top_pct       = sector_mv[top_sector] / total_mv * 100 if total_mv > 0 else 0.0
-        concentration = "⚠️ 過度集中" if top_pct > 60 else ("注意" if top_pct > 40 else "✓ 正常")
+        sector_note   = "⚠️ 過度集中" if top_pct > 60 else ("注意" if top_pct > 40 else "✓ 正常")
         suggest_sector = _SECTOR_SUGGEST.get(top_sector, "分散至其他類股")
+
+        # ── Beta 計算 ─────────────────────────────────────────────────
+        portfolio_beta = 1.0
+        beta_note      = "中等（接近大盤）"
+        try:
+            from backend.services.twse_service import fetch_kline
+            import math as _math
+
+            # Fetch market proxy (0050 ETF as TAIEX proxy)
+            mkt_kline = await fetch_kline("0050")
+            mkt_closes = [float(k["close"]) for k in mkt_kline if k.get("close") and float(k["close"]) > 0]
+            mkt_rets = [
+                (mkt_closes[i] - mkt_closes[i - 1]) / mkt_closes[i - 1]
+                for i in range(1, len(mkt_closes))
+            ][-60:]
+
+            # Parallel fetch all holding klines
+            codes_list = [h.get("stock_code", "") for h in holdings]
+            mw_list    = [float(h.get("market_value") or (h["shares"] * h["cost_price"])) for h in holdings]
+            klines_all = await asyncio.gather(
+                *[fetch_kline(c) for c in codes_list],
+                return_exceptions=True,
+            )
+
+            betas = []
+            weights = []
+            for kl, mw in zip(klines_all, mw_list):
+                if isinstance(kl, Exception) or not kl:
+                    continue
+                c_list = [float(k["close"]) for k in kl if k.get("close") and float(k["close"]) > 0]
+                if len(c_list) < 10:
+                    continue
+                c_rets = [
+                    (c_list[i] - c_list[i - 1]) / c_list[i - 1]
+                    for i in range(1, len(c_list))
+                ][-60:]
+                n = min(len(c_rets), len(mkt_rets))
+                if n < 5:
+                    continue
+                cr = c_rets[-n:]
+                mr = mkt_rets[-n:]
+                mean_c = sum(cr) / n
+                mean_m = sum(mr) / n
+                cov = sum((cr[i] - mean_c) * (mr[i] - mean_m) for i in range(n)) / n
+                var_m = sum((mr[i] - mean_m) ** 2 for i in range(n)) / n
+                if var_m > 0:
+                    betas.append(cov / var_m)
+                    weights.append(mw)
+
+            if betas and weights:
+                total_w = sum(weights)
+                portfolio_beta = sum(b * w for b, w in zip(betas, weights)) / total_w
+                portfolio_beta = round(portfolio_beta, 2)
+                if portfolio_beta > 1.3:
+                    beta_note = "高（波動大於大盤）"
+                elif portfolio_beta > 0.7:
+                    beta_note = "中等（接近大盤）"
+                else:
+                    beta_note = "低（波動小於大盤）"
+        except Exception as e:
+            logger.debug(f"[risk_report] beta calc error: {e}")
 
         # ── VaR（複用 full_portfolio_analysis）──────────────────────
         max_daily_loss = 0.0
@@ -4504,8 +4658,8 @@ async def _cmd_risk_report(uid: str) -> list:
             if var_data:
                 max_daily_loss = abs(var_data.get("hist_var_amount") or var_data.get("param_var_amount", 0))
                 var_95         = abs(var_data.get("param_var_amount", 0))
-        except Exception as e:
-            max_daily_loss = total_mv * 0.025   # fallback ~2.5%
+        except Exception:
+            max_daily_loss = total_mv * 0.025
             var_95         = total_mv * 0.018
 
         # ── 市場狀態（RegimeEngine）──────────────────────────────────
@@ -4514,43 +4668,67 @@ async def _cmd_risk_report(uid: str) -> list:
         try:
             from quant.regime_engine import RegimeEngine
             from quant.feature_engine import FeatureEngine
-            from backend.services.twse_service import fetch_kline
-            kl = await fetch_kline("2330")
+            from backend.services.twse_service import fetch_kline as _fk2
+            kl = await _fk2("2330")
             if kl and len(kl) >= 65:
                 import pandas as pd
                 df = pd.DataFrame(kl)
-                for c in ["open","high","low","close","volume"]:
+                for c in ["open", "high", "low", "close", "volume"]:
                     if c in df.columns:
                         df[c] = pd.to_numeric(df[c], errors="coerce")
                 feat = FeatureEngine(df).compute_all()
-                re   = RegimeEngine()
-                reg  = re.detect(feat)
-                regime_map = {"bull": ("多頭", 70), "bear": ("空頭", 30),
-                              "sideways": ("盤整", 50), "volatile": ("高波動", 40)}
-                market_note, hold_pct = regime_map.get(
-                    reg.regime.value, ("未知", 50))
-        except Exception as e:
+                re_eng = RegimeEngine()
+                reg = re_eng.detect(feat)
+                regime_map = {
+                    "bull":     ("多頭", 70),
+                    "bear":     ("空頭", 30),
+                    "sideways": ("盤整", 50),
+                    "volatile": ("高波動", 40),
+                }
+                market_note, hold_pct = regime_map.get(reg.regime.value, ("未知", 50))
+        except Exception:
             pass
 
-        # ── 組合訊息 ─────────────────────────────────────────────────
+        # ── 建議操作 ─────────────────────────────────────────────────
+        suggestions = []
+        if top3_pct > 60:
+            suggestions.append(f"前三大持股占比 {top3_pct:.0f}%，建議分散至 5 支以上")
+        if top_pct > 50:
+            suggestions.append(f"產業過度集中於{top_sector}，建議加入{suggest_sector}")
+        if portfolio_beta > 1.3:
+            suggestions.append(f"Beta={portfolio_beta}，可加入低 Beta 金融股降低波動")
+        if not suggestions:
+            suggestions.append("組合配置相對均衡，維持現況即可")
+
+        # ── 組合輸出訊息 ─────────────────────────────────────────────
         lines = [
-            "🛡️ 風控分析報告",
+            "🛡️ 投資組合風險儀表板",
             "─" * 22,
-            f"投組集中度：{top_sector} {top_pct:.0f}%（{concentration}）",
-            f"最大單日虧損估計：-${max_daily_loss:,.0f}",
-            f"VaR 95%：-${var_95:,.0f}",
-        ]
-        if top_pct > 40:
-            lines.append(f"建議：分散至{suggest_sector}")
-        lines += [
             "",
+            "📊 持股集中度",
+            f"  前三大占比：{top3_pct:.0f}%（{stock_conc_note}）",
+            f"  建議：{'分散至 5 支以上' if top3_pct > 60 else '集中度正常'}",
+            "",
+            "🏭 產業集中度",
+            f"  最大族群：{top_sector} {top_pct:.0f}%（{sector_note}）",
+            f"  建議：{suggest_sector if top_pct > 40 else '產業分布均衡'}",
+            "",
+            f"📈 Beta 值（波動性）",
+            f"  整體 Beta：{portfolio_beta}（{beta_note}）",
+            f"  說明：大盤漲1%，你的組合估計漲{portfolio_beta:.1f}%",
+            "",
+            f"🔒 VaR 95%：-${var_95:,.0f}（日最大虧損估計）",
             f"市場狀態：{market_note}，建議持股 {hold_pct}%",
+            "",
+            "💡 建議操作",
         ]
+        for i, s in enumerate(suggestions, 1):
+            lines.append(f"  {i}. {s}")
 
         return [_text("\n".join(lines)[:5000], qr_items(
-            ("🔄 查看優化建議", "/risk_optimize"),
-            ("💼 庫存",         "/p"),
-            ("📊 VaR分析",      "/var"),
+            ("🔄 優化建議", "/risk_optimize"),
+            ("💼 庫存",     "/p"),
+            ("📊 VaR",      "/var"),
         ))]
 
     except Exception as e:
