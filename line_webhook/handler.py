@@ -1067,9 +1067,17 @@ async def _cmd_quote(code: str) -> list:
 
 async def _cmd_market() -> list:
     try:
-        ov = await fetch_market_overview()
-        if not ov:
+        import asyncio as _asyncio
+        from backend.services.market_sentiment import get_sentiment_score
+
+        ov, sent = await _asyncio.gather(
+            fetch_market_overview(),
+            get_sentiment_score(),
+            return_exceptions=True,
+        )
+        if isinstance(ov, Exception) or not ov:
             return [_text("❌ 大盤資料暫時無法取得，請稍後再試", _home_qr())]
+
         value  = ov.get("value", ov.get("index", 0))
         change = ov.get("change", 0)
         pct    = ov.get("change_pct", 0)
@@ -1077,17 +1085,25 @@ async def _cmd_market() -> list:
         vol    = ov.get("volume", 0) or ov.get("trading_value", 0)
         vol_str = f"\n成交量：{vol/1e8:.1f}億" if vol else ""
         state  = "強多 🚀" if pct > 1.5 else "多頭 📈" if pct > 0.3 else "強空 🔻" if pct < -1.5 else "空頭 📉" if pct < -0.3 else "盤整 ↔️"
+
+        sent_str = ""
+        if isinstance(sent, dict):
+            sc = sent.get("score", 50)
+            sl = sent.get("label", "")
+            si = sent.get("icon", "")
+            sent_str = f"\n情緒指數：{si} {sl} ({sc}/100)"
+
         text = (
             f"📊 台股大盤  {state}\n"
             f"加權指數：{value:,.2f}\n"
             f"漲跌：{sign}{abs(change):.2f}點 ({sign}{abs(pct):.2f}%)"
-            f"{vol_str}"
+            f"{vol_str}{sent_str}"
         )
         return [_text(text, qr_items(
-            ("📰 新聞", "/n"),
-            ("🎯 選股", "/r"),
-            ("💼 庫存", "/p"),
-            ("🤖 AI分析", "/ai 今日台股操作策略"),
+            ("🌡️ 情緒詳情", "/sentiment"),
+            ("🎯 選股",     "/r"),
+            ("💼 庫存",     "/p"),
+            ("📰 新聞",     "/n"),
         ))]
     except Exception as e:
         logger.warning("[cmd_market] {}", e)
