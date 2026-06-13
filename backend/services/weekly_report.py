@@ -17,11 +17,22 @@ async def generate_weekly_report() -> str:
     if not holdings:
         return "📋 本週週報\n尚無持股資料"
 
+    import asyncio as _asyncio
+
+    async def _safe_price(h):
+        try:
+            q = await fetch_realtime_quote(h.stock_code)
+            return h.stock_code, float(q.get("price", 0) or h.cost_price)
+        except Exception:
+            return h.stock_code, float(h.cost_price)
+
+    price_results = await _asyncio.gather(*[_safe_price(h) for h in holdings])
+    price_map = dict(price_results)
+
     rows = []
     total_mv = total_cost = 0.0
     for h in holdings:
-        quote = await fetch_realtime_quote(h.stock_code)
-        price = quote.get("price", h.cost_price)
+        price = price_map.get(h.stock_code, h.cost_price)
         mv = price * h.shares
         cost = h.cost_price * h.shares
         pnl = mv - cost
