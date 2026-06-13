@@ -125,6 +125,7 @@ async def scan_and_alert() -> int:
     每個觸發條件當天只推一次。
     回傳推播次數。
     """
+    import asyncio as _asyncio
     from ..models.database import AsyncSessionLocal
     from ..models.models import StopAlert, Portfolio
     from .twse_service import fetch_realtime_quote
@@ -140,9 +141,24 @@ async def scan_and_alert() -> int:
             )
             alerts = r.scalars().all()
 
+        if not alerts:
+            return 0
+
+        # Batch-fetch all unique stock prices in parallel
+        codes = list({a.stock_code for a in alerts})
+
+        async def _safe_quote(code: str):
+            try:
+                return code, await fetch_realtime_quote(code)
+            except Exception:
+                return code, {}
+
+        quote_results = await _asyncio.gather(*[_safe_quote(c) for c in codes])
+        quotes: dict[str, dict] = {c: q for c, q in quote_results}
+
         for alert in alerts:
             try:
-                q = await fetch_realtime_quote(alert.stock_code)
+                q = quotes.get(alert.stock_code) or {}
                 price = float(q.get("price", 0) or 0)
                 if price <= 0:
                     continue
