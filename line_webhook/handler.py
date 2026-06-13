@@ -2572,17 +2572,23 @@ async def _cmd_unsubscribe(uid: str) -> TextMessage:
 def _alert_guide() -> TextMessage:
     return _text(
         "🔔 設定警報\n\n"
+        "── 買入計劃（一次設停損+目標）──\n"
+        "/alert 代碼 buy 買入價 stop 停損 target 目標\n"
+        "例：/alert 2330 buy 950 stop 900 target 1100\n\n"
+        "── 單一條件警報 ──\n"
         "/alert 代碼 類型 數值\n\n"
         "類型：\n"
         "• price_above    突破價格\n"
         "• price_below    跌破價格\n"
         "• change_pct_above  漲幅%\n"
         "• change_pct_below  跌幅%\n\n"
-        "範例：\n/alert 2330 price_above 2300",
+        "── 管理 ──\n"
+        "/alerts          查看所有警報\n"
+        "/alert clear 代碼  移除某股警報",
         qr_items(
+            ("買入示範", "/alert 2330 buy 950 stop 900 target 1100"),
             ("突破示範", "/alert 2330 price_above 2300"),
-            ("跌破示範", "/alert 2330 price_below 2000"),
-            ("漲幅示範", "/alert 2330 change_pct_above 3"),
+            ("📋 我的警報", "/alerts"),
         )
     )
 
