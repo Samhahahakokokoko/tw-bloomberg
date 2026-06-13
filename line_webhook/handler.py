@@ -2035,12 +2035,18 @@ async def _cmd_margin(code: str) -> list:
 
 async def _cmd_morning() -> list:
     report = await generate_morning_report()
+    morning_qr = qr_items(
+        ("🌡️ 情緒指數", "/sentiment"),
+        ("🎯 今日選股", "/r"),
+        ("💼 庫存",     "/p"),
+        ("👁️ 自選股",   "/watchlist"),
+    )
     try:
         ov   = await fetch_market_overview()
         card = flex_morning_report(report, ov)
-        return [_flex("台股早報", card, qr_items(("💼 庫存", "/portfolio"), ("🤖 AI", "/ai_guide")))]
+        return [_flex("台股早報", card, morning_qr)]
     except Exception as e:
-        return [_text(report, _home_qr())]
+        return [_text(report, morning_qr)]
 
 
 async def _cmd_weekly(uid: str) -> list:
