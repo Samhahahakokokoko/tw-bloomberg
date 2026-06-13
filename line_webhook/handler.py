@@ -1263,9 +1263,14 @@ async def _cmd_buy(parts: list, uid: str) -> list:
             f"市況：{mkt_icon} {'多頭' if market_cond=='bull' else '空頭' if market_cond=='bear' else '未知'}"
             f"{sl_tp}"
         )
+        extra_qr = []
+        if stop_loss is None:
+            extra_qr.append((f"🛑 設停損 {code}", f"/sl {code} "))
+        if target_price is None:
+            extra_qr.append((f"🎯 設目標 {code}", f"/tp {code} "))
         return [_text(confirm, qr_items(
             ("💼 查庫存", "/p"),
-            ("📊 效益分析", "/analysis"),
+            *extra_qr[:2],
             ("📋 交易紀錄", "/history"),
         ))]
     except Exception as e:
