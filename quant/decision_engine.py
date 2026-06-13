@@ -517,7 +517,13 @@ class DecisionEngine:
         if not token:
             return
         from backend.services.line_push import push_line_messages
-        await push_line_messages(uid, [{"type": "text", "text": daily.format_line()[:4800]}], token=token, timeout=15, context="decision.push")
+        qr = {"items": [
+            {"type": "action", "action": {"type": "message", "label": "🎯 今日選股",  "text": "/r"}},
+            {"type": "action", "action": {"type": "message", "label": "💼 庫存",       "text": "/p"}},
+            {"type": "action", "action": {"type": "message", "label": "🌡️ 情緒指數",  "text": "/sentiment"}},
+            {"type": "action", "action": {"type": "message", "label": "👁️ 自選股",    "text": "/watchlist"}},
+        ]}
+        await push_line_messages(uid, [{"type": "text", "text": daily.format_line()[:4800], "quickReply": qr}], token=token, timeout=15, context="decision.push")
 
     async def push_all_subscribers(self, token: str) -> int:
         try:
