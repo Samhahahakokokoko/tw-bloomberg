@@ -890,6 +890,13 @@ async def _handle_text(text: str, uid: str) -> list:
     if t.isdigit() and 4 <= len(t) <= 6:
         return await _cmd_quote(t)
 
+    # ── 中文股票名稱 → 解析成代碼再查報價 ──────────────────────────────────
+    t_clean = t.strip("？?！!～~。，,　 ")
+    if 2 <= len(t_clean) <= 6 and any("一" <= c <= "鿿" for c in t_clean):
+        resolved = _lookup_stock_code(t_clean)
+        if resolved:
+            return await _cmd_quote(resolved)
+
     # ── 自然語言關鍵字（整句比對）──────────────────────────────────────────
     t_strip = t.strip("？?！!～~。，, ")
     if t_strip in _NL_PORTFOLIO:      return await _cmd_portfolio(uid)
@@ -967,6 +974,28 @@ async def _handle_text(text: str, uid: str) -> list:
 
 def _any_kw(text: str, keywords: tuple) -> bool:
     return any(kw in text for kw in keywords)
+
+
+_name_cache: dict[str, str] = {}   # name → code, rebuilt hourly
+
+def _lookup_stock_code(name: str) -> str | None:
+    """Resolve a Chinese stock name to its 4-5 digit code using RT cache."""
+    global _name_cache
+    try:
+        from backend.services.report_screener import _rt_cache
+        prices = _rt_cache.get("prices", {})
+        if prices and len(_name_cache) != len(prices):
+            _name_cache = {str(v.get("name", "") or ""): k for k, v in prices.items() if v.get("name")}
+        # Exact match
+        if name in _name_cache:
+            return _name_cache[name]
+        # Prefix match (e.g. "聯發" → 聯發科)
+        for n, code in _name_cache.items():
+            if n.startswith(name) and len(name) >= 2:
+                return code
+    except Exception:
+        pass
+    return None
 
 
 # ── 各指令實作 ────────────────────────────────────────────────────────────────
