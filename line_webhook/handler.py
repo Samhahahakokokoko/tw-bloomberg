@@ -1851,9 +1851,11 @@ async def _cmd_inst(code: str) -> list:
     ]
 
     return [_text("\n".join(lines), qr_items(
-        ("📈 報價",   f"/quote {code}"),
-        ("🤖 AI解讀", f"/ai {code} 法人動向解讀"),
-        ("📰 新聞",   f"/news {code}"),
+        ("📈 報價",    f"/quote {code}"),
+        ("🤖 AI解讀",  f"/ai {code} 法人動向解讀"),
+        (f"⭐ 自選 {code}", f"/watch {code}"),
+        ("📰 新聞",    f"/news {code}"),
+        ("💼 庫存",   "/p"),
     ))]
 
 
