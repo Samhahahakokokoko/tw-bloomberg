@@ -901,13 +901,6 @@ async def _handle_text(text: str, uid: str) -> list:
     if t.isdigit() and 4 <= len(t) <= 6:
         return await _cmd_quote(t)
 
-    # ── 中文股票名稱 → 解析成代碼再查報價 ──────────────────────────────────
-    t_clean = t.strip("？?！!～~。，,　 ")
-    if 2 <= len(t_clean) <= 6 and any("一" <= c <= "鿿" for c in t_clean):
-        resolved = _lookup_stock_code(t_clean)
-        if resolved:
-            return await _cmd_quote(resolved)
-
     # ── 自然語言關鍵字（整句比對）──────────────────────────────────────────
     t_strip = t.strip("？?！!～~。，, ")
     if t_strip in _NL_PORTFOLIO:      return await _cmd_portfolio(uid)
@@ -920,6 +913,13 @@ async def _handle_text(text: str, uid: str) -> list:
     if t_strip in _NL_SUBSCRIBE:      return [await _cmd_subscribe(uid)]
     if t_strip in _NL_HISTORY:        return await _cmd_history(uid)
     if t_strip in _NL_TAX:            return await _cmd_tax(uid)
+
+    # ── 中文股票名稱 → 解析成代碼再查報價（NL 關鍵字後才執行，避免衝突）──
+    t_clean = t.strip("？?！!～~。，,　 ")
+    if 2 <= len(t_clean) <= 6 and any("一" <= c <= "鿿" for c in t_clean):
+        resolved = _lookup_stock_code(t_clean)
+        if resolved:
+            return await _cmd_quote(resolved)
 
     # ── 含關鍵字的長句（部分比對）──────────────────────────────────────────
     t_lower = t_strip.lower()
@@ -2889,10 +2889,14 @@ def _help_text() -> str:
         "\n📡 智慧警報 & 情緒\n"
         "/sentiment       大盤情緒指數（0-100）\n"
         "/watchlist       自選股（含RSI & 訊號）\n"
-        "/watch 代碼      加入自選股\n"
+        "/watch 代碼 [sl=X] [tp=Y]  加入自選股\n"
         "/alerts          我的警報清單\n"
         "/alert 代碼 buy 買價 stop 停損 target 目標\n"
         "/optimize 代碼 RSI  RSI 參數優化（3年回測）\n"
+        "\n💡 小技巧\n"
+        "• 直接輸入股名（台積電）→ 即時報價\n"
+        "• 輸入 4 碼 → 報價＋RSI＋量能\n"
+        "• /buy 代碼 股數 成本 sl=停損 tp=目標\n"
     )
 
 
