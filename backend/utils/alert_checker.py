@@ -69,19 +69,37 @@ async def flush_alert_buffer(session: str = "") -> int:
 # ── 主要檢查邏輯 ───────────────────────────────────────────────────────────────
 
 async def check_all_alerts():
+    import asyncio as _asyncio
+
     async with AsyncSessionLocal() as db:
         result = await db.execute(select(Alert).where(Alert.is_active == True))
         alerts = result.scalars().all()
 
+    if not alerts:
+        return
+
+    # Batch-fetch all unique stock prices in parallel
+    codes = list({a.stock_code for a in alerts})
+
+    async def _safe_quote(code):
+        try:
+            return code, await fetch_realtime_quote(code)
+        except Exception:
+            return code, {}
+
+    quote_results = await _asyncio.gather(*[_safe_quote(c) for c in codes])
+    _quote_cache: dict = {c: q for c, q in quote_results}
+
     for alert in alerts:
         try:
-            await _check_single(alert)
+            await _check_single(alert, _quote_cache.get(alert.stock_code, {}))
         except Exception as e:
             logger.error(f"Alert check error {alert.stock_code}: {e}")
 
 
-async def _check_single(alert: Alert):
-    quote  = await fetch_realtime_quote(alert.stock_code)
+async def _check_single(alert: Alert, quote: dict = None):
+    if quote is None:
+        quote = await fetch_realtime_quote(alert.stock_code)
     price  = quote.get("price", 0)
     change = quote.get("change", 0)
     if not price:
