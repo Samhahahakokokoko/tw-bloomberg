@@ -4822,6 +4822,11 @@ def _build_stock_list_msg(
         )
 
     nav_items: list[dict] = []
+    # Top-3 stocks as quick access
+    for r in rows[:3]:
+        nav_items.append({"type": "action", "action": {
+            "type": "message", "label": f"🔍{r.stock_id}", "text": f"/quote {r.stock_id}",
+        }})
     if page > 1:
         nav_items.append({"type": "action", "action": {
             "type": "postback", "label": "← 上一頁", "data": "act=report_prev",
@@ -4832,7 +4837,7 @@ def _build_stock_list_msg(
             "displayText": "→ 下一頁"}})
     nav_items.append({"type": "action", "action": {"type": "message", "label": "🔍 選股選單", "text": "/screen"}})
     nav_items.append({"type": "action", "action": {"type": "message", "label": "💼 庫存",   "text": "/p"}})
-    qr = {"items": nav_items} if nav_items else None
+    qr = {"items": nav_items[:13]} if nav_items else None
     return _text("\n".join(lines), qr)
 
 
