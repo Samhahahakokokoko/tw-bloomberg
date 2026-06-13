@@ -63,6 +63,7 @@ async def set_stop(
 
 async def get_stops(user_id: str) -> list[dict]:
     """取得用戶所有有效停損停利設定"""
+    import asyncio as _asyncio
     from ..models.database import AsyncSessionLocal
     from ..models.models import StopAlert
     from .twse_service import fetch_realtime_quote
@@ -76,14 +77,22 @@ async def get_stops(user_id: str) -> list[dict]:
         )
         alerts = r.scalars().all()
 
+    if not alerts:
+        return []
+
+    async def _safe_price(code: str) -> tuple[str, float]:
+        try:
+            q = await fetch_realtime_quote(code)
+            return code, float(q.get("price", 0) or 0)
+        except Exception:
+            return code, 0.0
+
+    price_results = await _asyncio.gather(*[_safe_price(a.stock_code) for a in alerts])
+    prices = {c: p for c, p in price_results}
+
     result = []
     for a in alerts:
-        try:
-            q = await fetch_realtime_quote(a.stock_code)
-            price = q.get("price", 0)
-        except Exception as e:
-            price = 0
-
+        price = prices.get(a.stock_code, 0)
         result.append({
             "stock_code": a.stock_code,
             "stock_name": a.stock_name or a.stock_code,
