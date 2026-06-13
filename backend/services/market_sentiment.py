@@ -28,22 +28,38 @@ async def get_sentiment_score() -> dict:
     except Exception as e:
         logger.debug(f"[sentiment] taiex factor skip: {e}")
 
-    # Factor 2: Institutional net (weight: 30)
+    # Factor 2: Institutional net — foreign investor net (BFI82U row[3] = net TWD)
     try:
         import httpx
         url = "https://www.twse.com.tw/fund/BFI82U?response=json&type=day"
         async with httpx.AsyncClient(timeout=10) as c:
-            data = (await c.get(url)).json()
+            import json as _json
+            raw = await c.get(url)
+            data = _json.loads(raw.content)
         rows = data.get("data", [])
-        total = next((r for r in rows if "合計" in str(r)), None)
-        if total and len(total) >= 3:
-            def _n(v):
-                return int(str(v).replace(",", "").replace("+", "") or 0)
-            foreign = _n(total[2]) if len(total) > 2 else 0
+
+        def _n(v):
+            try: return int(str(v).replace(",", "").replace("+", "") or 0)
+            except: return 0
+
+        # Find foreign row: "外資及陸資(不含自營商)" has both 外資 and 陸資
+        # Row "外資自營商" has 外資 but NOT 陸資 — so 陸資 is the discriminator
+        foreign_net = None
+        for r in rows:
+            if len(r) >= 4 and "外資" in str(r[0]) and "陸資" in str(r[0]):
+                foreign_net = _n(r[3])
+                break
+        if foreign_net is None:
+            total_row = next((r for r in rows if "合計" in str(r[0])), None)
+            if total_row and len(total_row) >= 4:
+                foreign_net = _n(total_row[3])
+
+        if foreign_net is not None:
             # Each 1B TWD net buy → +1.5 points (capped ±15)
-            delta = max(-15, min(15, foreign / 1e8 * 1.5))
+            delta = max(-15, min(15, foreign_net / 1e9 * 1.5))
             score += delta
-            factors["institutional"] = f"外資{foreign:+,}張"
+            sign = "+" if foreign_net >= 0 else ""
+            factors["institutional"] = f"外資{sign}{foreign_net/1e8:.1f}億"
     except Exception as e:
         logger.debug(f"[sentiment] institutional factor skip: {e}")
 
