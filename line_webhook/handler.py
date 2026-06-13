@@ -2683,7 +2683,8 @@ async def _cmd_nl_screener(query: str) -> list:
         if ai_summary:
             lines.append(f"\n🤖 {ai_summary[:150]}")
 
-        return [_text("\n".join(lines), _home_qr())]
+        top3_qr = [(f"🔍{r['stock_code']}", f"/quote {r['stock_code']}") for r in results[:3]]
+        return [_text("\n".join(lines), qr_items(*top3_qr, ("🎯 選股選單", "/screen"), ("💼 庫存", "/p")))]
     except Exception as e:
         return [_text(f"❌ 選股失敗：{e}")]
 
