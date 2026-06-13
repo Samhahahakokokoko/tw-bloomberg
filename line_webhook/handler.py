@@ -973,34 +973,55 @@ def _any_kw(text: str, keywords: tuple) -> bool:
 
 async def _cmd_quote(code: str) -> list:
     try:
-        quote = await fetch_realtime_quote(code)
-        if not quote:
+        import asyncio as _asyncio
+        from backend.services.watchlist_monitor import _fetch_rsi
+        quote, rsi = await _asyncio.gather(
+            fetch_realtime_quote(code),
+            _fetch_rsi(code),
+            return_exceptions=True,
+        )
+        if isinstance(quote, Exception) or not quote:
             return [_text(f"❌ 查無 {code} 報價（請確認代碼正確）",
                           qr_items(("2330 台積電", "2330"), ("大盤", "/market"), ("🔍 選股", "/r")))]
+        if isinstance(rsi, Exception):
+            rsi = None
 
         name = quote.get("name") or code
         price = float(quote.get("close") or quote.get("price") or 0)
         change = float(quote.get("change") or 0)
         change_pct = float(quote.get("change_pct") or 0)
+        high   = float(quote.get("high") or 0)
+        low    = float(quote.get("low") or 0)
+        volume = int(quote.get("volume") or 0)
         source = quote.get("source", "")
         data_time = quote.get("as_of") or quote.get("timestamp") or quote.get("date") or ""
         logger.debug(f"[quote] code={code} price={price}")
         sign = "+" if change >= 0 else "-"
         source_label = quote.get("source_label") or ("即時" if "mis" in source else "收盤")
         stale_note = "\n⚠️ 資料非今日" if quote.get("is_stale") else ""
+
+        hl_str = f"最高：{high:.2f}  最低：{low:.2f}\n" if high and low else ""
+        vol_str = f"成交量：{volume:,}張\n" if volume else ""
+        if rsi is not None:
+            rsi_tag = "（超賣）" if rsi <= 30 else "（超買）" if rsi >= 70 else ""
+            rsi_str = f"RSI(14)：{rsi:.1f}{rsi_tag}\n"
+        else:
+            rsi_str = ""
+
         text = (
             f"📊 {code} {name}\n"
-            f"價格：{price}元\n"
-            f"漲跌：{sign}{abs(change):.2f} ({sign}{abs(change_pct):.2f}%)\n"
+            f"價格：{price}元  {sign}{abs(change):.2f} ({sign}{abs(change_pct):.2f}%)\n"
+            f"{hl_str}{vol_str}{rsi_str}"
             f"資料：{source_label} {data_time}{stale_note}"
         )
         return [_text(text, qr_items(
             (f"🤖 AI分析", f"/ai {code} 現在值得買嗎"),
             (f"🏦 法人",   f"/inst {code}"),
-            (f"📰 新聞",   f"/news {code}"),
+            (f"📈 估值",   f"/pe {code}"),
             (f"⭐ 自選",   f"/watch {code}"),
         ))]
     except Exception as e:
+        logger.warning(f"[cmd_quote] {e}")
         return [_text("❌ 報價查詢失敗，請稍後再試", qr_items(("📊 大盤", "/market")))]
 
 
