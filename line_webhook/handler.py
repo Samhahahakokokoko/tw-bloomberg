@@ -1995,8 +1995,8 @@ async def _cmd_rec_dispatch(uid: str) -> list:
     async with AsyncSessionLocal() as db:
         holdings = await portfolio_service.get_portfolio(db, uid)
     if not holdings:
-        return [_text("庫存為空，先 /buy 新增持股再取得推薦",
-                      qr_items(("新增示範", "/buy 2330 1000 850")))]
+        # 無庫存：直接跑全維度選股
+        return await _cmd_report("all", uid)
     try:
         recs = await asyncio.wait_for(recommend_for_portfolio(holdings), timeout=25)
         if not recs:
@@ -2545,10 +2545,27 @@ async def _cmd_subscribe(uid: str) -> TextMessage:
             r = await db.execute(select(Subscriber).where(Subscriber.line_user_id == uid))
             sub = r.scalar_one_or_none()
             if sub:
-                return _text("您已訂閱（早報 08:30 ＋ 週五週報）",
-                             qr_items(("取消訂閱", "/unsubscribe")))
+                return _text(
+                    "✅ 您已訂閱每日推播\n\n"
+                    "平日推送時間：\n"
+                    "  08:30 早報 + 選股\n"
+                    "  08:45 自選股晨報（RSI）\n"
+                    "  08:47 大盤情緒指數\n"
+                    "  15:05 產業強弱排行\n"
+                    "  週五 14:30 週報",
+                    qr_items(("取消訂閱", "/unsubscribe"), ("📋 自選股", "/watchlist")),
+                )
             db.add(Subscriber(line_user_id=uid)); await db.commit()
-        return _text("✅ 訂閱成功！\n每天 08:30 早報\n每週五 14:30 週報", _home_qr())
+        return _text(
+            "✅ 訂閱成功！\n\n"
+            "平日推送時間：\n"
+            "  08:30 早報 + 選股\n"
+            "  08:45 自選股晨報（RSI）\n"
+            "  08:47 大盤情緒指數\n"
+            "  15:05 產業強弱排行\n"
+            "  週五 14:30 週報",
+            qr_items(("📋 自選股", "/watchlist"), ("🔔 設定警報", "/alert_guide")),
+        )
     except Exception as e:
         return _text(f"❌ {e}")
 
