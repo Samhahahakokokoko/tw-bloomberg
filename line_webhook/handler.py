@@ -2724,6 +2724,13 @@ def _help_text() -> str:
         "/chip 2330    三大法人近 5 日\n"
         "/test 2330 RSI   簡易回測\n"
         "/test 2330 MACD  MACD 回測\n"
+        "\n📡 智慧警報 & 情緒\n"
+        "/sentiment       大盤情緒指數（0-100）\n"
+        "/watchlist       自選股（含RSI & 訊號）\n"
+        "/watch 代碼      加入自選股\n"
+        "/alerts          我的警報清單\n"
+        "/alert 代碼 buy 買價 stop 停損 target 目標\n"
+        "/optimize 代碼 RSI  RSI 參數優化（3年回測）\n"
     )
 
 
@@ -3526,42 +3533,51 @@ def _run_rsi_optimizer(code: str) -> str:
     if len(df) < 60:
         return f"❌ {code} 資料不足"
 
+    import numpy as np
     close = df["Close"]
+    close_arr = close.values.astype(float)
     best = {"return": -999, "params": None, "win_rate": 0, "trades": 0}
 
     windows = [7, 10, 14, 21]
     oversolds = [20, 25, 30, 35]
     overboughts = [65, 70, 75, 80]
 
-    for window, oversold, overbought in itertools.product(windows, oversolds, overboughts):
-        rsi = ta_lib.momentum.RSIIndicator(close, window=window).rsi()
-        signal = pd.Series(0, index=df.index)
-        signal[rsi < oversold] = 1
-        signal[rsi > overbought] = -1
+    # Pre-compute RSI for each window (reuse across oversold/overbought combos)
+    rsi_cache: dict[int, np.ndarray] = {}
+    for w in windows:
+        rsi_s = ta_lib.momentum.RSIIndicator(close, window=w).rsi()
+        rsi_cache[w] = rsi_s.values
 
+    for window, oversold, overbought in itertools.product(windows, oversolds, overboughts):
+        rsi_arr = rsi_cache[window]
+        buy_sig  = (rsi_arr < oversold).astype(int)
+        sell_sig = (rsi_arr > overbought).astype(int)
+
+        # Vectorized backtest: simulate buy-on-oversold / sell-on-overbought
         capital, position, entry_px = 1_000_000.0, 0, 0.0
-        trades = []
-        for date, row in df.iterrows():
-            sig = signal.get(date, 0)
-            px = float(row["Close"])
-            if sig == 1 and position == 0:
+        wins, total_trades = 0, 0
+        for i in range(len(close_arr)):
+            px = close_arr[i]
+            if buy_sig[i] and position == 0:
                 position = int(capital / px)
                 entry_px = px
                 capital -= position * px
-            elif sig == -1 and position > 0:
+            elif sell_sig[i] and position > 0:
                 pnl = position * (px - entry_px)
-                trades.append({"ret": (px - entry_px) / entry_px, "pnl": pnl})
+                if pnl > 0:
+                    wins += 1
+                total_trades += 1
                 capital += position * px
                 position = 0
 
-        final_px = float(df["Close"].iloc[-1])
+        final_px = close_arr[-1]
         total_val = capital + position * final_px
         total_ret = (total_val - 1_000_000) / 1_000_000 * 100
-        win_rate = sum(1 for t in trades if t["pnl"] > 0) / len(trades) * 100 if trades else 0
+        win_rate = wins / total_trades * 100 if total_trades else 0
 
         if total_ret > best["return"]:
             best = {"return": total_ret, "params": (window, oversold, overbought),
-                    "win_rate": win_rate, "trades": len(trades)}
+                    "win_rate": win_rate, "trades": total_trades}
 
     if not best["params"]:
         return "❌ 無法找到最佳參數"
