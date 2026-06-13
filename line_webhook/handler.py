@@ -1697,17 +1697,21 @@ async def _cmd_alert_list(uid: str) -> list:
         "change_pct_above": "%", "change_pct_below": "%",
     }
 
-    # Batch-fetch current prices (best-effort, skip on failure)
+    # Batch-fetch current prices in parallel (best-effort)
+    import asyncio as _asyncio
     prices: dict[str, float] = {}
-    codes = list({a.stock_code for a in alerts})
-    for code in codes[:8]:
+    codes = list({a.stock_code for a in alerts})[:8]
+
+    async def _safe_price(c):
         try:
-            q = await fetch_realtime_quote(code)
+            q = await fetch_realtime_quote(c)
             p = q.get("price") or q.get("close") or 0
-            if p:
-                prices[code] = float(p)
-        except Exception as e:
-            pass
+            return c, float(p) if p else 0.0
+        except Exception:
+            return c, 0.0
+
+    results = await _asyncio.gather(*[_safe_price(c) for c in codes])
+    prices = {c: p for c, p in results if p > 0}
 
     lines = [f"🔔 我的警報（{len(alerts)} 個）", "─" * 20]
     for a in alerts[:10]:
