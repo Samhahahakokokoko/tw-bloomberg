@@ -159,8 +159,8 @@ async def push_daily_watchlist_reports():
 
 def _build_watchlist_qr(results: list[dict]) -> dict:
     items = []
-    # 加入個股分析按鈕（最多 4 檔）
-    for r in results[:4]:
+    # 加入個股分析按鈕（最多 3 檔，留空間給工具按鈕）
+    for r in results[:3]:
         items.append({"type": "action", "action": {
             "type": "postback",
             "label": f"🔍{r['code']}",
@@ -168,7 +168,10 @@ def _build_watchlist_qr(results: list[dict]) -> dict:
             "displayText": f"分析 {r['code']}",
         }})
     items.append({"type": "action", "action": {
-        "type": "message", "label": "📋 完整清單", "text": "/watchlist",
+        "type": "message", "label": "🌡️ 情緒指數", "text": "/sentiment",
+    }})
+    items.append({"type": "action", "action": {
+        "type": "message", "label": "🔔 警報清單", "text": "/alerts",
     }})
     items.append({"type": "action", "action": {
         "type": "postback", "label": "💼 看庫存",
