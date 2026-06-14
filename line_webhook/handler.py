@@ -563,6 +563,11 @@ async def _handle_text(text: str, uid: str) -> list:
     if cmd in ("/chart", "chart") and len(parts) >= 2:
         return await _cmd_chart(parts[1].upper(), uid)
     if cmd in ("/compare", "compare") and len(parts) >= 3:
+        codes = [p.upper() for p in parts[1:] if re.match(r'^\d{4,6}$', p)]
+        if len(codes) >= 3:
+            return await _cmd_compare_multi(codes[:5], uid)
+        if len(codes) >= 2:
+            return await _cmd_compare_v2(codes[0], codes[1], uid)
         return await _cmd_compare_v2(parts[1].upper(), parts[2].upper(), uid)
     if cmd in ("/odd", "odd") and len(parts) >= 2:
         arg1 = parts[1]
@@ -891,6 +896,26 @@ async def _handle_text(text: str, uid: str) -> list:
     if cmd in ("/score", "/hscore"):
         return [_text("格式：/score 股票代號\n例：/score 2330",
                       qr_items(("台積電", "/score 2330"), ("聯發科", "/score 2454")))]
+
+    # ── 7大新功能指令 ─────────────────────────────────────────────────────────
+    if cmd == "/factor":
+        code = parts[1].upper() if len(parts) > 1 else ""
+        return await _cmd_factor(code, uid) if code else [_text(
+            "格式：/factor 股票代號\n例：/factor 2330",
+            qr_items(("台積電", "/factor 2330"), ("聯發科", "/factor 2454"))
+        )]
+    if cmd == "/vol":
+        code = parts[1].upper() if len(parts) > 1 else ""
+        return await _cmd_vol(code, uid) if code else [_text(
+            "格式：/vol 股票代號\n例：/vol 2330",
+            qr_items(("台積電", "/vol 2330"), ("聯發科", "/vol 2454"))
+        )]
+    if cmd in ("/scan", "scan"):
+        return await _cmd_scan(uid)
+    if cmd == "/performance":
+        return await _cmd_personal_performance(uid)
+    if cmd == "/cycle":
+        return await _cmd_cycle(uid)
 
     # ── 選股系統 ──────────────────────────────────────────────────────────
     if cmd == "/screen":
@@ -2838,20 +2863,27 @@ async def _cmd_news_feed(uid: str) -> list:
 
 
 async def _cmd_news_stock(code: str, uid: str) -> list:
-    """/news [股票代碼] — 個股相關新聞"""
+    """/news [股票代碼] — 個股新聞聚合（Yahoo/鉅亨/工商 + Claude情緒）"""
     try:
-        from scraper.news_scraper import get_stock_news, format_stock_news_for_line
-        quote = await fetch_realtime_quote(code)
-        name  = quote.get("name", code)
-        news  = await get_stock_news(code, name, limit=5)
-        msg   = format_stock_news_for_line(code, name, news)
-    except Exception as e:
-        logger.warning("[news_stock] {}", e)
-        msg = f"❌ 個股新聞查詢失敗：{type(e).__name__}"
-    return [_text(msg, qr_items(
+        from backend.services.enhanced_news_service import get_stock_news_enhanced, format_news_report
+        data = await get_stock_news_enhanced(code)
+        msg  = format_news_report(data)
+    except Exception as e_enhanced:
+        logger.warning("[news_stock_enhanced] {} — fallback to scraper", e_enhanced)
+        try:
+            from scraper.news_scraper import get_stock_news, format_stock_news_for_line
+            quote = await fetch_realtime_quote(code)
+            name  = quote.get("name", code)
+            news  = await get_stock_news(code, name, limit=5)
+            msg   = format_stock_news_for_line(code, name, news)
+        except Exception as e:
+            logger.warning("[news_stock] {}", e)
+            msg = f"❌ 個股新聞查詢失敗：{type(e).__name__}"
+    return [_text(msg[:5000], qr_items(
         ("📰 市場新聞", "/news"),
-        (f"📊 報價", f"/quote {code}"),
+        (f"📊 報價",   f"/quote {code}"),
         ("🤖 AI分析", f"/ai {code} 最新分析"),
+        ("📊 多因子",  f"/factor {code}"),
     ))]
 
 
@@ -7207,3 +7239,197 @@ async def _cmd_health_score(code: str, uid: str) -> list:
     except Exception as e:
         logger.error(f"[score] {code} error: {e}")
         return [_text(f"❌ 健康評分失敗：{e}")]
+
+
+# ── 功能 1: 多因子評分 ─────────────────────────────────────────────────────────
+
+async def _cmd_factor(code: str, uid: str) -> list:
+    """/factor CODE — 多因子評分（動能/價值/品質/籌碼）"""
+    try:
+        from backend.services.factor_model_service import get_factor_score, format_factor_report
+        data   = await get_factor_score(code)
+        report = format_factor_report(data)
+        return [_text(report[:4800], qr_items(
+            ("📈 波動率",   f"/vol {code}"),
+            ("🏦 籌碼",     f"/chip {code}"),
+            ("🤖 AI分析",   f"/ai {code}"),
+            ("📊 健康評分", f"/score {code}"),
+        ))]
+    except Exception as e:
+        logger.error(f"[factor] {code} error: {e}")
+        return [_text(f"❌ 因子評分失敗：{e}",
+                      qr_items(("重試", f"/factor {code}"), ("AI分析", f"/ai {code}")))]
+
+
+# ── 功能 2: 波動率分析 ─────────────────────────────────────────────────────────
+
+async def _cmd_vol(code: str, uid: str) -> list:
+    """/vol CODE — 波動率分析"""
+    try:
+        from backend.services.volatility_service import get_volatility_analysis, format_volatility_report
+        data   = await get_volatility_analysis(code)
+        report = format_volatility_report(data)
+        return [_text(report[:4800], qr_items(
+            ("📊 多因子",   f"/factor {code}"),
+            ("🏦 籌碼",     f"/chip {code}"),
+            ("📈 報價",     f"/quote {code}"),
+            ("🤖 AI分析",   f"/ai {code}"),
+        ))]
+    except Exception as e:
+        logger.error(f"[vol] {code} error: {e}")
+        return [_text(f"❌ 波動率分析失敗：{e}",
+                      qr_items(("重試", f"/vol {code}")))]
+
+
+# ── 功能 3: 多股票比較（3支以上）─────────────────────────────────────────────
+
+async def _cmd_compare_multi(codes: list[str], uid: str) -> list:
+    """/compare CODE1 CODE2 CODE3... — 多股比較"""
+    import asyncio
+    from backend.services.twse_service import fetch_realtime_quote, fetch_kline
+
+    async def _get_stock_data(code):
+        try:
+            q  = await fetch_realtime_quote(code)
+            kl = await fetch_kline(code)
+            closes = [float(k.get("close", 0) or 0) for k in (kl or []) if k.get("close")]
+            ret_1m = 0.0
+            if len(closes) >= 20:
+                ret_1m = (closes[-1] - closes[-20]) / closes[-20] * 100 if closes[-20] > 0 else 0
+            # RSI
+            rsi = _calc_rsi(closes)
+            return {
+                "code":    code,
+                "name":    q.get("name", code),
+                "price":   float(q.get("close") or q.get("price") or 0),
+                "chg":     float(q.get("change_pct") or 0),
+                "pe":      float(q.get("pe_ratio") or q.get("pe") or 0),
+                "ret_1m":  round(ret_1m, 2),
+                "rsi":     rsi,
+            }
+        except Exception:
+            return {"code": code, "name": code, "price": 0, "chg": 0, "pe": 0, "ret_1m": 0, "rsi": 50}
+
+    results = await asyncio.gather(*[_get_stock_data(c) for c in codes])
+
+    # 評分
+    best_score, best_code = -1, codes[0]
+    for r in results:
+        sc = 0
+        if r["chg"] > 0: sc += 1
+        if r["ret_1m"] > 0: sc += 1
+        if 0 < r["pe"] < 20: sc += 1
+        if 40 < r["rsi"] < 70: sc += 1
+        r["score"] = sc
+        if sc > best_score:
+            best_score = sc
+            best_code = r["code"]
+
+    lines = [
+        f"⚖️ 多股比較（{len(codes)} 支）",
+        "─" * 32,
+        "",
+        f"{'代碼':<6} {'公司':<6} {'價格':>8} {'漲跌':>7} {'月漲':>7} {'PE':>6} {'RSI':>5}",
+        "─" * 32,
+    ]
+    for r in results:
+        star = " ⭐" if r["code"] == best_code else ""
+        lines.append(
+            f"{r['code']:<6} {r['name'][:5]:<5} "
+            f"{r['price']:>8,.0f} "
+            f"{r['chg']:>+6.1f}% "
+            f"{r['ret_1m']:>+6.1f}% "
+            f"{r['pe']:>5.1f} "
+            f"{r['rsi']:>5.0f}"
+            f"{star}"
+        )
+
+    winner = next((r for r in results if r["code"] == best_code), results[0])
+    lines += [
+        "─" * 32,
+        f"",
+        f"🏆 AI推薦：{best_code} {winner['name']}",
+        f"   月漲幅 {winner['ret_1m']:+.1f}%，RSI {winner['rsi']:.0f}",
+        f"   PE {winner['pe']:.1f}，漲跌 {winner['chg']:+.2f}%",
+    ]
+
+    qr_args = []
+    for r in results[:4]:
+        qr_args.append((f"AI {r['code']}", f"/ai {r['code']}"))
+    return [_text("\n".join(lines)[:4800], qr_items(*qr_args))]
+
+
+def _calc_rsi(closes: list[float], period: int = 14) -> float:
+    if len(closes) < period + 1:
+        return 50.0
+    gains = losses = 0.0
+    for i in range(-period, 0):
+        diff = closes[i] - closes[i - 1]
+        if diff > 0: gains += diff
+        else: losses -= diff
+    if losses == 0:
+        return 100.0
+    rs = gains / losses
+    return round(100 - 100 / (1 + rs), 1)
+
+
+# ── 功能 4: 市場掃描器 ─────────────────────────────────────────────────────────
+
+async def _cmd_scan(uid: str) -> list:
+    """/scan — 手動觸發全市場掃描"""
+    try:
+        from backend.services.market_scan_service import run_market_scan, format_scan_report
+        data   = await run_market_scan()
+        report = format_scan_report(data)
+        return [_text(report[:4800], qr_items(
+            ("📊 大盤",   "/market"),
+            ("🎯 選股",   "/r"),
+            ("📈 早報",   "/morning"),
+            ("💼 庫存",   "/p"),
+        ))]
+    except Exception as e:
+        logger.error(f"[scan] error: {e}")
+        return [_text(f"❌ 市場掃描失敗：{e}",
+                      qr_items(("重試", "/scan"), ("大盤", "/market")))]
+
+
+# ── 功能 6: 個人績效追蹤 ───────────────────────────────────────────────────────
+
+async def _cmd_personal_performance(uid: str) -> list:
+    """/performance — 個人交易績效"""
+    try:
+        from backend.services.personal_performance_service import (
+            get_personal_performance, format_performance_report
+        )
+        data   = await get_personal_performance(uid)
+        report = format_performance_report(data)
+        return [_text(report[:4800], qr_items(
+            ("💼 庫存",   "/p"),
+            ("📊 分析",   "/analysis"),
+            ("🎯 選股",   "/r"),
+            ("📋 歷史",   "/history"),
+        ))]
+    except Exception as e:
+        logger.error(f"[performance] uid={uid} error: {e}")
+        return [_text(f"❌ 績效報告失敗：{e}",
+                      qr_items(("💼 庫存", "/p"), ("📊 分析", "/analysis")))]
+
+
+# ── 功能 7: 市場週期判斷 ───────────────────────────────────────────────────────
+
+async def _cmd_cycle(uid: str) -> list:
+    """/cycle — 判斷當前市場週期"""
+    try:
+        from backend.services.market_cycle_service import get_market_cycle, format_cycle_report
+        data   = await get_market_cycle()
+        report = format_cycle_report(data)
+        return [_text(report[:4800], qr_items(
+            ("📊 市場情緒", "/sentiment"),
+            ("📈 大盤",     "/market"),
+            ("🎯 選股",     "/r"),
+            ("📉 壓力測試", "/stress"),
+        ))]
+    except Exception as e:
+        logger.error(f"[cycle] error: {e}")
+        return [_text(f"❌ 市場週期判斷失敗：{e}",
+                      qr_items(("重試", "/cycle"), ("大盤", "/market")))]

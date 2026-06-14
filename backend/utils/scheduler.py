@@ -127,6 +127,13 @@ def start_scheduler() -> AsyncIOScheduler:
         id="watchlist_trigger", replace_existing=True,
     )
 
+    # 市場掃描器 — 盤中 10:00、12:00、14:00 各推播一次
+    scheduler.add_job(
+        _run_market_scan,
+        CronTrigger(day_of_week="mon-fri", hour="10,12,14", minute=0, timezone="Asia/Taipei"),
+        id="market_scan", replace_existing=True,
+    )
+
     # Alpha Pipeline — 18:00 Layer 1: 動能啟動掃描 + 資金流向
     scheduler.add_job(
         _run_pipeline_movers,
@@ -2048,3 +2055,14 @@ async def _push_daily_trade_plan():
         logger.info(f"[TradePlan] 每日交易計畫已推播 {len(subs)} 人")
     except Exception as e:
         logger.error(f"[TradePlan] job failed: {e}")
+
+
+async def _run_market_scan() -> None:
+    """盤中市場掃描 — 每天 10:00、12:00、14:00"""
+    try:
+        from ..services.market_scan_service import push_scan_to_subscribers
+        await push_scan_to_subscribers()
+        logger.info("[Scheduler] market_scan done")
+    except Exception as e:
+        logger.error(f"[Scheduler] market_scan failed: {e}")
+        await _push_failure_alert("market_scan", str(e))
