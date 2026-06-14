@@ -1060,6 +1060,57 @@ async def _handle_text(text: str, uid: str) -> list:
             return [_text("⛔ 此指令僅限管理員使用")]
         return await _cmd_show_fix_plan()
 
+    # ── 第四批 7 大新功能 ────────────────────────────────────────────────────
+    # 功能1: AI 選股競賽
+    if cmd in ("/contest", "/aicontest"):
+        return await _cmd_ai_contest(uid)
+    # 功能2: 風險報酬比計算器
+    if cmd in ("/rrr", "/rr"):
+        # /rrr 2330 100 95 115  or  /rrr 2330 100 95 115 0.6
+        if len(parts) >= 5:
+            code_arg = parts[1].upper()
+            try:
+                entry  = float(parts[2]); stop   = float(parts[3]); target = float(parts[4])
+                wr     = float(parts[5]) if len(parts) > 5 else 0.5
+                return await _cmd_rrr(code_arg, entry, stop, target, wr, uid)
+            except ValueError:
+                pass
+        return [_text(
+            "格式：/rrr 股票代號 進場價 停損價 目標價 [勝率]\n例：/rrr 2330 900 870 960 0.55",
+            qr_items(("示範 台積電", "/rrr 2330 900 870 960"),
+                     ("示範 聯發科", "/rrr 2454 1000 960 1100"))
+        )]
+    # 功能3: 特定產業新聞
+    if cmd in ("/industry", "/inews"):
+        ind = " ".join(parts[1:]).strip() if len(parts) > 1 else ""
+        return await _cmd_industry_news(ind, uid) if ind else [_text(
+            "格式：/industry 產業名稱\n支援：AI伺服器 半導體 電動車 航運 金融 生技 散熱電源 PCB 通訊 傳產鋼鐵",
+            qr_items(("AI伺服器", "/industry AI伺服器"), ("半導體", "/industry 半導體"),
+                     ("電動車", "/industry 電動車"), ("航運", "/industry 航運"))
+        )]
+    # 功能4: 台股月曆效應
+    if cmd in ("/calendar", "/caleffect"):
+        return await _cmd_calendar_effect(uid)
+    # 功能5: 個股價值評估
+    if cmd in ("/value", "/val"):
+        code = parts[1].upper() if len(parts) > 1 else ""
+        return await _cmd_value_assessment(code, uid) if code else [_text(
+            "格式：/value 股票代號\n例：/value 2330",
+            qr_items(("台積電", "/value 2330"), ("聯發科", "/value 2454"),
+                     ("鴻海", "/value 2317"), ("中鋼", "/value 2002"))
+        )]
+    # 功能6: 大戶追蹤
+    if cmd in ("/bigplayer", "/whale", "/big"):
+        code = parts[1].upper() if len(parts) > 1 else ""
+        return await _cmd_big_player(code, uid) if code else [_text(
+            "格式：/bigplayer 股票代號\n例：/bigplayer 2330",
+            qr_items(("台積電", "/bigplayer 2330"), ("聯發科", "/bigplayer 2454"),
+                     ("鴻海", "/bigplayer 2317"), ("聯電", "/bigplayer 2303"))
+        )]
+    # 功能7: 每月績效月報
+    if cmd in ("/monthly", "/monthreport"):
+        return await _cmd_monthly_report(uid)
+
     # ── 純數字 4-6 碼 → 直接查報價 ─────────────────────────────────────────
     t = text.strip()
     if t.isdigit() and 4 <= len(t) <= 6:
@@ -7841,3 +7892,135 @@ async def _cmd_portfolio_suggest(uid: str) -> list:
         logger.error(f"[portfolio_suggest] uid={uid} error: {e}")
         return [_text(f"❌ 投資組合建議失敗：{e}",
                       qr_items(("重試", "/suggest"), ("庫存", "/p")))]
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 第四批 7 大新功能 handler functions
+# ══════════════════════════════════════════════════════════════════════════════
+
+async def _cmd_ai_contest(uid: str) -> list:
+    try:
+        from backend.services.ai_contest_service import (
+            get_or_create_contest, format_contest_report
+        )
+        data   = await get_or_create_contest()
+        report = format_contest_report(data)
+        return [_text(report[:4800], qr_items(
+            ("📊 市場情緒",  "/psychology"),
+            ("🔥 動能排行",  "/momentum"),
+            ("💎 個股估值",  "/value 2330"),
+            ("📅 月曆效應",  "/calendar"),
+        ))]
+    except Exception as e:
+        logger.error(f"[ai_contest] uid={uid} error: {e}")
+        return [_text(f"❌ AI 競賽失敗：{e}", qr_items(("重試", "/contest")))]
+
+
+async def _cmd_rrr(code: str, entry: float, stop: float,
+                   target: float, win_rate: float, uid: str) -> list:
+    try:
+        from backend.services.rrr_service import calc_rrr, format_rrr_report
+        result = calc_rrr(code, entry, stop, target, win_rate)
+        report = format_rrr_report(result)
+        return [_text(report[:4800], qr_items(
+            ("📊 個股分析",  f"/factor {code}"),
+            ("💎 估值評估",  f"/value {code}"),
+            ("🐋 大戶追蹤",  f"/bigplayer {code}"),
+            ("📅 月曆效應",  "/calendar"),
+        ))]
+    except Exception as e:
+        logger.error(f"[rrr] {code} error: {e}")
+        return [_text(f"❌ RRR 計算失敗：{e}", qr_items(("說明", "/rrr")))]
+
+
+async def _cmd_industry_news(industry: str, uid: str) -> list:
+    try:
+        from backend.services.industry_news_service import (
+            get_industry_news, format_industry_news
+        )
+        data   = await get_industry_news(industry)
+        report = format_industry_news(data)
+        return [_text(report[:4800], qr_items(
+            ("AI伺服器",  "/industry AI伺服器"),
+            ("半導體",    "/industry 半導體"),
+            ("電動車",    "/industry 電動車"),
+            ("航運",      "/industry 航運"),
+        ))]
+    except Exception as e:
+        logger.error(f"[industry_news] {industry} error: {e}")
+        return [_text(f"❌ 產業新聞失敗：{e}",
+                      qr_items(("重試", f"/industry {industry}")))]
+
+
+async def _cmd_calendar_effect(uid: str) -> list:
+    try:
+        from backend.services.calendar_effect_service import (
+            get_calendar_effect, format_calendar_report
+        )
+        data   = await get_calendar_effect()
+        report = format_calendar_report(data)
+        return [_text(report[:4800], qr_items(
+            ("🧠 心理分析",  "/psychology"),
+            ("📰 產業新聞",  "/industry 半導體"),
+            ("🌐 資金輪動",  "/rotation"),
+            ("📊 動能排行",  "/momentum"),
+        ))]
+    except Exception as e:
+        logger.error(f"[calendar] uid={uid} error: {e}")
+        return [_text(f"❌ 月曆效應失敗：{e}", qr_items(("重試", "/calendar")))]
+
+
+async def _cmd_value_assessment(code: str, uid: str) -> list:
+    try:
+        from backend.services.value_assessment_service import (
+            get_value_assessment, format_value_report
+        )
+        data   = await get_value_assessment(code)
+        report = format_value_report(data)
+        return [_text(report[:4800], qr_items(
+            ("📊 因子分析",  f"/factor {code}"),
+            ("🐋 大戶追蹤",  f"/bigplayer {code}"),
+            ("⚖️ RRR計算",   f"/rrr {code} 100 95 115"),
+            ("📈 季報EPS",   f"/eps {code}"),
+        ))]
+    except Exception as e:
+        logger.error(f"[value] {code} error: {e}")
+        return [_text(f"❌ 估值評估失敗：{e}",
+                      qr_items(("台積電", "/value 2330"), ("重試", f"/value {code}")))]
+
+
+async def _cmd_big_player(code: str, uid: str) -> list:
+    try:
+        from backend.services.big_player_service import (
+            get_big_player, format_big_player_report
+        )
+        data   = await get_big_player(code)
+        report = format_big_player_report(data)
+        return [_text(report[:4800], qr_items(
+            ("📊 因子分析",  f"/factor {code}"),
+            ("💎 估值評估",  f"/value {code}"),
+            ("📈 季報EPS",   f"/eps {code}"),
+            ("🐋 法人動向",  f"/institutional {code}"),
+        ))]
+    except Exception as e:
+        logger.error(f"[bigplayer] {code} error: {e}")
+        return [_text(f"❌ 大戶追蹤失敗：{e}",
+                      qr_items(("台積電", "/bigplayer 2330"), ("重試", f"/bigplayer {code}")))]
+
+
+async def _cmd_monthly_report(uid: str) -> list:
+    try:
+        from backend.services.monthly_report_service import (
+            get_monthly_report, format_monthly_report
+        )
+        data   = await get_monthly_report()
+        report = format_monthly_report(data)
+        return [_text(report[:4800], qr_items(
+            ("💼 我的庫存",  "/p"),
+            ("📊 週報",      "/weekly"),
+            ("🌐 資金輪動",  "/rotation"),
+            ("📅 月曆效應",  "/calendar"),
+        ))]
+    except Exception as e:
+        logger.error(f"[monthly] uid={uid} error: {e}")
+        return [_text(f"❌ 月報生成失敗：{e}", qr_items(("重試", "/monthly")))]

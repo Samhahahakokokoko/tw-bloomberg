@@ -169,6 +169,31 @@ def start_scheduler() -> AsyncIOScheduler:
         id="vix_alert", replace_existing=True,
     )
 
+    # 第四批排程 ─────────────────────────────────────────────────────────────
+    # AI 選股競賽 — 週一 07:00 選股，週五 15:35 評分
+    scheduler.add_job(
+        _run_ai_contest_pick,
+        CronTrigger(day_of_week="mon", hour=7, minute=0, timezone="Asia/Taipei"),
+        id="ai_contest_pick", replace_existing=True,
+    )
+    scheduler.add_job(
+        _run_ai_contest_score,
+        CronTrigger(day_of_week="fri", hour=15, minute=35, timezone="Asia/Taipei"),
+        id="ai_contest_score", replace_existing=True,
+    )
+    # 產業新聞早報 — 週一至五 08:20 推播
+    scheduler.add_job(
+        _run_industry_news_morning,
+        CronTrigger(day_of_week="mon-fri", hour=8, minute=20, timezone="Asia/Taipei"),
+        id="industry_news_morning", replace_existing=True,
+    )
+    # 每月績效月報 — 每日 15:40 判斷是否為月底最後交易日
+    scheduler.add_job(
+        _run_monthly_report_check,
+        CronTrigger(day_of_week="mon-fri", hour=15, minute=40, timezone="Asia/Taipei"),
+        id="monthly_report_check", replace_existing=True,
+    )
+
     # Alpha Pipeline — 18:00 Layer 1: 動能啟動掃描 + 資金流向
     scheduler.add_job(
         _run_pipeline_movers,
@@ -2188,3 +2213,56 @@ async def _run_vix_alert() -> None:
             logger.info(f"[Scheduler] vix_alert: VIX={us_vix}")
     except Exception as e:
         logger.error(f"[Scheduler] vix_alert failed: {e}")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 第四批排程 runner functions
+# ══════════════════════════════════════════════════════════════════════════════
+
+async def _run_ai_contest_pick() -> None:
+    """AI 選股競賽 — 週一早晨選股"""
+    try:
+        from ..services.ai_contest_service import get_or_create_contest, format_contest_report
+        from ..services.line_push import push_to_admin
+        data   = await get_or_create_contest()
+        report = format_contest_report(data)
+        await push_to_admin(f"🤖 本週 AI 選股競賽開賽！\n\n{report[:2000]}")
+        logger.info("[Scheduler] ai_contest_pick done")
+    except Exception as e:
+        logger.error(f"[Scheduler] ai_contest_pick failed: {e}")
+
+
+async def _run_ai_contest_score() -> None:
+    """AI 選股競賽 — 週五評分"""
+    try:
+        from ..services.ai_contest_service import score_and_update_results, format_contest_report
+        from ..services.line_push import push_to_admin
+        data   = await score_and_update_results()
+        report = format_contest_report(data)
+        await push_to_admin(f"🏆 本週 AI 競賽結果出爐！\n\n{report[:2000]}")
+        logger.info("[Scheduler] ai_contest_score done")
+    except Exception as e:
+        logger.error(f"[Scheduler] ai_contest_score failed: {e}")
+
+
+async def _run_industry_news_morning() -> None:
+    """產業新聞早報推播 — 週一至五 08:20"""
+    try:
+        from ..services.industry_news_service import push_daily_industry_summary
+        pushed = await push_daily_industry_summary()
+        logger.info(f"[Scheduler] industry_news_morning: pushed {pushed}")
+    except Exception as e:
+        logger.error(f"[Scheduler] industry_news_morning failed: {e}")
+
+
+async def _run_monthly_report_check() -> None:
+    """每月底最後交易日推播月報"""
+    try:
+        from ..services.monthly_report_service import (
+            is_last_trading_day_of_month, push_monthly_report
+        )
+        if is_last_trading_day_of_month():
+            ok = await push_monthly_report()
+            logger.info(f"[Scheduler] monthly_report pushed: {ok}")
+    except Exception as e:
+        logger.error(f"[Scheduler] monthly_report_check failed: {e}")
