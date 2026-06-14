@@ -703,7 +703,13 @@ async def _handle_text(text: str, uid: str) -> list:
     if cmd == "/accuracy":                      return await _cmd_accuracy()
     if cmd == "/advice":                        return await _cmd_daily_advice()
     if cmd == "/broker"   and len(parts) >= 2:  return await _cmd_broker(parts[1])
-    if cmd == "/smart":                         return await _cmd_smart_money()
+    if cmd == "/smart":
+        # /smart CODE — 個股聰明錢追蹤
+        code = parts[1].upper() if len(parts) > 1 else ""
+        if code and re.match(r"^\d{4,6}$", code):
+            return await _cmd_smart_money_stock(code, uid)
+        # 無參數：市場整體聰明錢訊號
+        return await _cmd_smart_money()
     if cmd in ("/smart_screen", "/smartscreen"): return await _cmd_smart_screen(uid)
     if cmd in ("/corr", "/correlation_code") and len(parts) >= 2:
         return await _cmd_corr_code(parts[1].upper(), uid)
@@ -735,8 +741,25 @@ async def _handle_text(text: str, uid: str) -> list:
 
     # ── 新功能指令 ────────────────────────────────────────────────────────
     if cmd == "/watch":
+        sub = parts[1].lower() if len(parts) > 1 else ""
+        # /watch add CODE SUPPORT RESIST — 設定警戒區間
+        if sub == "add" and len(parts) >= 5:
+            code = parts[2].upper()
+            try:
+                support    = float(parts[3])
+                resistance = float(parts[4])
+                return await _cmd_watch_zone_set(code, uid, support, resistance)
+            except ValueError:
+                return [_text("格式：/watch add 代碼 支撐價 壓力價\n例：/watch add 2330 800 1000")]
+        # /watch del CODE — 移除警戒區間
+        if sub == "del" and len(parts) >= 3:
+            return await _cmd_watch_zone_del(parts[2].upper(), uid)
+        # /watch list — 查看警戒區間清單
+        if sub in ("list", "zones"):
+            return await _cmd_watch_zone_list(uid)
+        # 原有邏輯：/watch CODE
         code = parts[1].upper() if len(parts) > 1 else ""
-        if code:
+        if code and re.match(r"^\d{4,6}$", code):
             sl = tp = None
             for _p in parts[2:]:
                 _pl = _p.lower()
@@ -748,13 +771,45 @@ async def _handle_text(text: str, uid: str) -> list:
                     except ValueError: pass
             return await _cmd_watch_add(code, uid, stop_loss=sl, target_price=tp)
         return [_text(
-            "請輸入股票代碼，例：/watch 2330\n加停損停利：/watch 2330 sl=800 tp=950",
-            qr_items(("加入台積電", "/watch 2330"), ("查看清單", "/watchlist"))
+            "自選股指令：\n"
+            "/watch 代碼 — 加入自選股\n"
+            "/watch add 代碼 支撐 壓力 — 設定警戒區間\n"
+            "/watch del 代碼 — 移除警戒區間\n"
+            "/watch list — 查看警戒區間\n"
+            "例：/watch add 2330 800 1000",
+            qr_items(("加入台積電", "/watch 2330"), ("警戒設定", "/watch add 2330 800 1000"),
+                     ("查看清單", "/watchlist"), ("區間清單", "/watch list"))
         )]
     if cmd == "/watchlist":             return await _cmd_watchlist(uid)
     if cmd == "/unwatch":
         code = parts[1].upper() if len(parts) > 1 else ""
         return await _cmd_watch_remove(code, uid) if code else [_text("請輸入要移除的代碼")]
+
+    # ── 7大新功能指令（第二批）────────────────────────────────────────────
+    # 功能1: 籌碼地圖（產業資金流向文字熱力圖）
+    if cmd in ("/sectorflow", "/flow2", "/fundflow"):
+        return await _cmd_sector_flow(uid)
+    # 功能2: 主力成本追蹤
+    if cmd == "/cost":
+        code = parts[1].upper() if len(parts) > 1 else ""
+        return await _cmd_main_cost(code, uid) if code else [_text(
+            "格式：/cost 股票代號\n例：/cost 2330",
+            qr_items(("台積電", "/cost 2330"), ("聯發科", "/cost 2454"))
+        )]
+    # 功能4: 法說會
+    if cmd in ("/conf", "/conference"):
+        return await _cmd_conference(uid)
+    # 功能5: 外資期貨
+    if cmd in ("/futures", "/fut"):
+        return await _cmd_futures(uid)
+    # 功能6: 個股評級
+    if cmd == "/rating":
+        code = parts[1].upper() if len(parts) > 1 else ""
+        return await _cmd_rating(code, uid) if code else [_text(
+            "格式：/rating 股票代號\n例：/rating 2330",
+            qr_items(("台積電", "/rating 2330"), ("聯發科", "/rating 2454"),
+                     ("聯電", "/rating 2303"), ("鴻海", "/rating 2317"))
+        )]
     if cmd == "/rs":                    return await _cmd_rs(uid)
     if cmd == "/breadth":               return await _cmd_breadth(uid)
     if cmd == "/journal":
@@ -763,7 +818,11 @@ async def _handle_text(text: str, uid: str) -> list:
     if cmd == "/review":                return await _cmd_review(uid)
     if cmd == "/manage":                return await _cmd_manage(uid)
     if cmd == "/exposure":              return await _cmd_exposure(uid)
-    if cmd == "/heatmap":               return await _cmd_heatmap(uid)
+    if cmd == "/heatmap":
+        # /heatmap flow — 文字產業資金流向版
+        if len(parts) > 1 and parts[1].lower() in ("flow", "sector", "fund"):
+            return await _cmd_sector_flow(uid)
+        return await _cmd_heatmap(uid)
     if cmd == "/insider":
         code = parts[1].upper() if len(parts) > 1 else ""
         return await _cmd_insider(code, uid) if code else [_text(
@@ -7433,3 +7492,174 @@ async def _cmd_cycle(uid: str) -> list:
         logger.error(f"[cycle] error: {e}")
         return [_text(f"❌ 市場週期判斷失敗：{e}",
                       qr_items(("重試", "/cycle"), ("大盤", "/market")))]
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 第二批 7 大新功能
+# ══════════════════════════════════════════════════════════════════════════════
+
+# ── 功能 1: 籌碼地圖（產業資金流向文字熱力圖）────────────────────────────────
+
+async def _cmd_sector_flow(uid: str) -> list:
+    """/heatmap flow 或 /sectorflow — 產業籌碼地圖"""
+    try:
+        from backend.services.sector_flow_service import get_sector_flow, format_sector_flow_text
+        data   = await get_sector_flow()
+        report = format_sector_flow_text(data)
+        return [_text(report[:4800], qr_items(
+            ("📊 外資期貨", "/futures"),
+            ("🔄 市場週期", "/cycle"),
+            ("📈 大盤",     "/market"),
+            ("🎯 選股",     "/r"),
+        ))]
+    except Exception as e:
+        logger.error(f"[sector_flow] error: {e}")
+        return [_text(f"❌ 產業籌碼地圖失敗：{e}",
+                      qr_items(("重試", "/heatmap flow"), ("大盤", "/market")))]
+
+
+# ── 功能 2: 主力成本追蹤 ──────────────────────────────────────────────────────
+
+async def _cmd_main_cost(code: str, uid: str) -> list:
+    """/cost CODE — 估算主力平均成本區"""
+    try:
+        from backend.services.main_cost_service import get_main_cost, format_main_cost_report
+        data   = await get_main_cost(code)
+        report = format_main_cost_report(data)
+        return [_text(report[:4800], qr_items(
+            ("🕵️ 聰明錢",  f"/smart {code}"),
+            ("📊 多因子",   f"/factor {code}"),
+            ("🏦 籌碼",     f"/chip {code}"),
+            ("📈 報價",     f"/quote {code}"),
+        ))]
+    except Exception as e:
+        logger.error(f"[main_cost] {code} error: {e}")
+        return [_text(f"❌ 主力成本分析失敗：{e}",
+                      qr_items(("重試", f"/cost {code}")))]
+
+
+# ── 功能 3: 股價警戒區間（/watch add/del/list）────────────────────────────────
+
+async def _cmd_watch_zone_set(code: str, uid: str, support: float, resistance: float) -> list:
+    """/watch add CODE SUPPORT RESIST — 設定警戒區間"""
+    try:
+        from backend.services.price_alert_zone_service import set_price_zone
+        zone = set_price_zone(uid, code, support, resistance)
+        return [_text(
+            f"✅ 警戒區間已設定\n"
+            f"{code}\n"
+            f"支撐位：{support:,.0f}\n"
+            f"壓力位：{resistance:,.0f}\n\n"
+            f"系統將在股價進入 ±3% 範圍時推播（每天最多一次）",
+            qr_items(("查看清單", "/watch list"), ("🔍 報價", f"/quote {code}"),
+                     ("主力成本", f"/cost {code}"), ("移除設定", f"/watch del {code}"))
+        )]
+    except Exception as e:
+        logger.error(f"[watch_zone_set] {code} error: {e}")
+        return [_text(f"❌ 設定失敗：{e}")]
+
+
+async def _cmd_watch_zone_del(code: str, uid: str) -> list:
+    """/watch del CODE — 移除警戒區間"""
+    try:
+        from backend.services.price_alert_zone_service import remove_zone
+        ok = remove_zone(uid, code)
+        msg = f"🗑️ {code} 警戒區間已移除" if ok else f"❌ {code} 沒有設定警戒區間"
+        return [_text(msg, qr_items(("查看清單", "/watch list"), ("重新設定", f"/watch add {code} 0 0")))]
+    except Exception as e:
+        return [_text(f"❌ 移除失敗：{e}")]
+
+
+async def _cmd_watch_zone_list(uid: str) -> list:
+    """/watch list — 查看所有警戒區間"""
+    try:
+        from backend.services.price_alert_zone_service import format_zones_report
+        report = format_zones_report(uid)
+        return [_text(report, qr_items(
+            ("自選股", "/watchlist"),
+            ("新增區間", "/watch add 2330 800 1000"),
+        ))]
+    except Exception as e:
+        return [_text(f"❌ 查詢失敗：{e}")]
+
+
+# ── 功能 4: 法說會追蹤 ────────────────────────────────────────────────────────
+
+async def _cmd_conference(uid: str) -> list:
+    """/conf — 查看未來 2 週法說會日程"""
+    try:
+        from backend.services.conference_service import get_conferences, format_conference_list
+        confs  = await get_conferences(days_ahead=14)
+        report = format_conference_list(confs)
+        return [_text(report[:4800], qr_items(
+            ("📰 新聞",   "/news"),
+            ("📈 大盤",   "/market"),
+            ("🎯 選股",   "/r"),
+            ("📊 早報",   "/morning"),
+        ))]
+    except Exception as e:
+        logger.error(f"[conf] error: {e}")
+        return [_text(f"❌ 法說會資料取得失敗：{e}",
+                      qr_items(("重試", "/conf"), ("新聞", "/news")))]
+
+
+# ── 功能 5: 外資期貨部位追蹤 ─────────────────────────────────────────────────
+
+async def _cmd_futures(uid: str) -> list:
+    """/futures — 外資台指期貨多空部位"""
+    try:
+        from backend.services.futures_tracking_service import get_futures_data, format_futures_report
+        data   = await get_futures_data()
+        report = format_futures_report(data)
+        return [_text(report[:4800], qr_items(
+            ("📊 市場週期", "/cycle"),
+            ("🌡️ 籌碼地圖", "/heatmap flow"),
+            ("📈 大盤",     "/market"),
+            ("😰 情緒指數", "/euphoria"),
+        ))]
+    except Exception as e:
+        logger.error(f"[futures] error: {e}")
+        return [_text(f"❌ 外資期貨資料取得失敗：{e}",
+                      qr_items(("重試", "/futures"), ("大盤", "/market")))]
+
+
+# ── 功能 6: 個股評級 ──────────────────────────────────────────────────────────
+
+async def _cmd_rating(code: str, uid: str) -> list:
+    """/rating CODE — 查詢個股評級"""
+    try:
+        from backend.services.stock_rating_service import get_stock_rating, format_rating_report
+        data   = await get_stock_rating(code)
+        report = format_rating_report(data)
+        return [_text(report[:4800], qr_items(
+            ("📊 多因子",   f"/factor {code}"),
+            ("💰 主力成本", f"/cost {code}"),
+            ("🕵️ 聰明錢",  f"/smart {code}"),
+            ("🤖 AI分析",   f"/ai {code}"),
+        ))]
+    except Exception as e:
+        logger.error(f"[rating] {code} error: {e}")
+        return [_text(f"❌ 評級查詢失敗：{e}",
+                      qr_items(("重試", f"/rating {code}")))]
+
+
+# ── 功能 7: 聰明錢追蹤（個股版）─────────────────────────────────────────────
+
+async def _cmd_smart_money_stock(code: str, uid: str) -> list:
+    """/smart CODE — 個股聰明錢動向追蹤"""
+    try:
+        from backend.services.smart_money_stock_service import (
+            get_smart_money, format_smart_money_report
+        )
+        data   = await get_smart_money(code)
+        report = format_smart_money_report(data)
+        return [_text(report[:4800], qr_items(
+            ("💰 主力成本", f"/cost {code}"),
+            ("📊 多因子",   f"/factor {code}"),
+            ("⭐ 評級",     f"/rating {code}"),
+            ("🏦 籌碼",     f"/chip {code}"),
+        ))]
+    except Exception as e:
+        logger.error(f"[smart_stock] {code} error: {e}")
+        return [_text(f"❌ 聰明錢分析失敗：{e}",
+                      qr_items(("重試", f"/smart {code}")))]

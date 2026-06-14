@@ -134,6 +134,27 @@ def start_scheduler() -> AsyncIOScheduler:
         id="market_scan", replace_existing=True,
     )
 
+    # 股價預警區間掃描 — 盤中每 30 分鐘
+    scheduler.add_job(
+        _run_price_zone_alert,
+        CronTrigger(day_of_week="mon-fri", hour="9-13", minute="*/30", timezone="Asia/Taipei"),
+        id="price_zone_alert", replace_existing=True,
+    )
+
+    # 法說會提醒推播 — 每日 08:00
+    scheduler.add_job(
+        _run_conference_reminder,
+        CronTrigger(day_of_week="mon-fri", hour=8, minute=5, timezone="Asia/Taipei"),
+        id="conference_reminder", replace_existing=True,
+    )
+
+    # 自選股週度評級更新 — 每週一 07:30
+    scheduler.add_job(
+        _run_weekly_rating_update,
+        CronTrigger(day_of_week="mon", hour=7, minute=30, timezone="Asia/Taipei"),
+        id="weekly_rating", replace_existing=True,
+    )
+
     # Alpha Pipeline — 18:00 Layer 1: 動能啟動掃描 + 資金流向
     scheduler.add_job(
         _run_pipeline_movers,
@@ -2066,3 +2087,64 @@ async def _run_market_scan() -> None:
     except Exception as e:
         logger.error(f"[Scheduler] market_scan failed: {e}")
         await _push_failure_alert("market_scan", str(e))
+
+
+async def _run_price_zone_alert() -> None:
+    """股價警戒區間掃描 — 盤中每 30 分鐘"""
+    try:
+        from ..services.price_alert_zone_service import scan_and_alert
+        n = await scan_and_alert()
+        if n:
+            logger.info(f"[Scheduler] price_zone_alert: pushed {n}")
+    except Exception as e:
+        logger.error(f"[Scheduler] price_zone_alert failed: {e}")
+
+
+async def _run_conference_reminder() -> None:
+    """法說會提醒推播 — 每日 08:05"""
+    try:
+        from ..services.conference_service import check_and_push_reminders
+        n = await check_and_push_reminders()
+        if n:
+            logger.info(f"[Scheduler] conference_reminder: pushed {n}")
+    except Exception as e:
+        logger.error(f"[Scheduler] conference_reminder failed: {e}")
+
+
+async def _run_weekly_rating_update() -> None:
+    """自選股週度評級更新 — 每週一 07:30"""
+    try:
+        from ..services.stock_rating_service import update_watchlist_ratings
+        from ..services.line_push import get_all_user_ids, push_to_user
+        from ..services.stock_rating_service import format_rating_report
+
+        # 取得所有活躍用戶
+        try:
+            uids = await get_all_user_ids()
+        except Exception:
+            uids = []
+
+        updated = 0
+        for uid in uids[:50]:  # 最多 50 個用戶
+            try:
+                ratings = await update_watchlist_ratings(uid)
+                if ratings:
+                    # 只推播評級改變為強力買進/賣出的股票
+                    alerts = [r for r in ratings
+                              if r.get("rating") in ("強力買進", "賣出")]
+                    if alerts:
+                        lines = ["📊 週度評級更新", "─" * 20, ""]
+                        for r in alerts[:5]:
+                            lines.append(
+                                f"{r['icon']} {r['code']} {r['name']}  "
+                                f"【{r['rating']}】 {r['composite']:.0f}分"
+                            )
+                        lines += ["", "輸入 /rating 代碼 查看詳細分析"]
+                        await push_to_user(uid, "\n".join(lines))
+                        updated += 1
+            except Exception as e:
+                logger.debug(f"[weekly_rating] uid={uid}: {e}")
+
+        logger.info(f"[Scheduler] weekly_rating_update done, alerted {updated} users")
+    except Exception as e:
+        logger.error(f"[Scheduler] weekly_rating_update failed: {e}")
