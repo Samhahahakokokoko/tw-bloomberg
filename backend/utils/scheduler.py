@@ -5,6 +5,7 @@ import os
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from loguru import logger
+import re
 from ..models.database import AsyncSessionLocal
 from ..services.line_push import push_line_messages
 
@@ -2046,7 +2047,7 @@ async def _push_daily_trade_plan():
                     df = ticker.history(period="2d")
                     close = round(float(df["Close"].iloc[-1]), 1) if not df.empty else 0.0
                     scored.append((sc, c, close))
-                except Exception:
+                except Exception as e:
                     scored.append((50, c, 0.0))
             return sorted(scored, reverse=True)
 
@@ -2066,7 +2067,7 @@ async def _push_daily_trade_plan():
                 mkt_dir, pos_pct = "📉 大盤偏空（0050跌破5日均）", "三成"
             else:
                 mkt_dir, pos_pct = "➡️ 大盤震盪（0050貼近5日均）", "五成"
-        except Exception:
+        except Exception as e:
             mkt_dir, pos_pct = "⚠️ 大盤方向無法判斷", "五成"
 
         # OPEX 提醒
@@ -2160,7 +2161,7 @@ async def _run_weekly_rating_update() -> None:
         # 取得所有活躍用戶
         try:
             uids = await get_all_user_ids()
-        except Exception:
+        except Exception as e:
             uids = []
 
         updated = 0

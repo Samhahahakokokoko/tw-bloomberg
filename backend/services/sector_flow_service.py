@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import time
 from loguru import logger
+import asyncio
 
 _cache: dict | None = None
 _cache_ts: float = 0.0
@@ -65,7 +66,7 @@ async def _calc_sector_flow() -> dict:
         try:
             from .twse_service import fetch_realtime_quote
             return await fetch_realtime_quote(code) or {}
-        except Exception:
+        except Exception as e:
             return {}
 
     tasks = [_sector_score(sec, codes) for sec, codes in SECTOR_STOCKS.items()]

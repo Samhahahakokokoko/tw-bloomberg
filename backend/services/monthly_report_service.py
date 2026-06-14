@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import time
 from loguru import logger
+import asyncio
+import re
 
 _cache: dict = {}
 _cache_ts: dict = {}
@@ -68,7 +70,7 @@ async def _get_market_summary() -> dict:
                     if len(closes) >= 2:
                         chg = (closes[-1] / closes[-2] - 1) * 100
                         results[name] = {"close": round(closes[-1], 2), "chg": round(chg, 2)}
-                except Exception:
+                except Exception as e:
                     continue
         return results
     except Exception as e:
@@ -81,7 +83,7 @@ async def _get_portfolio_perf() -> dict:
         from .performance_service import get_performance_summary
         perf = await get_performance_summary()
         return perf or {}
-    except Exception:
+    except Exception as e:
         pass
     try:
         from .portfolio_manager import get_portfolio_summary

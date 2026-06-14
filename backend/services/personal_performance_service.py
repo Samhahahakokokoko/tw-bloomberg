@@ -25,7 +25,7 @@ async def get_personal_performance(uid: str) -> dict:
                 select(TradeLog).where(TradeLog.user_id == uid)
             )
             trades = hist_result.scalars().all()
-        except Exception:
+        except Exception as e:
             trades = []
 
     # 取現價
@@ -91,7 +91,7 @@ async def _safe_quote(code: str) -> dict:
     try:
         from .twse_service import fetch_realtime_quote
         return await fetch_realtime_quote(code) or {}
-    except Exception:
+    except Exception as e:
         return {}
 
 
@@ -139,7 +139,7 @@ async def _get_benchmark_return() -> float:
             c1 = float(kl[-1].get("close")  or 0)
             if c0 > 0:
                 return round((c1 - c0) / c0 * 100, 2)
-    except Exception:
+    except Exception as e:
         pass
     return 0.0
 

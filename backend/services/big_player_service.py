@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import time
 from loguru import logger
+import asyncio
+import re
 
 _cache: dict = {}
 _cache_ts: dict = {}
@@ -89,7 +91,7 @@ async def _fetch_holder_distribution(code: str) -> dict:
                     mid_shares += shares
                 else:
                     small_shares += shares
-            except Exception:
+            except Exception as e:
                 continue
 
         if total_shares > 0:

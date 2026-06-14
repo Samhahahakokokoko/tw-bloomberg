@@ -4,6 +4,7 @@ from __future__ import annotations
 import math
 import time
 from loguru import logger
+import asyncio
 
 _cache: dict | None = None
 _cache_ts: float = 0.0
@@ -69,11 +70,11 @@ async def _safe_kline(code: str) -> list:
             return kl
         # fallback
         return await fetch_kline("0050") or []
-    except Exception:
+    except Exception as e:
         try:
             from .twse_service import fetch_kline
             return await fetch_kline("0050") or []
-        except Exception:
+        except Exception as e:
             return []
 
 
@@ -81,7 +82,7 @@ async def _safe_overview() -> dict:
     try:
         from .twse_service import fetch_market_overview
         return await fetch_market_overview() or {}
-    except Exception:
+    except Exception as e:
         return {}
 
 
@@ -89,7 +90,7 @@ async def _safe_sentiment() -> dict:
     try:
         from .market_sentiment import get_sentiment_score
         return await get_sentiment_score() or {}
-    except Exception:
+    except Exception as e:
         return {}
 
 

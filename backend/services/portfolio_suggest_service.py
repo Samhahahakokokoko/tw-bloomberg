@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import time
 from loguru import logger
+import asyncio
 
 _cache: dict = {}
 _cache_ts: dict = {}
@@ -143,14 +144,14 @@ async def _safe_cycle() -> dict:
     try:
         from .market_cycle_service import get_market_cycle
         return await get_market_cycle()
-    except Exception:
+    except Exception as e:
         return {}
 
 async def _safe_psychology() -> dict:
     try:
         from .psychology_service import get_market_psychology
         return await get_market_psychology()
-    except Exception:
+    except Exception as e:
         return {}
 
 async def _safe_sector() -> list:
@@ -158,7 +159,7 @@ async def _safe_sector() -> list:
         from .sector_flow_service import get_sector_flow
         d = await get_sector_flow()
         return d.get("sectors", [])
-    except Exception:
+    except Exception as e:
         return []
 
 async def _safe_watchlist(uid: str) -> list:
@@ -166,7 +167,7 @@ async def _safe_watchlist(uid: str) -> list:
         from .watchlist_monitor import scan_user_watchlist
         results = await scan_user_watchlist(uid)
         return results if isinstance(results, list) else []
-    except Exception:
+    except Exception as e:
         return []
 
 

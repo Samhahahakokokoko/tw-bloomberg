@@ -6,6 +6,8 @@ import hashlib
 import os
 import time
 from loguru import logger
+import re
+import json
 
 _cache: dict = {}
 _cache_ts: dict = {}

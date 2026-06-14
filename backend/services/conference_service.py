@@ -4,6 +4,8 @@ from __future__ import annotations
 import time
 from datetime import date, datetime, timedelta
 from loguru import logger
+import asyncio
+import re
 
 _cache: list | None = None
 _cache_ts: float = 0.0

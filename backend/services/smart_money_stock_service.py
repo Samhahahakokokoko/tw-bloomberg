@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import time
 from loguru import logger
+import asyncio
 
 _cache: dict = {}
 _cache_ts: dict = {}
@@ -249,7 +250,7 @@ async def _safe_quote(code: str) -> dict:
     try:
         from .twse_service import fetch_realtime_quote
         return await fetch_realtime_quote(code) or {}
-    except Exception:
+    except Exception as e:
         return {}
 
 
@@ -257,7 +258,7 @@ async def _safe_kline(code: str) -> list:
     try:
         from .twse_service import fetch_kline
         return await fetch_kline(code) or []
-    except Exception:
+    except Exception as e:
         return []
 
 
@@ -265,5 +266,5 @@ async def _safe_chip(code: str) -> dict:
     try:
         from .chip_service import get_chip_data
         return await get_chip_data(code) or {}
-    except Exception:
+    except Exception as e:
         return {}

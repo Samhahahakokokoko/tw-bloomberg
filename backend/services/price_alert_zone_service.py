@@ -17,7 +17,7 @@ def _load_json(path: str, default) -> dict | list:
     try:
         with open(path, encoding="utf-8") as f:
             return json.load(f)
-    except Exception:
+    except Exception as e:
         return default
 
 
@@ -89,7 +89,7 @@ async def scan_and_alert() -> int:
 
             try:
                 quote = await fetch_realtime_quote(code)
-            except Exception:
+            except Exception as e:
                 continue
             price = float(quote.get("close") or quote.get("price") or 0)
             if price <= 0:

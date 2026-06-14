@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 from datetime import date, timedelta
 from loguru import logger
+import re
 
 from ..utils.credit_guard import is_exhausted as _credit_exhausted, mark_exhausted as _mark_credit_exhausted
 
@@ -157,7 +158,7 @@ def get_stock_health_score_sync(code: str) -> str:
             from ..models.database import settings as _settings
             if getattr(_settings, "finmind_token", ""):
                 params["token"] = _settings.finmind_token
-        except Exception:
+        except Exception as e:
             pass
 
         resp = requests.get(
@@ -241,7 +242,7 @@ def get_stock_health_score_sync(code: str) -> str:
             try:
                 from ..models.database import settings as _settings
                 api_key = getattr(_settings, "anthropic_api_key", "") or ""
-            except Exception:
+            except Exception as e:
                 api_key = ""
 
             if api_key:

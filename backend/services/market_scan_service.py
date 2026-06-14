@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import time
 from loguru import logger
+import asyncio
 
 _cache: dict | None = None
 _cache_ts: float = 0.0
@@ -177,7 +178,7 @@ async def push_scan_to_subscribers() -> None:
                 result = await db.execute(select(Subscriber))
                 subs = result.scalars().all()
             uids = [s.line_user_id for s in subs]
-        except Exception:
+        except Exception as e:
             uids = []
 
         if not uids:
@@ -188,7 +189,7 @@ async def push_scan_to_subscribers() -> None:
         for uid in uids[:50]:
             try:
                 await push_line_messages(uid, [{"type": "text", "text": text[:4800]}])
-            except Exception:
+            except Exception as e:
                 pass
         logger.info(f"[market_scan] pushed to {len(uids)} subscribers")
     except Exception as e:

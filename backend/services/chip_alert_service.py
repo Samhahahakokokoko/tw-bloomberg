@@ -32,7 +32,7 @@ def _get_finmind_token() -> str:
     try:
         from ..models.database import settings
         return getattr(settings, "finmind_token", "") or ""
-    except Exception:
+    except Exception as e:
         return ""
 
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import time
 from loguru import logger
+import asyncio
 
 _cache: dict | None = None
 _cache_ts: float = 0.0
@@ -128,21 +129,21 @@ async def _safe_vix() -> dict:
     try:
         from .vix_service import get_vix_data
         return await get_vix_data()
-    except Exception:
+    except Exception as e:
         return {}
 
 async def _safe_overview() -> dict:
     try:
         from .twse_service import fetch_market_overview
         return await fetch_market_overview() or {}
-    except Exception:
+    except Exception as e:
         return {}
 
 async def _safe_sentiment() -> dict:
     try:
         from .market_sentiment import get_sentiment_score
         return await get_sentiment_score() or {}
-    except Exception:
+    except Exception as e:
         return {}
 
 

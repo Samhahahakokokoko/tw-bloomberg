@@ -4,6 +4,7 @@ from __future__ import annotations
 import math
 import time
 from loguru import logger
+import asyncio
 
 _cache: dict = {}
 _cache_ts: dict = {}
@@ -67,7 +68,7 @@ async def _safe_chip(code: str) -> dict:
     try:
         from .chip_service import get_chip_data
         return await get_chip_data(code) or {}
-    except Exception:
+    except Exception as e:
         return {}
 
 

@@ -15,6 +15,7 @@ from dotenv import load_dotenv
 from loguru import logger
 
 from backend.utils.credit_guard import is_exhausted
+import asyncio
 
 load_dotenv()
 

@@ -3950,7 +3950,7 @@ def _run_yf_backtest(code: str, strategy: str) -> str:
                 f"  0050同期：{'+' if bm_r>=0 else ''}{bm_r}%\n"
                 f"  超額報酬：{'+' if excess>=0 else ''}{excess}%"
             )
-    except Exception:
+    except Exception as e:
         pass
 
     return (
@@ -7449,7 +7449,7 @@ async def _cmd_compare_multi(codes: list[str], uid: str) -> list:
                 "ret_1m":  round(ret_1m, 2),
                 "rsi":     rsi,
             }
-        except Exception:
+        except Exception as e:
             return {"code": code, "name": code, "price": 0, "chg": 0, "pe": 0, "ret_1m": 0, "rsi": 50}
 
     results = await asyncio.gather(*[_get_stock_data(c) for c in codes])

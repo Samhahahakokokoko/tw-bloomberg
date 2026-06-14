@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import time
 from loguru import logger
+import asyncio
 
 _cache: dict | None = None
 _cache_ts: float = 0.0
@@ -83,7 +84,7 @@ async def _score_stock(code: str) -> dict:
             "chip_ok": chip_ok,
             "foreign": round(foreign),
         }
-    except Exception:
+    except Exception as e:
         return {}
 
 

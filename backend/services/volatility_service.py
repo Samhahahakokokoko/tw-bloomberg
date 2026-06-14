@@ -4,6 +4,7 @@ from __future__ import annotations
 import math
 import time
 from loguru import logger
+import asyncio
 
 _cache: dict = {}
 _cache_ts: dict = {}
@@ -64,7 +65,7 @@ async def _safe_kline(code: str) -> list:
     try:
         from .twse_service import fetch_kline
         return await fetch_kline(code) or []
-    except Exception:
+    except Exception as e:
         return []
 
 

@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import time
 from loguru import logger
+import asyncio
+import re
 
 _cache: dict = {}
 _cache_ts: dict = {}
@@ -110,7 +112,7 @@ async def _get_industry_quotes(stocks: list[str]) -> list[dict]:
             if q:
                 return {"code": code, "name": q.get("name", code),
                         "chg": float(q.get("change_pct") or 0)}
-        except Exception:
+        except Exception as e:
             pass
         return None
     results = await asyncio.gather(*[_q(c) for c in stocks[:5]], return_exceptions=True)
