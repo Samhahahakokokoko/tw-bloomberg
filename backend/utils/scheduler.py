@@ -552,6 +552,29 @@ def start_scheduler() -> AsyncIOScheduler:
         id="diary_report", replace_existing=True,
     )
 
+    # ── 新功能排程（功能 3/4/6）──────────────────────────────────────────────
+
+    # 選擇權結算日提醒 — 每日 08:32（盤前）
+    scheduler.add_job(
+        _push_opex_alert,
+        CronTrigger(day_of_week="mon-fri", hour=8, minute=32, timezone="Asia/Taipei"),
+        id="opex_alert", replace_existing=True,
+    )
+
+    # 籌碼異動警報 — 每日 15:32（收盤後）
+    scheduler.add_job(
+        _push_chip_alerts,
+        CronTrigger(day_of_week="mon-fri", hour=15, minute=32, timezone="Asia/Taipei"),
+        id="chip_alerts", replace_existing=True,
+    )
+
+    # 每日交易計畫（文字版含進場/停損/目標價）— 每日 08:35
+    scheduler.add_job(
+        _push_daily_trade_plan,
+        CronTrigger(day_of_week="mon-fri", hour=8, minute=35, timezone="Asia/Taipei"),
+        id="daily_trade_plan", replace_existing=True,
+    )
+
     _apply_line_quota_safe_mode(scheduler)
     scheduler.start()
     logger.info("Scheduler started (morning report 08:30 / weekly report Fri 14:30)")
@@ -1848,3 +1871,180 @@ async def _push_afternoon_alerts():
         logger.info(f"[Alert 15:30] pushed to {n} users")
     except Exception as e:
         logger.error(f"Afternoon alert flush failed: {e}")
+
+
+# ── 新功能排程函式（功能 3 / 4 / 6）─────────────────────────────────────────
+
+async def _push_opex_alert():
+    """08:32 每日 — 台指選擇權結算日提醒（結算日前3天及當天推播）"""
+    try:
+        from ..services.opex_service import check_opex_alert
+        from ..models.models import Subscriber
+        from sqlalchemy import select
+
+        msg_text = check_opex_alert()
+        if not msg_text:
+            return  # 非提醒日，靜默跳過
+
+        async with AsyncSessionLocal() as db:
+            r = await db.execute(select(Subscriber).where(Subscriber.subscribed_morning == True))
+            subs = r.scalars().all()
+        if not subs:
+            return
+
+        msg = [{"type": "text", "text": msg_text}]
+        import httpx
+        async with httpx.AsyncClient(timeout=20) as c:
+            for sub in subs:
+                try:
+                    await push_line_messages(sub.line_user_id, msg, client=c, context="scheduler.opex_alert")
+                except Exception as e:
+                    logger.warning(f"[OPEX] push failed {sub.line_user_id[:8]}: {e}")
+
+        logger.info(f"[OPEX] 結算日提醒已推播 {len(subs)} 人")
+    except Exception as e:
+        logger.error(f"[OPEX] job failed: {e}")
+
+
+async def _push_chip_alerts():
+    """15:32 每日 — 籌碼異動即時警報（投信轉向、外資爆量、融資暴增）"""
+    try:
+        from ..services.chip_alert_service import check_chip_alerts_async
+        from ..models.models import Subscriber
+        from sqlalchemy import select
+
+        watch_list = ["2330", "2454", "0050", "2317", "2882", "3008"]
+        alerts = await check_chip_alerts_async(watch_list)
+        if not alerts:
+            logger.info("[ChipAlert] 無異動，跳過推播")
+            return
+
+        async with AsyncSessionLocal() as db:
+            r = await db.execute(select(Subscriber).where(Subscriber.subscribed_morning == True))
+            subs = r.scalars().all()
+        if not subs:
+            return
+
+        combined = "🚨 籌碼異動警報\n" + "=" * 20 + "\n\n" + "\n\n".join(alerts)
+        msg = [{"type": "text", "text": combined[:4800]}]
+        import httpx
+        async with httpx.AsyncClient(timeout=20) as c:
+            for sub in subs:
+                try:
+                    await push_line_messages(sub.line_user_id, msg, client=c, context="scheduler.chip_alert")
+                except Exception as e:
+                    logger.warning(f"[ChipAlert] push failed {sub.line_user_id[:8]}: {e}")
+
+        logger.info(f"[ChipAlert] {len(alerts)} 個警報推播 {len(subs)} 人")
+    except Exception as e:
+        logger.error(f"[ChipAlert] job failed: {e}")
+
+
+async def _push_daily_trade_plan():
+    """08:35 每日 — 每日交易計畫（文字版：自選股+智慧選股各前3名，含進場/停損/目標）"""
+    try:
+        import asyncio, functools, os
+        from datetime import date
+        from ..models.models import Subscriber
+        from sqlalchemy import select
+        import yfinance as yf
+
+        async with AsyncSessionLocal() as db:
+            r = await db.execute(select(Subscriber).where(Subscriber.subscribed_morning == True))
+            subs = r.scalars().all()
+        if not subs:
+            return
+
+        today = date.today()
+        loop  = asyncio.get_event_loop()
+
+        # 自選股（核心持倉族群）
+        watch_list  = ["2330", "2454", "0050", "2882", "2317"]
+        # 智慧選股池（更廣泛）
+        smart_pool  = ["3008", "2412", "1301", "2308", "2303", "2886", "6505", "2395", "3711"]
+
+        from ..services.health_score_service import get_stock_health_score_sync
+
+        def _score_stocks(codes):
+            scored = []
+            for c in codes:
+                try:
+                    txt = get_stock_health_score_sync(c)
+                    # 取第一個「總分：XX」
+                    import re
+                    m = re.search(r"總分：(\d+)", txt)
+                    sc = int(m.group(1)) if m else 50
+                    # 取現價
+                    ticker = yf.Ticker(f"{c}.TW")
+                    df = ticker.history(period="2d")
+                    close = round(float(df["Close"].iloc[-1]), 1) if not df.empty else 0.0
+                    scored.append((sc, c, close))
+                except Exception:
+                    scored.append((50, c, 0.0))
+            return sorted(scored, reverse=True)
+
+        watch_scored = await loop.run_in_executor(None, functools.partial(_score_stocks, watch_list))
+        smart_scored_all = await loop.run_in_executor(None, functools.partial(_score_stocks, smart_pool))
+        top3_watch = watch_scored[:3]
+        top3_smart = smart_scored_all[:3]
+
+        # 大盤方向
+        try:
+            df0050 = yf.Ticker("0050.TW").history(period="10d")
+            ma5_v  = float(df0050["Close"].rolling(5).mean().iloc[-1])
+            now_v  = float(df0050["Close"].iloc[-1])
+            if now_v > ma5_v * 1.005:
+                mkt_dir, pos_pct = "📈 大盤偏多（0050站上5日均）", "七成"
+            elif now_v < ma5_v * 0.995:
+                mkt_dir, pos_pct = "📉 大盤偏空（0050跌破5日均）", "三成"
+            else:
+                mkt_dir, pos_pct = "➡️ 大盤震盪（0050貼近5日均）", "五成"
+        except Exception:
+            mkt_dir, pos_pct = "⚠️ 大盤方向無法判斷", "五成"
+
+        # OPEX 提醒
+        from ..services.opex_service import check_opex_alert
+        opex_msg = check_opex_alert()
+
+        def _stock_row(sc, code, close):
+            if close <= 0:
+                return f"\n{code}（健康分 {sc}）｜資料載入失敗\n"
+            stop   = round(close * 0.97, 1)
+            target = round(close * 1.05, 1)
+            return (
+                f"\n{code}（健康分 {sc}）\n"
+                f"  現價：{close}｜進場：{close}\n"
+                f"  停損：{stop}（-3%）｜目標：{target}（+5%）\n"
+            )
+
+        report = f"📋 今日交易計畫 {today}\n{'=' * 24}\n\n"
+        if opex_msg:
+            report += opex_msg + "\n\n"
+
+        report += "⭐ 自選股前3名\n" + "─" * 24 + "\n"
+        for sc, code, close in top3_watch:
+            report += _stock_row(sc, code, close)
+
+        report += "\n🤖 智慧選股前3名\n" + "─" * 24 + "\n"
+        for sc, code, close in top3_smart:
+            report += _stock_row(sc, code, close)
+
+        report += (
+            f"\n{'─' * 24}\n"
+            f"🌐 大盤預期：{mkt_dir}\n"
+            f"💼 建議倉位：{pos_pct}（依個人風險調整）\n\n"
+            f"祝交易順利！🚀"
+        )
+
+        msg = [{"type": "text", "text": report[:4800]}]
+        import httpx
+        async with httpx.AsyncClient(timeout=30) as c:
+            for sub in subs:
+                try:
+                    await push_line_messages(sub.line_user_id, msg, client=c, context="scheduler.daily_trade_plan")
+                except Exception as e:
+                    logger.warning(f"[TradePlan] push failed {sub.line_user_id[:8]}: {e}")
+
+        logger.info(f"[TradePlan] 每日交易計畫已推播 {len(subs)} 人")
+    except Exception as e:
+        logger.error(f"[TradePlan] job failed: {e}")

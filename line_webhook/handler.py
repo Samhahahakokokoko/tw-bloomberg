@@ -873,6 +873,25 @@ async def _handle_text(text: str, uid: str) -> list:
             qr_items(("台積電", "/conviction 2330"), ("聯發科", "/conviction 2454"))
         )]
 
+    # ── 新增功能指令 ─────────────────────────────────────────────────────
+    if cmd == "/target" and len(parts) >= 2:
+        return await _cmd_target(parts[1].upper(), uid)
+    if cmd == "/target":
+        return [_text("格式：/target 股票代號\n例：/target 2330",
+                      qr_items(("台積電", "/target 2330"), ("聯發科", "/target 2454")))]
+    if cmd == "/pair" and len(parts) >= 3:
+        return await _cmd_pair(parts[1].upper(), parts[2].upper(), uid)
+    if cmd == "/pair":
+        return [_text("格式：/pair 股票1 股票2\n例：/pair 2330 2454",
+                      qr_items(("示範", "/pair 2330 2454")))]
+    if cmd == "/opex":
+        return await _cmd_opex(uid)
+    if cmd in ("/score", "/hscore") and len(parts) >= 2:
+        return await _cmd_health_score(parts[1].upper(), uid)
+    if cmd in ("/score", "/hscore"):
+        return [_text("格式：/score 股票代號\n例：/score 2330",
+                      qr_items(("台積電", "/score 2330"), ("聯發科", "/score 2454")))]
+
     # ── 選股系統 ──────────────────────────────────────────────────────────
     if cmd == "/screen":
         sub = parts[1].lower() if len(parts) > 1 else ""
@@ -3691,6 +3710,8 @@ def _run_yf_backtest(code: str, strategy: str) -> str:
     capital, position, entry_px = 1_000_000.0, 0, 0.0
     wins = total_trades = 0
     sum_ret = 0.0
+    trades = []
+    dates  = list(df.index)
     for i in range(len(close_arr)):
         px = close_arr[i]
         s  = sig_arr[i]
@@ -3706,6 +3727,7 @@ def _run_yf_backtest(code: str, strategy: str) -> str:
             sum_ret += ret
             total_trades += 1
             capital += position * px
+            trades.append({"pnl": pnl, "ret": ret, "year": dates[i].year})
             position = 0
 
     final_px    = close_arr[-1]
@@ -3718,16 +3740,59 @@ def _run_yf_backtest(code: str, strategy: str) -> str:
     start       = df.index[0].strftime("%Y-%m-%d")
     end         = df.index[-1].strftime("%Y-%m-%d")
 
+    # 最長連續虧損
+    max_streak = cur_streak = 0
+    for t in trades:
+        if t["pnl"] < 0:
+            cur_streak += 1
+            max_streak  = max(max_streak, cur_streak)
+        else:
+            cur_streak = 0
+
+    # 逐年報酬
+    by_year: dict[int, float] = {}
+    for t in trades:
+        y = t["year"]
+        by_year[y] = by_year.get(y, 0) + t["pnl"]
+    year_lines = []
+    for yr, pnl in sorted(by_year.items()):
+        yr_ret = pnl / 1_000_000 * 100
+        emoji  = "📈" if yr_ret >= 0 else "📉"
+        year_lines.append(f"  {yr}年：{'+' if yr_ret>=0 else ''}{yr_ret:.1f}%  {emoji}")
+    yearly_text = "\n".join(year_lines) if year_lines else "  無完整年度紀錄"
+
+    # 0050 大盤比較
+    bm_text = "  0050資料無法取得"
+    try:
+        df_bm = yf.download("0050.TW", period="3y", progress=False, auto_adjust=True)
+        if not df_bm.empty:
+            if isinstance(df_bm.columns, pd.MultiIndex):
+                df_bm.columns = df_bm.columns.get_level_values(0)
+            bm_s  = float(df_bm["Close"].iloc[0])
+            bm_e  = float(df_bm["Close"].iloc[-1])
+            bm_r  = round((bm_e - bm_s) / bm_s * 100, 2)
+            excess = round(total_ret - bm_r, 2)
+            bm_text = (
+                f"  0050同期：{'+' if bm_r>=0 else ''}{bm_r}%\n"
+                f"  超額報酬：{'+' if excess>=0 else ''}{excess}%"
+            )
+    except Exception:
+        pass
+
     return (
         f"📊 {code}  {strategy} 回測（3年）\n"
-        f"{'─'*24}\n"
+        f"{'─'*26}\n"
         f"期間：{start} ～ {end}\n"
         f"總報酬：{sign}{total_ret:.1f}%\n"
         f"期末資金：{total_value:,.0f} 元\n"
         f"交易次數：{n} 次\n"
         f"勝率：{win_rate:.1f}%\n"
         f"平均每筆：{'+' if avg_ret>=0 else ''}{avg_ret:.2f}%\n"
-        f"{'─'*24}"
+        f"最長連虧：{max_streak} 筆\n"
+        f"{'─'*26}\n"
+        f"【逐年報酬】\n{yearly_text}\n"
+        f"{'─'*26}\n"
+        f"【大盤比較】\n{bm_text}"
     )
 
 
@@ -7072,3 +7137,73 @@ async def _cmd_trade_pnl(uid: str) -> list:
     except Exception as e:
         logger.error(f"[trade_pnl] {e}")
         return [_text("❌ 損益計算失敗")]
+
+
+# ── 新功能指令（功能 1-5）──────────────────────────────────────────────────────
+
+async def _cmd_target(code: str, uid: str) -> list:
+    """/target 2330 — AI 1個月目標價預測"""
+    try:
+        import asyncio, functools
+        from backend.services.target_service import get_target_price_sync
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(None, functools.partial(get_target_price_sync, code))
+        return [_text(result[:4800], qr_items(
+            ("📊 健康評分", f"/score {code}"),
+            ("🏦 籌碼",     f"/chip {code}"),
+            ("🤖 AI分析",   f"/ai {code}"),
+        ))]
+    except Exception as e:
+        logger.error(f"[target] {code} error: {e}")
+        return [_text(f"❌ 目標價預測失敗：{e}")]
+
+
+async def _cmd_pair(code1: str, code2: str, uid: str) -> list:
+    """/pair 2330 2454 — 配對交易策略分析"""
+    try:
+        import asyncio, functools
+        from backend.services.pair_service import get_pair_analysis_sync
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(
+            None, functools.partial(get_pair_analysis_sync, code1, code2)
+        )
+        return [_text(result[:4800], qr_items(
+            (f"反轉查詢", f"/pair {code2} {code1}"),
+            ("📊 選股", "/r"),
+        ))]
+    except Exception as e:
+        logger.error(f"[pair] {code1}/{code2} error: {e}")
+        return [_text(f"❌ 配對分析失敗：{e}")]
+
+
+async def _cmd_opex(uid: str) -> list:
+    """/opex — 查詢下次台指選擇權結算日"""
+    try:
+        from backend.services.opex_service import get_opex_info
+        result = get_opex_info()
+        return [_text(result, qr_items(
+            ("📋 今日計畫", "/daily"),
+            ("🌅 早報",     "/morning"),
+        ))]
+    except Exception as e:
+        logger.error(f"[opex] error: {e}")
+        return [_text(f"❌ 結算日查詢失敗：{e}")]
+
+
+async def _cmd_health_score(code: str, uid: str) -> list:
+    """/score 2330 — 個股健康評分（0-100）"""
+    try:
+        import asyncio, functools
+        from backend.services.health_score_service import get_stock_health_score_sync
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(
+            None, functools.partial(get_stock_health_score_sync, code)
+        )
+        return [_text(result[:4800], qr_items(
+            ("🎯 目標價",  f"/target {code}"),
+            ("🏦 籌碼",    f"/chip {code}"),
+            ("🔄 回測",    f"/test {code} RSI"),
+        ))]
+    except Exception as e:
+        logger.error(f"[score] {code} error: {e}")
+        return [_text(f"❌ 健康評分失敗：{e}")]
