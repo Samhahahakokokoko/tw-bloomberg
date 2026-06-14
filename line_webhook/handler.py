@@ -810,6 +810,36 @@ async def _handle_text(text: str, uid: str) -> list:
             qr_items(("台積電", "/rating 2330"), ("聯發科", "/rating 2454"),
                      ("聯電", "/rating 2303"), ("鴻海", "/rating 2317"))
         )]
+    # ── 第三批 7 大新功能 ────────────────────────────────────────────────────
+    # 功能1: VIX 恐慌指數
+    if cmd in ("/vix", "/fear"):
+        return await _cmd_vix(uid)
+    # 功能2: 多資產輪動（/rotation 已重新導向，額外別名）
+    if cmd in ("/assets", "/globalflow"):
+        return await _cmd_asset_rotation(uid)
+    # 功能3: 季報 EPS 追蹤
+    if cmd == "/eps":
+        code = parts[1].upper() if len(parts) > 1 else ""
+        return await _cmd_eps(code, uid) if code else [_text(
+            "格式：/eps 股票代號\n例：/eps 2330",
+            qr_items(("台積電", "/eps 2330"), ("聯發科", "/eps 2454"),
+                     ("鴻海", "/eps 2317"), ("聯電", "/eps 2303"))
+        )]
+    # 功能4: 黑天鵝預警
+    if cmd in ("/blackswan", "/swan", "/risk"):
+        return await _cmd_black_swan(uid)
+    # 功能5: 個股動能排行
+    if cmd in ("/momentum", "/momo"):
+        return await _cmd_momentum_ranking(uid)
+    # 功能6: 交易心理分析
+    if cmd in ("/psychology", "/psych", "/emotion"):
+        return await _cmd_psychology(uid)
+    # 功能7: AI 投資組合建議（/portfolio suggest）
+    if cmd == "/portfolio" and len(parts) > 1 and parts[1].lower() == "suggest":
+        return await _cmd_portfolio_suggest(uid)
+    if cmd == "/suggest":
+        return await _cmd_portfolio_suggest(uid)
+
     if cmd == "/rs":                    return await _cmd_rs(uid)
     if cmd == "/breadth":               return await _cmd_breadth(uid)
     if cmd == "/journal":
@@ -915,7 +945,9 @@ async def _handle_text(text: str, uid: str) -> list:
         return await _cmd_predict(sub)
     if cmd == "/drift":                 return await _cmd_drift()
     if cmd == "/narrative":             return await _cmd_narrative()
-    if cmd == "/rotation":              return await _cmd_rotation()
+    if cmd == "/rotation":
+        # /rotation — 多資產資金輪動地圖（增強版）
+        return await _cmd_asset_rotation(uid)
     if cmd == "/memory":                return await _cmd_memory()
     if cmd == "/committee":
         sub = parts[1].upper() if len(parts) > 1 else "2330"
@@ -7663,3 +7695,149 @@ async def _cmd_smart_money_stock(code: str, uid: str) -> list:
         logger.error(f"[smart_stock] {code} error: {e}")
         return [_text(f"❌ 聰明錢分析失敗：{e}",
                       qr_items(("重試", f"/smart {code}")))]
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 第三批 7 大新功能 handler 函數
+# ══════════════════════════════════════════════════════════════════════════════
+
+# ── 功能 1: VIX 恐慌指數 ──────────────────────────────────────────────────────
+
+async def _cmd_vix(uid: str) -> list:
+    """/vix — 台美 VIX 恐慌指數追蹤"""
+    try:
+        from backend.services.vix_service import get_vix_data, format_vix_report
+        data   = await get_vix_data()
+        report = format_vix_report(data)
+        return [_text(report[:4800], qr_items(
+            ("🧠 心理分析",  "/psychology"),
+            ("🦢 黑天鵝",    "/blackswan"),
+            ("🔄 市場週期",  "/cycle"),
+            ("📊 外資期貨",  "/futures"),
+        ))]
+    except Exception as e:
+        logger.error(f"[vix] error: {e}")
+        return [_text(f"❌ VIX 資料取得失敗：{e}",
+                      qr_items(("重試", "/vix"), ("大盤", "/market")))]
+
+
+# ── 功能 2: 多資產資金輪動 ────────────────────────────────────────────────────
+
+async def _cmd_asset_rotation(uid: str) -> list:
+    """/rotation — 多資產資金輪動地圖"""
+    try:
+        from backend.services.asset_rotation_service import get_asset_rotation, format_rotation_report
+        data   = await get_asset_rotation()
+        report = format_rotation_report(data)
+        return [_text(report[:4800], qr_items(
+            ("😱 VIX",        "/vix"),
+            ("📊 市場週期",   "/cycle"),
+            ("🌡️ 籌碼地圖",  "/heatmap flow"),
+            ("💼 組合建議",   "/suggest"),
+        ))]
+    except Exception as e:
+        logger.error(f"[asset_rotation] error: {e}")
+        return [_text(f"❌ 資金輪動資料取得失敗：{e}",
+                      qr_items(("重試", "/rotation"), ("大盤", "/market")))]
+
+
+# ── 功能 3: 季報 EPS 追蹤 ─────────────────────────────────────────────────────
+
+async def _cmd_eps(code: str, uid: str) -> list:
+    """/eps CODE — 季報 EPS 趨勢追蹤"""
+    try:
+        from backend.services.quarterly_eps_service import get_quarterly_eps, format_eps_report
+        data   = await get_quarterly_eps(code)
+        report = format_eps_report(data)
+        return [_text(report[:4800], qr_items(
+            ("📊 多因子",   f"/factor {code}"),
+            ("⭐ 評級",     f"/rating {code}"),
+            ("💰 主力成本", f"/cost {code}"),
+            ("🤖 AI分析",   f"/ai {code}"),
+        ))]
+    except Exception as e:
+        logger.error(f"[eps] {code} error: {e}")
+        return [_text(f"❌ 季報資料取得失敗：{e}",
+                      qr_items(("重試", f"/eps {code}")))]
+
+
+# ── 功能 4: 黑天鵝預警 ────────────────────────────────────────────────────────
+
+async def _cmd_black_swan(uid: str) -> list:
+    """/blackswan — 黑天鵝風險指數查詢"""
+    try:
+        from backend.services.black_swan_service import get_black_swan_risk, format_black_swan_report
+        data   = await get_black_swan_risk()
+        report = format_black_swan_report(data)
+        return [_text(report[:4800], qr_items(
+            ("😱 VIX",       "/vix"),
+            ("📊 外資期貨",  "/futures"),
+            ("🧠 心理分析",  "/psychology"),
+            ("🔄 市場週期",  "/cycle"),
+        ))]
+    except Exception as e:
+        logger.error(f"[blackswan] error: {e}")
+        return [_text(f"❌ 黑天鵝掃描失敗：{e}",
+                      qr_items(("重試", "/blackswan"), ("大盤", "/market")))]
+
+
+# ── 功能 5: 個股動能排行 ──────────────────────────────────────────────────────
+
+async def _cmd_momentum_ranking(uid: str) -> list:
+    """/momentum — 全市場個股動能排行"""
+    try:
+        from backend.services.momentum_ranking_service import get_momentum_ranking, format_momentum_report
+        data   = await get_momentum_ranking()
+        report = format_momentum_report(data)
+        return [_text(report[:4800], qr_items(
+            ("🎯 選股",      "/r"),
+            ("⭐ 評級",      "/rating 2330"),
+            ("🏦 籌碼地圖",  "/heatmap flow"),
+            ("📊 市場週期",  "/cycle"),
+        ))]
+    except Exception as e:
+        logger.error(f"[momentum] error: {e}")
+        return [_text(f"❌ 動能排行計算失敗：{e}",
+                      qr_items(("重試", "/momentum"), ("選股", "/r")))]
+
+
+# ── 功能 6: 交易心理分析 ──────────────────────────────────────────────────────
+
+async def _cmd_psychology(uid: str) -> list:
+    """/psychology — 市場交易心理分析"""
+    try:
+        from backend.services.psychology_service import get_market_psychology, format_psychology_report
+        data   = await get_market_psychology()
+        report = format_psychology_report(data)
+        return [_text(report[:4800], qr_items(
+            ("😱 VIX",       "/vix"),
+            ("🦢 黑天鵝",    "/blackswan"),
+            ("🔄 市場週期",  "/cycle"),
+            ("💼 組合建議",  "/suggest"),
+        ))]
+    except Exception as e:
+        logger.error(f"[psychology] error: {e}")
+        return [_text(f"❌ 心理分析失敗：{e}",
+                      qr_items(("重試", "/psychology"), ("大盤", "/market")))]
+
+
+# ── 功能 7: AI 投資組合建議 ───────────────────────────────────────────────────
+
+async def _cmd_portfolio_suggest(uid: str) -> list:
+    """/portfolio suggest 或 /suggest — AI 投資組合建議"""
+    try:
+        from backend.services.portfolio_suggest_service import (
+            get_portfolio_suggestion, format_portfolio_suggest
+        )
+        data   = await get_portfolio_suggestion(uid)
+        report = format_portfolio_suggest(data)
+        return [_text(report[:4800], qr_items(
+            ("💼 庫存",      "/p"),
+            ("📊 市場週期",  "/cycle"),
+            ("🧠 心理分析",  "/psychology"),
+            ("🌐 資金輪動",  "/rotation"),
+        ))]
+    except Exception as e:
+        logger.error(f"[portfolio_suggest] uid={uid} error: {e}")
+        return [_text(f"❌ 投資組合建議失敗：{e}",
+                      qr_items(("重試", "/suggest"), ("庫存", "/p")))]

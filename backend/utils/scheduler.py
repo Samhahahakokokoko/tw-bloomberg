@@ -155,6 +155,20 @@ def start_scheduler() -> AsyncIOScheduler:
         id="weekly_rating", replace_existing=True,
     )
 
+    # 黑天鵝預警掃描 — 每日 08:00 + 盤中 10:30、13:30
+    scheduler.add_job(
+        _run_black_swan_alert,
+        CronTrigger(day_of_week="mon-fri", hour="8,10,13", minute=30, timezone="Asia/Taipei"),
+        id="black_swan_alert", replace_existing=True,
+    )
+
+    # VIX 突破 30 警報 — 盤中每小時
+    scheduler.add_job(
+        _run_vix_alert,
+        CronTrigger(day_of_week="mon-fri", hour="9-15", minute=0, timezone="Asia/Taipei"),
+        id="vix_alert", replace_existing=True,
+    )
+
     # Alpha Pipeline — 18:00 Layer 1: 動能啟動掃描 + 資金流向
     scheduler.add_job(
         _run_pipeline_movers,
@@ -2148,3 +2162,29 @@ async def _run_weekly_rating_update() -> None:
         logger.info(f"[Scheduler] weekly_rating_update done, alerted {updated} users")
     except Exception as e:
         logger.error(f"[Scheduler] weekly_rating_update failed: {e}")
+
+
+async def _run_black_swan_alert() -> None:
+    """黑天鵝預警掃描 — 每日 08:30、10:30、13:30"""
+    try:
+        from ..services.black_swan_service import check_and_push_alert
+        n = await check_and_push_alert()
+        if n:
+            logger.info(f"[Scheduler] black_swan_alert: pushed {n}")
+    except Exception as e:
+        logger.error(f"[Scheduler] black_swan_alert failed: {e}")
+
+
+async def _run_vix_alert() -> None:
+    """VIX 突破 30 時推播警告 — 盤中每小時"""
+    try:
+        from ..services.vix_service import get_vix_data, format_vix_report
+        from ..services.line_push import push_to_admin
+        data = await get_vix_data()
+        us_vix = data.get("us_vix", {}).get("value", 0)
+        if us_vix >= 30:
+            report = format_vix_report(data)
+            await push_to_admin(f"😱 VIX 突破 30！恐慌指數警報\n\n{report[:2000]}")
+            logger.info(f"[Scheduler] vix_alert: VIX={us_vix}")
+    except Exception as e:
+        logger.error(f"[Scheduler] vix_alert failed: {e}")
