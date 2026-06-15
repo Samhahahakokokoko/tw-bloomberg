@@ -10,8 +10,9 @@ YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY", "")
 TRACKED_CHANNELS = [
     {
         "analyst_id":  "win16888",
-        "name":        "老王不教股",
+        "name":        "林鈺凱分析師-摩爾證券投顧",
         "handle":      "win16888",
+        "channel_id":  "UC9Pd7LN9potuHVafJCLX7Pw",
         "channel_url": "https://www.youtube.com/@win16888",
         "specialty":   "台股,大盤,短線,籌碼",
         "style":       "momentum",
@@ -19,8 +20,9 @@ TRACKED_CHANNELS = [
     },
     {
         "analyst_id":  "s178",
-        "name":        "股市阿水",
+        "name":        "郭哲榮分析師-摩爾證券投顧",
         "handle":      "s178",
+        "channel_id":  "UChfl3auNxAxOR3wy8a8ysQQ",
         "channel_url": "https://www.youtube.com/@s178",
         "specialty":   "台股,波段,技術分析",
         "style":       "momentum",
@@ -28,8 +30,9 @@ TRACKED_CHANNELS = [
     },
     {
         "analyst_id":  "ps1788",
-        "name":        "散戶知識王",
+        "name":        "林漢偉分析師-摩爾證券投顧",
         "handle":      "ps1788",
+        "channel_id":  "UCleWOsRmPBhWPvQlSTy7fPw",
         "channel_url": "https://www.youtube.com/@ps1788",
         "specialty":   "台股,基本面,選股",
         "style":       "fundamental",
@@ -37,8 +40,9 @@ TRACKED_CHANNELS = [
     },
     {
         "analyst_id":  "imoney168",
-        "name":        "iMoney愛錢進",
+        "name":        "徐照興分析師-永誠國際投顧",
         "handle":      "imoney168",
+        "channel_id":  "UC1Cj4kAK2fxOS23vELpq-Gg",
         "channel_url": "https://www.youtube.com/@imoney168",
         "specialty":   "台股,ETF,存股",
         "style":       "value",
@@ -46,8 +50,9 @@ TRACKED_CHANNELS = [
     },
     {
         "analyst_id":  "we178",
-        "name":        "WE Stock 財經",
+        "name":        "鐘崑禎分析師-摩爾證券投顧",
         "handle":      "WE178",
+        "channel_id":  "UCZn9BeImRq3SDLC8WVrVmUw",
         "channel_url": "https://www.youtube.com/@WE178",
         "specialty":   "台股,大盤,籌碼,外資",
         "style":       "chip",
@@ -55,8 +60,9 @@ TRACKED_CHANNELS = [
     },
     {
         "analyst_id":  "oldwangstock",
-        "name":        "老王說市",
+        "name":        "老王愛說笑",
         "handle":      "oldwangstock",
+        "channel_id":  "UCvnLmiWt_zIVIh0zUm_j4Hw",
         "channel_url": "https://www.youtube.com/@oldwangstock",
         "specialty":   "台股,盤勢分析,操盤",
         "style":       "momentum",
@@ -64,8 +70,9 @@ TRACKED_CHANNELS = [
     },
     {
         "analyst_id":  "remus_boss",
-        "name":        "Remus老闆",
+        "name":        "雷老闆 Remus",
         "handle":      "remus_boss",
+        "channel_id":  "UCFsyPpT525Fass_s7fA2qhg",
         "channel_url": "https://www.youtube.com/@remus_boss",
         "specialty":   "台股,選股,波段,AI題材",
         "style":       "momentum",
@@ -88,21 +95,20 @@ async def ensure_channels_seeded() -> int:
                 select(Analyst).where(Analyst.analyst_id == ch["analyst_id"])
             )
             existing = r.scalar_one_or_none()
+            # Use hardcoded channel_id from TRACKED_CHANNELS if available
+            known_cid = ch.get("channel_id", "")
             if existing:
-                # Update channel_url and specialty if changed
-                if not existing.channel_url:
-                    existing.channel_url = ch["channel_url"]
-                if not existing.specialty:
-                    existing.specialty = ch["specialty"]
-                # Try to resolve real channel_id if missing
-                if not existing.channel_id:
-                    cid = await _resolve_channel_id(ch["handle"])
-                    if cid:
-                        existing.channel_id = cid
+                # Always update to correct values
+                if known_cid:
+                    existing.channel_id = known_cid
+                existing.channel_url = ch["channel_url"]
+                existing.name        = ch["name"]
+                existing.specialty   = ch["specialty"]
+                existing.is_active   = True
                 continue
 
-            # Resolve real YouTube channel_id via API
-            channel_id = await _resolve_channel_id(ch["handle"])
+            # Use hardcoded channel_id, fallback to API resolve
+            channel_id = known_cid or await _resolve_channel_id(ch["handle"])
 
             a = Analyst(
                 analyst_id        = ch["analyst_id"],
