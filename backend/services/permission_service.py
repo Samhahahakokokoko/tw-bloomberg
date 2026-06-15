@@ -10,28 +10,17 @@ ADMIN_UID = "U54b6736befb5acc8bb350e5f085df5ff"
 
 ROLE_LIMITS: dict[str, Optional[int]] = {
     "admin":   None,   # unlimited
-    "premium": 50,
-    "basic":   20,
+    "premium": None,   # unlimited
+    "basic":   None,   # unlimited — 所有用戶無使用次數限制
     "blocked": 0,
 }
 
-# 指令 → 最低需要的角色
+# 指令 → 最低需要的角色（僅保留系統管理指令限制）
 ADMIN_CMDS = {
     "/agent", "/redeploy", "/logs",
     "/adduser", "/removeuser", "/userlist", "/userstats",
 }
-PREMIUM_CMDS = {
-    "/daily", "/report", "/analyst",
-    "/analysis", "analysis", "/perf", "perf",
-    "/chart", "chart",
-    "/rec", "/optimize", "/var",
-    "/correlation", "/screener", "/pipeline",
-    "/smart_money", "/smartmoney", "/morning",
-    "/weekly", "/subscribe",
-}
-# /ai /backtest /chip /test 開放給所有用戶
-# basic 以上才能用：/p /buy /sell /alert /history /tax /quote /market /news
-# 未列出的指令預設 basic 以上可用
+PREMIUM_CMDS: set = set()  # 已移除 Premium 限制，所有功能對所有用戶開放
 
 
 async def get_role(user_id: str) -> str:
@@ -104,24 +93,12 @@ async def check_permission(user_id: str, cmd: str) -> tuple[bool, str]:
     if cmd in ADMIN_CMDS and role != "admin":
         return False, f"🔒 此功能僅限管理員使用"
 
-    if cmd in PREMIUM_CMDS and role not in ("admin", "premium"):
-        return False, (
-            "⭐ 此功能需要 Premium 方案\n\n"
-            f"指令：{cmd}\n"
-            "目前方案：Basic（每日20次）\n\n"
-            "如需升級請聯繫管理員"
-        )
-
-    # 每日用量（admin 跳過）
+    # Premium 限制已移除，所有用戶均可使用全部功能
+    # 每日用量（blocked 為 0，其餘皆 None = 無限制）
     if role != "admin":
-        limit = ROLE_LIMITS.get(role, 20)
-        if limit is not None:
-            count = await get_daily_count(user_id)
-            if count >= limit:
-                return False, (
-                    f"⏰ 今日使用次數已達上限（{limit}次）\n"
-                    "明天再來！"
-                )
+        limit = ROLE_LIMITS.get(role)
+        if limit is not None and limit == 0:
+            return False, "❌ 您的帳號已被停用\n如有疑問請聯繫管理員"
 
     return True, ""
 

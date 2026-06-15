@@ -6173,7 +6173,7 @@ async def _cmd_adduser(target_uid: str, role: str, admin_uid: str) -> list:
     """/adduser [LINE_ID] [role] — 新增/更新用戶角色（admin only）"""
     result = await set_user_role(target_uid, role.lower(), admin_uid)
     if result["ok"]:
-        role_map = {"admin": "管理員", "premium": "Premium", "basic": "Basic", "blocked": "封鎖"}
+        role_map = {"admin": "管理員", "premium": "用戶", "basic": "用戶", "blocked": "封鎖"}
         return [_text(
             f"✅ 已設定用戶\n\n"
             f"ID：{target_uid[:20]}...\n"
@@ -6195,7 +6195,7 @@ async def _cmd_userlist(admin_uid: str) -> list:
     users = await get_all_users()
     if not users:
         return [_text("📋 用戶清單為空")]
-    icon = {"admin": "👑", "premium": "⭐", "basic": "👤", "blocked": "🚫"}
+    icon = {"admin": "👑", "premium": "👤", "basic": "👤", "blocked": "🚫"}
     lines = [f"📋 用戶清單（{len(users)} 位）", "─" * 20]
     for u in users:
         lines.append(
