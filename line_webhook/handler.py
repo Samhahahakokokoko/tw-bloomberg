@@ -1286,6 +1286,49 @@ async def _handle_text(text: str, uid: str) -> list:
         else:
             return await _cmd_journal_list(uid)
 
+    # ── Batch 9: 盤中解說/資金成本/美台聯動/技術評級/法人連續/恐慌貪婪/籌碼健康 ──
+    # 功能1: AI盤中即時解說
+    if cmd in ("/midday", "/intraday", "/盤中"):
+        return await _cmd_midday(uid)
+    # 功能2: 個股資金成本分析
+    if cmd in ("/fundcost", "/cost2", "/instcost"):
+        code = parts[1].upper() if len(parts) > 1 else ""
+        return await _cmd_fundcost(code, uid) if code else [_text(
+            "格式：/fundcost 股票代號\n例：/fundcost 2330",
+            qr_items(("台積電", "/fundcost 2330"), ("聯發科", "/fundcost 2454"),
+                     ("鴻海", "/fundcost 2317"),   ("聯電", "/fundcost 2303"))
+        )]
+    # 功能3: 美股台股聯動分析
+    if cmd in ("/us2tw", "/usdtw", "/uslink"):
+        return await _cmd_us2tw(uid)
+    # 功能4: 個股技術評級
+    if cmd in ("/techrating", "/tech2", "/trating"):
+        code = parts[1].upper() if len(parts) > 1 else ""
+        return await _cmd_techrating(code, uid) if code else [_text(
+            "格式：/techrating 股票代號\n例：/techrating 2330",
+            qr_items(("台積電", "/techrating 2330"), ("聯發科", "/techrating 2454"),
+                     ("鴻海", "/techrating 2317"),   ("台股ETF", "/techrating 0050"))
+        )]
+    # 功能5: 法人連續行為追蹤
+    if cmd in ("/streak", "/inststreak", "/consecutive"):
+        code = parts[1].upper() if len(parts) > 1 else ""
+        return await _cmd_streak(code, uid) if code else [_text(
+            "格式：/streak 股票代號\n例：/streak 2330",
+            qr_items(("台積電", "/streak 2330"), ("聯發科", "/streak 2454"),
+                     ("鴻海", "/streak 2317"),   ("聯電", "/streak 2303"))
+        )]
+    # 功能6: 大盤恐慌貪婪指數
+    if cmd in ("/feargreed", "/fear", "/greed", "/fg"):
+        return await _cmd_feargreed(uid)
+    # 功能7: 個股籌碼健康度
+    if cmd in ("/chiphealth", "/chiph", "/chipscore"):
+        code = parts[1].upper() if len(parts) > 1 else ""
+        return await _cmd_chiphealth(code, uid) if code else [_text(
+            "格式：/chiphealth 股票代號\n例：/chiphealth 2330",
+            qr_items(("台積電", "/chiphealth 2330"), ("聯發科", "/chiphealth 2454"),
+                     ("鴻海", "/chiphealth 2317"),   ("聯電", "/chiphealth 2303"))
+        )]
+
     # ── 純數字 4-6 碼 → 直接查報價 ─────────────────────────────────────────
     t = text.strip()
     if t.isdigit() and 4 <= len(t) <= 6:
@@ -8843,3 +8886,128 @@ async def _cmd_analyst_accuracy_by_id(handle: str, uid: str) -> list:
         return [_text(f"❌ 查詢失敗：{e}",
                       qr_items(("全體排行", "/analyst ranking"),
                                ("重試", f"/accuracy {handle}")))]
+
+
+# ── Batch 9 Handler Functions ─────────────────────────────────────────────────
+
+async def _cmd_midday(uid: str) -> list:
+    """盤中即時解說"""
+    try:
+        from backend.services.midday_service import get_midday_report, format_midday_report
+        data   = await get_midday_report()
+        report = format_midday_report(data)
+        return [_text(report[:4800], qr_items(
+            ("😱 恐慌貪婪",  "/feargreed"),
+            ("🤝 共識股票",  "/consensus"),
+            ("📊 多空評分",  "/scorecard"),
+            ("📰 早報",      "/morning"),
+        ))]
+    except Exception as e:
+        logger.error(f"[midday] {e}")
+        return [_text(f"❌ 盤中解說失敗：{e}", qr_items(("重試", "/midday")))]
+
+
+async def _cmd_fundcost(code: str, uid: str) -> list:
+    """個股資金成本分析"""
+    try:
+        from backend.services.fundcost_service import get_fundcost, format_fundcost_report
+        data   = await get_fundcost(code)
+        report = format_fundcost_report(data, code)
+        return [_text(report[:4800], qr_items(
+            ("📊 籌碼健康",  f"/chiphealth {code}"),
+            ("📈 技術評級",  f"/techrating {code}"),
+            ("🔁 法人連續",  f"/streak {code}"),
+            ("💹 報價",      f"/{code}"),
+        ))]
+    except Exception as e:
+        logger.error(f"[fundcost] {code} {e}")
+        return [_text(f"❌ 資金成本分析失敗：{e}",
+                      qr_items(("重試", f"/fundcost {code}")))]
+
+
+async def _cmd_us2tw(uid: str) -> list:
+    """美股台股聯動分析"""
+    try:
+        from backend.services.us2tw_service import get_us2tw, format_us2tw_report
+        data   = await get_us2tw()
+        report = format_us2tw_report(data)
+        return [_text(report[:4800], qr_items(
+            ("😱 恐慌貪婪",  "/feargreed"),
+            ("📊 盤中解說",  "/midday"),
+            ("🤝 共識股票",  "/consensus"),
+            ("🔍 選股",      "/screener"),
+        ))]
+    except Exception as e:
+        logger.error(f"[us2tw] {e}")
+        return [_text(f"❌ 美台聯動分析失敗：{e}", qr_items(("重試", "/us2tw")))]
+
+
+async def _cmd_techrating(code: str, uid: str) -> list:
+    """個股技術評級"""
+    try:
+        from backend.services.techrating_service import get_techrating, format_techrating_report
+        data   = await get_techrating(code)
+        report = format_techrating_report(data, code)
+        return [_text(report[:4800], qr_items(
+            ("💰 資金成本",  f"/fundcost {code}"),
+            ("📊 籌碼健康",  f"/chiphealth {code}"),
+            ("🔁 法人連續",  f"/streak {code}"),
+            ("💹 報價",      f"/{code}"),
+        ))]
+    except Exception as e:
+        logger.error(f"[techrating] {code} {e}")
+        return [_text(f"❌ 技術評級失敗：{e}",
+                      qr_items(("重試", f"/techrating {code}")))]
+
+
+async def _cmd_streak(code: str, uid: str) -> list:
+    """法人連續行為追蹤"""
+    try:
+        from backend.services.streak_service import get_streak, format_streak_report
+        data   = await get_streak(code)
+        report = format_streak_report(data, code)
+        return [_text(report[:4800], qr_items(
+            ("💰 資金成本",  f"/fundcost {code}"),
+            ("📊 籌碼健康",  f"/chiphealth {code}"),
+            ("📈 技術評級",  f"/techrating {code}"),
+            ("💹 報價",      f"/{code}"),
+        ))]
+    except Exception as e:
+        logger.error(f"[streak] {code} {e}")
+        return [_text(f"❌ 法人連續追蹤失敗：{e}",
+                      qr_items(("重試", f"/streak {code}")))]
+
+
+async def _cmd_feargreed(uid: str) -> list:
+    """台股恐慌貪婪指數"""
+    try:
+        from backend.services.feargreed_service import get_feargreed, format_feargreed_report
+        data   = await get_feargreed()
+        report = format_feargreed_report(data)
+        return [_text(report[:4800], qr_items(
+            ("📊 盤中解說",  "/midday"),
+            ("🌐 美台聯動",  "/us2tw"),
+            ("🎯 多空評分",  "/scorecard"),
+            ("🔍 選股",      "/screener"),
+        ))]
+    except Exception as e:
+        logger.error(f"[feargreed] {e}")
+        return [_text(f"❌ 恐慌貪婪指數失敗：{e}", qr_items(("重試", "/feargreed")))]
+
+
+async def _cmd_chiphealth(code: str, uid: str) -> list:
+    """個股籌碼健康度評分"""
+    try:
+        from backend.services.chiphealth_service import get_chiphealth, format_chiphealth_report
+        data   = await get_chiphealth(code)
+        report = format_chiphealth_report(data, code)
+        return [_text(report[:4800], qr_items(
+            ("💰 資金成本",  f"/fundcost {code}"),
+            ("📈 技術評級",  f"/techrating {code}"),
+            ("🔁 法人連續",  f"/streak {code}"),
+            ("💹 報價",      f"/{code}"),
+        ))]
+    except Exception as e:
+        logger.error(f"[chiphealth] {code} {e}")
+        return [_text(f"❌ 籌碼健康評分失敗：{e}",
+                      qr_items(("重試", f"/chiphealth {code}")))]

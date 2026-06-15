@@ -692,6 +692,25 @@ def start_scheduler() -> AsyncIOScheduler:
         id="daily_trade_plan", replace_existing=True,
     )
 
+    # ── Batch 9 排程 ──────────────────────────────────────────────────────────
+    # 盤中解說推播 — 10:30 + 13:00（週一至五）
+    scheduler.add_job(
+        _run_midday_push,
+        CronTrigger(day_of_week="mon-fri", hour=10, minute=30, timezone="Asia/Taipei"),
+        id="midday_push_1030", replace_existing=True,
+    )
+    scheduler.add_job(
+        _run_midday_push,
+        CronTrigger(day_of_week="mon-fri", hour=13, minute=0, timezone="Asia/Taipei"),
+        id="midday_push_1300", replace_existing=True,
+    )
+    # 技術評級每日更新 + 推播 — 15:30 收盤後（週一至五）
+    scheduler.add_job(
+        _run_techrating_update,
+        CronTrigger(day_of_week="mon-fri", hour=15, minute=30, timezone="Asia/Taipei"),
+        id="techrating_update", replace_existing=True,
+    )
+
     _apply_line_quota_safe_mode(scheduler)
     scheduler.start()
     logger.info("Scheduler started (morning report 08:30 / weekly report Fri 14:30)")
@@ -2414,3 +2433,23 @@ async def _run_weekplan_push() -> None:
         logger.info("[Scheduler] weekplan_push: done")
     except Exception as e:
         logger.error(f"[Scheduler] weekplan_push failed: {e}")
+
+
+async def _run_midday_push() -> None:
+    """盤中即時解說 — 10:30 / 13:00 推播"""
+    try:
+        from ..services.midday_service import push_midday_to_all
+        await push_midday_to_all()
+        logger.info("[Scheduler] midday_push: done")
+    except Exception as e:
+        logger.error(f"[Scheduler] midday_push failed: {e}")
+
+
+async def _run_techrating_update() -> None:
+    """技術評級每日更新 — 15:30 收盤後"""
+    try:
+        from ..services.techrating_service import update_watchlist_ratings
+        result = await update_watchlist_ratings()
+        logger.info(f"[Scheduler] techrating_update: {result}")
+    except Exception as e:
+        logger.error(f"[Scheduler] techrating_update failed: {e}")
