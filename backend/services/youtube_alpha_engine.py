@@ -14,6 +14,31 @@ import asyncio
 YOUTUBE_API_KEY  = os.getenv("YOUTUBE_API_KEY", "")
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 
+
+async def fetch_transcript(video_id: str, max_chars: int = 3000) -> str:
+    """用 youtube-transcript-api 抓取影片字幕，回傳純文字"""
+    try:
+        import asyncio as _asyncio
+        from youtube_transcript_api import YouTubeTranscriptApi, NoTranscriptFound, TranscriptsDisabled
+
+        def _get():
+            try:
+                segments = YouTubeTranscriptApi.get_transcript(
+                    video_id, languages=["zh-TW", "zh-Hant", "zh", "zh-Hans", "en"]
+                )
+                return " ".join(s["text"] for s in segments)
+            except (NoTranscriptFound, TranscriptsDisabled):
+                return ""
+
+        text = await _asyncio.to_thread(_get)
+        return text[:max_chars] if text else ""
+    except ImportError:
+        logger.debug("[transcript] youtube-transcript-api not installed")
+        return ""
+    except Exception as e:
+        logger.debug(f"[transcript] {video_id}: {e}")
+        return ""
+
 from ..utils.credit_guard import is_exhausted as _credit_exhausted, mark_exhausted as _mark_credit_exhausted
 
 # 台股代碼正則（4-5碼數字，常見格式）
@@ -98,27 +123,31 @@ def _mock_videos(channel_id: str) -> list[dict]:
     ]
 
 
-async def analyze_with_claude(title: str, description: str) -> dict:
-    """用 Claude API 做 NLP 分析，抽取股票和情緒"""
+async def analyze_with_claude(title: str, description: str, transcript: str = "") -> dict:
+    """用 Claude API 做 NLP 分析，抽取股票和情緒（transcript 優先）"""
     if _credit_exhausted() or not ANTHROPIC_API_KEY:
         return _rule_based_analysis(title, description)
 
+    content = transcript[:2500] if transcript else description[:500]
     try:
         import anthropic
         client = anthropic.AsyncAnthropic(api_key=ANTHROPIC_API_KEY)
         prompt = (
-            f"分析以下台股 YouTube 影片內容，以 JSON 格式回傳：\n\n"
-            f"標題：{title}\n描述：{description[:300]}\n\n"
-            f"請回傳：\n"
-            f"1. stocks: 提到的台股代碼列表（4碼數字）\n"
-            f"2. sentiment: strong_bullish/bullish/neutral/bearish/strong_bearish\n"
-            f"3. timeframe: short/medium/long\n"
-            f"4. key_points: 最多3個關鍵論點（繁體中文，每點20字內）\n\n"
-            f"只回傳 JSON，不要其他說明。"
+            f"你是台股分析助理，分析以下 YouTube 影片內容，以 JSON 格式回傳。\n\n"
+            f"標題：{title}\n"
+            f"{'字幕逐字稿：' + content if transcript else '影片描述：' + content}\n\n"
+            f"請回傳 JSON，包含：\n"
+            f"1. stocks: 提到的台股代碼列表（4碼數字，如 2330）\n"
+            f"2. sentiment: strong_bullish/bullish/neutral/bearish/strong_bearish（今日整體看多/看空）\n"
+            f"3. timeframe: short/medium/long（操作時間維度）\n"
+            f"4. key_points: 最多3個關鍵論點（繁體中文，每點20字內）\n"
+            f"5. summary: 200字以內的影片重點摘要（繁體中文）\n"
+            f"6. operation: 操作建議一句話（20字內）\n\n"
+            f"只回傳 JSON，不要 markdown 或其他說明。"
         )
         msg = await client.messages.create(
             model="claude-haiku-4-5-20251001",
-            max_tokens=300,
+            max_tokens=600,
             messages=[{"role": "user", "content": prompt}],
         )
         text = msg.content[0].text.strip()
@@ -181,13 +210,18 @@ def _rule_based_analysis(title: str, description: str) -> dict:
     }
 
 
-async def process_analyst_videos(analyst_id: str, channel_id: str) -> list[VideoAnalysis]:
-    """抓取並分析單一分析師的最新影片"""
+async def process_analyst_videos(analyst_id: str, channel_id: str,
+                                  with_transcript: bool = False) -> list[VideoAnalysis]:
+    """抓取並分析單一分析師的最新影片（可選擇是否抓字幕）"""
     videos  = await fetch_channel_videos(channel_id)
     results = []
 
     for v in videos:
-        analysis = await analyze_with_claude(v["title"], v.get("description", ""))
+        transcript = ""
+        if with_transcript and v.get("video_id") and not v["video_id"].startswith("mock_"):
+            transcript = await fetch_transcript(v["video_id"])
+
+        analysis = await analyze_with_claude(v["title"], v.get("description", ""), transcript)
         stocks   = analysis.get("stocks", [])
         if not stocks:
             stocks = list(set(STOCK_CODE_RE.findall(v["title"] + " " + v.get("description", ""))))
@@ -202,8 +236,12 @@ async def process_analyst_videos(analyst_id: str, channel_id: str) -> list[Video
             sentiment  = analysis.get("sentiment", "neutral"),
             timeframe  = analysis.get("timeframe", "medium"),
             key_points = analysis.get("key_points", []),
-            raw_text   = v["title"],
+            raw_text   = transcript[:500] if transcript else v["title"],
         ))
+        # Attach extra fields from Claude
+        results[-1].__dict__["summary"]   = analysis.get("summary", "")
+        results[-1].__dict__["operation"] = analysis.get("operation", "")
+        results[-1].__dict__["has_transcript"] = bool(transcript)
 
     return results
 

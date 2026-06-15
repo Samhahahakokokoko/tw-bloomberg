@@ -104,6 +104,13 @@ async def lifespan(app: FastAPI):
             await init_default_analysts()
         except Exception as _ae:
             logger.warning(f"Analyst init skipped: {_ae}")
+        try:
+            from .services.youtube_channel_seed import ensure_channels_seeded
+            seeded = await ensure_channels_seeded()
+            if seeded:
+                logger.info(f"YouTube channel seed: {seeded} new channels added")
+        except Exception as _se:
+            logger.warning(f"YouTube channel seed skipped: {_se}")
         logger.info("Starting background scheduler...")
         scheduler = start_scheduler()
         try:

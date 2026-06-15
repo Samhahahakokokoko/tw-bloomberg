@@ -149,6 +149,13 @@ def start_scheduler() -> AsyncIOScheduler:
         id="conference_reminder", replace_existing=True,
     )
 
+    # YouTube 分析師早報 — 每日 08:00（7大頻道新影片檢查+字幕分析+推播）
+    scheduler.add_job(
+        _run_youtube_morning_check,
+        CronTrigger(hour=8, minute=0, timezone="Asia/Taipei"),
+        id="youtube_morning_check", replace_existing=True,
+    )
+
     # 自選股週度評級更新 — 每週一 07:30
     scheduler.add_job(
         _run_weekly_rating_update,
@@ -1317,6 +1324,16 @@ async def _run_pipeline_overlay_prep():
         logger.info("[Pipeline 18:45] conviction: {} 檔達交易門檻", len(results))
     except Exception as e:
         logger.error(f"[Pipeline 18:45] conviction failed: {e}")
+
+
+async def _run_youtube_morning_check():
+    """每日 08:00 — 7大頻道新影片檢查+字幕分析+即時推播"""
+    try:
+        from ..services.youtube_analyst_push_service import run_morning_check
+        result = await run_morning_check()
+        logger.info(f"[Scheduler] youtube_morning_check: {result}")
+    except Exception as e:
+        logger.error(f"[Scheduler] youtube_morning_check failed: {e}")
 
 
 async def _run_youtube_fetch():

@@ -700,7 +700,7 @@ async def _handle_text(text: str, uid: str) -> list:
     if cmd == "/help":                          return [_text(_help_text(), _home_qr())]
     if cmd == "/screener":                      return await _cmd_screener(parts[1] if len(parts) > 1 else "top")
     if cmd == "/find"     and len(parts) >= 2:  return await _cmd_nl_screener(" ".join(parts[1:]))
-    if cmd == "/accuracy":                      return await _cmd_accuracy()
+    if cmd == "/accuracy" and len(parts) == 1: return await _cmd_accuracy()
     if cmd == "/advice":                        return await _cmd_daily_advice()
     if cmd == "/broker"   and len(parts) >= 2:  return await _cmd_broker(parts[1])
     if cmd == "/smart":
@@ -886,6 +886,8 @@ async def _handle_text(text: str, uid: str) -> list:
         if sub == "list":               return await _cmd_analyst_list()
         if sub == "ranking":            return await _cmd_analyst_ranking()
         if sub == "sandbox":            return await _cmd_analyst_sandbox()
+        if sub in ("yt", "youtube", "影片", "video"):
+            return await _cmd_analyst_yt_summary(uid)
         if sub == "dna" and len(parts) >= 3:
             return await _cmd_analyst_dna(parts[2])
         if sub == "approve" and len(parts) >= 3:
@@ -922,9 +924,17 @@ async def _handle_text(text: str, uid: str) -> list:
         # /analyst 2330 → 查詢特定股票的分析師觀點
         if sub and re.match(r"^\d{4,6}$", sub):
             return await _cmd_analyst_stock(sub.upper())
-        # /analyst → 今日共識報告
+        # /analyst → 今日共識報告（含 YouTube 彙整）
         return await _cmd_analyst_today()
-    if cmd == "/consensus":             return await _cmd_consensus_heatmap(uid)
+    if cmd == "/consensus":
+        # 升級：優先顯示 YouTube 分析師共識股
+        return await _cmd_yt_consensus(uid)
+    if cmd == "/accuracy":
+        # 支援 /accuracy [analyst_handle] 查特定分析師
+        handle = parts[1].lower() if len(parts) > 1 else ""
+        if handle:
+            return await _cmd_analyst_accuracy_by_id(handle, uid)
+        return await _cmd_accuracy()
 
     # ── 市場情報作戰系統 ──────────────────────────────────────────────────
     if cmd == "/timeline":
@@ -8752,3 +8762,68 @@ async def _cmd_journal_del(entry_id: int, uid: str) -> list:
     except Exception as e:
         logger.error(f"[journal del] uid={uid} error: {e}")
         return [_text(f"❌ 刪除失敗：{e}")]
+
+
+# ── YouTube Analyst Handler Functions ──────────────────────────────────────────
+
+async def _cmd_analyst_yt_summary(uid: str) -> list:
+    """YouTube 分析師觀點彙整"""
+    try:
+        from backend.services.youtube_analyst_push_service import (
+            get_latest_analyst_views, format_analyst_summary
+        )
+        views  = await get_latest_analyst_views()
+        report = format_analyst_summary(views)
+        return [_text(report[:4800], qr_items(
+            ("🤝 共識股票",   "/consensus"),
+            ("🎯 準確率排行", "/accuracy"),
+            ("📺 強制更新",   "/analyst yt"),
+            ("今日共識",      "/analyst"),
+        ))]
+    except Exception as e:
+        logger.error(f"[analyst_yt] error: {e}")
+        return [_text(f"❌ YouTube觀點彙整失敗：{e}",
+                      qr_items(("重試", "/analyst yt"), ("舊版共識", "/analyst")))]
+
+
+async def _cmd_yt_consensus(uid: str) -> list:
+    """YouTube 分析師共識股票"""
+    try:
+        from backend.services.youtube_analyst_push_service import (
+            get_consensus_stocks, format_consensus_stocks
+        )
+        data   = await get_consensus_stocks(days=7, min_analysts=2)
+        stocks = data.get("stocks", [])
+        if not stocks:
+            # Fallback to old consensus heatmap
+            return await _cmd_consensus_heatmap(uid)
+        report = format_consensus_stocks(data)
+        return [_text(report[:4800], qr_items(
+            ("📺 各師觀點",   "/analyst yt"),
+            ("🎯 準確率",     "/accuracy"),
+            ("🤖 今日共識",   "/analyst"),
+            ("🔍 選股",       "/screener"),
+        ))]
+    except Exception as e:
+        logger.error(f"[yt_consensus] error: {e}")
+        return await _cmd_consensus_heatmap(uid)
+
+
+async def _cmd_analyst_accuracy_by_id(handle: str, uid: str) -> list:
+    """查看特定分析師準確率"""
+    try:
+        from backend.services.youtube_analyst_push_service import (
+            get_analyst_accuracy_by_id, format_accuracy_report
+        )
+        data   = await get_analyst_accuracy_by_id(handle)
+        report = format_accuracy_report(data)
+        return [_text(report[:4800], qr_items(
+            ("📺 YouTube觀點", "/analyst yt"),
+            ("🤝 共識股票",    "/consensus"),
+            ("🏆 準確率排行",  "/analyst ranking"),
+        ))]
+    except Exception as e:
+        logger.error(f"[accuracy_by_id] {handle} error: {e}")
+        return [_text(f"❌ 查詢失敗：{e}",
+                      qr_items(("全體排行", "/analyst ranking"),
+                               ("重試", f"/accuracy {handle}")))]
