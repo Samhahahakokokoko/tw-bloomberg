@@ -247,15 +247,20 @@ async def process_analyst_videos(analyst_id: str, channel_id: str,
 
 
 async def save_analyst_calls(analyses: list[VideoAnalysis]):
-    """將分析結果存入資料庫"""
+    """將分析結果存入資料庫（mock 影片不存入）"""
     from ..models.database import AsyncSessionLocal
     from ..models.models import AnalystCall, Analyst
     from .twse_service import fetch_realtime_quote
     from sqlalchemy import select
 
+    real_analyses = [va for va in analyses if not va.video_id.startswith("mock_")]
+    if not real_analyses:
+        logger.debug("[youtube] save_analyst_calls: all mock, skip DB write")
+        return
+
     today = datetime.now().strftime("%Y-%m-%d")
     async with AsyncSessionLocal() as db:
-        for va in analyses:
+        for va in real_analyses:
             for stock_id in va.stocks:
                 # 抓取當日收盤價
                 entry_price = 0.0
@@ -289,14 +294,14 @@ async def save_analyst_calls(analyses: list[VideoAnalysis]):
 
         # 更新分析師 total_calls
         r2 = await db.execute(select(Analyst).where(Analyst.analyst_id.in_(
-            [a.analyst_id for a in analyses]
+            [a.analyst_id for a in real_analyses]
         )))
         for analyst in r2.scalars().all():
-            analyst.total_calls += sum(len(a.stocks) for a in analyses if a.analyst_id == analyst.analyst_id)
+            analyst.total_calls += sum(len(a.stocks) for a in real_analyses if a.analyst_id == analyst.analyst_id)
             analyst.updated_at = datetime.utcnow()
 
         await db.commit()
-    logger.info(f"[youtube] saved {len(analyses)} video analyses")
+    logger.info(f"[youtube] saved {len(real_analyses)} real video analyses (skipped {len(analyses)-len(real_analyses)} mock)")
 
 
 async def run_daily_fetch():
@@ -317,12 +322,7 @@ async def run_daily_fetch():
         except Exception as e:
             logger.warning(f"[youtube] {a['name']} failed: {e}")
 
-    # 若無真實 channel_id，用 mock 分析展示功能
     if total == 0:
-        logger.info("[youtube] no channel_ids configured, running mock analysis")
-        for a in analysts[:2]:
-            mock = await process_analyst_videos(a["analyst_id"], f"mock_{a['analyst_id']}")
-            await save_analyst_calls(mock)
-            total += len(mock)
+        logger.warning("[youtube] daily fetch: no real analyses saved (API may have failed or no new videos)")
 
-    logger.info(f"[youtube] daily fetch complete: {total} analyses")
+    logger.info(f"[youtube] daily fetch complete: {total} real analyses saved")

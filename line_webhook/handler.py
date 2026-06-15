@@ -927,6 +927,8 @@ async def _handle_text(text: str, uid: str) -> list:
         # /analyst → 今日共識報告（含 YouTube 彙整）
         return await _cmd_analyst_today()
     if cmd == "/consensus":
+        if len(parts) > 1 and parts[1].lower() == "debug":
+            return await _cmd_consensus_debug(uid)
         # 升級：優先顯示 YouTube 分析師共識股
         return await _cmd_yt_consensus(uid)
     if cmd == "/accuracy":
@@ -8807,6 +8809,20 @@ async def _cmd_yt_consensus(uid: str) -> list:
     except Exception as e:
         logger.error(f"[yt_consensus] error: {e}")
         return await _cmd_consensus_heatmap(uid)
+
+
+async def _cmd_consensus_debug(uid: str) -> list:
+    """顯示 analyst_calls DB 狀態供診斷"""
+    try:
+        from backend.services.youtube_analyst_push_service import get_consensus_debug
+        text = await get_consensus_debug()
+        return [_text(text[:4800], qr_items(
+            ("🤝 共識結果", "/consensus"),
+            ("🔄 刷新資料", "/analyst yt"),
+        ))]
+    except Exception as e:
+        logger.error(f"[consensus_debug] {e}")
+        return [_text(f"❌ Debug查詢失敗：{e}")]
 
 
 async def _cmd_analyst_accuracy_by_id(handle: str, uid: str) -> list:

@@ -8,6 +8,11 @@ from loguru import logger
 
 _last_seen: dict[str, str] = {}   # analyst_id → last video_id (in-memory)
 
+# 共識股快取（1小時TTL）
+_consensus_cache: dict | None = None
+_consensus_ts: float = 0.0
+_CONSENSUS_TTL = 3600
+
 SENTIMENT_LABEL = {
     "strong_bullish": "🔥 強力看多",
     "bullish":        "📈 看多",
@@ -44,8 +49,9 @@ async def run_morning_check() -> dict:
             vid_id = latest.get("video_id", "")
             pub    = latest.get("pub_date", "")
 
-            # Only process if video is new (today or yesterday)
-            if pub < yesterday:
+            # Only process if video is within the last 3 days (more lenient than 1 day)
+            cutoff_date = (date.today() - timedelta(days=3)).isoformat()
+            if pub < cutoff_date:
                 logger.debug(f"[yt_push] {ch['name']} latest video too old: {pub}")
                 continue
 
@@ -96,10 +102,17 @@ async def run_morning_check() -> dict:
         logger.info("[yt_push] no new videos today")
         return {"pushed": 0, "new_videos": 0}
 
-    # Save to DB
+    # Save to DB (only real videos, skip mocks)
     try:
         from .youtube_alpha_engine import save_analyst_calls
-        await save_analyst_calls([nv[2] for nv in new_videos])
+        real_videos = [nv for nv in new_videos if not nv[2].video_id.startswith("mock_")]
+        if real_videos:
+            await save_analyst_calls([nv[2] for nv in real_videos])
+            # Invalidate consensus cache so next query reflects new data
+            global _consensus_cache
+            _consensus_cache = None
+        else:
+            logger.debug("[yt_push] all new_videos are mock, skip DB write")
     except Exception as e:
         logger.warning(f"[yt_push] save_analyst_calls: {e}")
 
@@ -301,6 +314,79 @@ def format_analyst_summary(views: list[dict]) -> str:
     return "\n".join(lines)
 
 
+async def get_consensus_debug() -> str:
+    """Debug: 顯示 analyst_calls 表狀態、快取資訊、最新資料"""
+    from ..models.database import AsyncSessionLocal
+    from ..models.models import AnalystCall
+    from sqlalchemy import select, func, desc
+    import time as _time
+
+    lines = ["🔍 /consensus debug", "─" * 30]
+    try:
+        async with AsyncSessionLocal() as db:
+            # 總筆數
+            r_count = await db.execute(select(func.count()).select_from(AnalystCall))
+            total = r_count.scalar() or 0
+            lines.append(f"analyst_calls 總筆數：{total}")
+            lines.append("")
+
+            if total == 0:
+                lines.append("⚠️ 資料庫無任何分析師預測記錄")
+                lines.append("可能原因：YouTube API 失敗或排程未執行")
+            else:
+                # 每日筆數（近7天）
+                r_by_date = await db.execute(
+                    select(AnalystCall.date, func.count().label("cnt"))
+                    .group_by(AnalystCall.date)
+                    .order_by(desc(AnalystCall.date))
+                    .limit(7)
+                )
+                lines.append("每日筆數（近7天）：")
+                for row in r_by_date.all():
+                    lines.append(f"  {row.date}：{row.cnt} 筆")
+                lines.append("")
+
+                # 最新10筆
+                r_latest = await db.execute(
+                    select(AnalystCall)
+                    .order_by(desc(AnalystCall.created_at))
+                    .limit(10)
+                )
+                latest_rows = r_latest.scalars().all()
+                lines.append("最新10筆記錄：")
+                for c in latest_rows:
+                    is_mock = "(mock)" if (c.source_title or "").startswith("【今日分析】散熱") else ""
+                    lines.append(f"  {c.date} {c.analyst_id} {c.stock_id} {c.sentiment} {is_mock}")
+                lines.append("")
+
+                # 非mock筆數（今天）
+                from datetime import date as _date
+                today_str = _date.today().isoformat()
+                r_today = await db.execute(
+                    select(func.count()).select_from(AnalystCall)
+                    .where(AnalystCall.date == today_str)
+                )
+                today_cnt = r_today.scalar() or 0
+                lines.append(f"今日（{today_str}）筆數：{today_cnt}")
+
+    except Exception as e:
+        lines.append(f"❌ DB查詢失敗：{e}")
+
+    # 快取狀態
+    global _consensus_cache, _consensus_ts
+    cache_age = int(_time.time() - _consensus_ts) if _consensus_ts else -1
+    lines += ["", "快取狀態："]
+    if _consensus_cache is not None and cache_age >= 0:
+        lines.append(f"  有快取 / {cache_age}秒前更新 / TTL={_CONSENSUS_TTL}s")
+        lines.append(f"  快取共識股：{len(_consensus_cache.get('stocks',[]))} 個")
+    else:
+        lines.append("  無快取（下次查詢會直接讀DB）")
+
+    lines += ["", "排程：08:00 晨間推播 / 16:00 每日抓取"]
+    lines.append("輸入 /consensus 看實際共識結果")
+    return "\n".join(lines)
+
+
 async def get_analyst_accuracy_by_id(analyst_id: str) -> dict:
     """取得特定分析師準確率（分析師代號或handle）"""
     from ..models.database import AsyncSessionLocal
@@ -398,8 +484,13 @@ def format_accuracy_report(data: dict) -> str:
     return "\n".join(lines)
 
 
-async def get_consensus_stocks(days: int = 7, min_analysts: int = 2) -> dict:
-    """找出近N天被多位分析師同時點名的股票"""
+async def get_consensus_stocks(days: int = 7, min_analysts: int = 2, force: bool = False) -> dict:
+    """找出近N天被多位分析師同時點名的股票（1小時TTL快取）"""
+    global _consensus_cache, _consensus_ts
+    if not force and _consensus_cache is not None and time.time() - _consensus_ts < _CONSENSUS_TTL:
+        logger.debug("[consensus] returning cached result")
+        return _consensus_cache
+
     from ..models.database import AsyncSessionLocal
     from ..models.models import AnalystCall
     from sqlalchemy import select, func
@@ -407,6 +498,7 @@ async def get_consensus_stocks(days: int = 7, min_analysts: int = 2) -> dict:
     from collections import defaultdict
 
     cutoff = (date.today() - timedelta(days=days)).isoformat()
+    logger.info(f"[consensus] querying DB: date >= {cutoff}, min_analysts={min_analysts}")
 
     stock_analysts: dict = defaultdict(set)
     stock_sentiments: dict = defaultdict(list)
@@ -440,7 +532,11 @@ async def get_consensus_stocks(days: int = 7, min_analysts: int = 2) -> dict:
         })
 
     consensus.sort(key=lambda x: x["analyst_cnt"], reverse=True)
-    return {"stocks": consensus, "days": days, "min_analysts": min_analysts}
+    result = {"stocks": consensus, "days": days, "min_analysts": min_analysts, "cutoff": cutoff}
+    _consensus_cache = result
+    _consensus_ts = time.time()
+    logger.info(f"[consensus] found {len(consensus)} consensus stocks, cache updated")
+    return result
 
 
 def format_consensus_stocks(data: dict) -> str:
