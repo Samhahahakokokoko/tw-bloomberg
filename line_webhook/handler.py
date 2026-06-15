@@ -1329,6 +1329,44 @@ async def _handle_text(text: str, uid: str) -> list:
                      ("鴻海", "/chiphealth 2317"),   ("聯電", "/chiphealth 2303"))
         )]
 
+    # ── Batch 10: AI學習/多時框/供應鏈/季節性/空頭掃描/行為分析/即時快訊 ──
+    # 功能1: AI自動學習報告
+    if cmd in ("/ailearn", "/ailearn2", "/mlreport"):
+        return await _cmd_ailearn(uid)
+    # 功能2: 多時框架分析
+    if cmd in ("/mtf", "/multiframe", "/mtfanalysis"):
+        code = parts[1].upper() if len(parts) > 1 else ""
+        return await _cmd_mtf(code, uid) if code else [_text(
+            "格式：/mtf 股票代號\n例：/mtf 2330",
+            qr_items(("台積電", "/mtf 2330"), ("聯發科", "/mtf 2454"),
+                     ("鴻海", "/mtf 2317"),   ("台股ETF", "/mtf 0050"))
+        )]
+    # 功能3: 供應鏈分析
+    if cmd in ("/supply", "/supplychain", "/chain"):
+        query = " ".join(parts[1:]).strip() if len(parts) > 1 else ""
+        return await _cmd_supply_chain(query, uid) if query else [_text(
+            "格式：/supply 公司名稱\n例：/supply 台積電\n支援：台積電/聯發科/鴻海/廣達/台達電",
+            qr_items(("台積電", "/supply 台積電"), ("聯發科", "/supply 聯發科"),
+                     ("鴻海", "/supply 鴻海"),    ("廣達", "/supply 廣達"))
+        )]
+    # 功能4: 個股季節性分析
+    if cmd in ("/seasonal", "/season", "/monthly_pattern"):
+        code = parts[1].upper() if len(parts) > 1 else ""
+        return await _cmd_seasonal(code, uid) if code else [_text(
+            "格式：/seasonal 股票代號\n例：/seasonal 2330",
+            qr_items(("台積電", "/seasonal 2330"), ("聯發科", "/seasonal 2454"),
+                     ("台灣50", "/seasonal 0050"),  ("鴻海", "/seasonal 2317"))
+        )]
+    # 功能5: 空頭訊號掃描
+    if cmd in ("/bearish", "/bearish_scan", "/shortsignal"):
+        return await _cmd_bearish_scan(uid)
+    # 功能6: 個人交易行為分析
+    if cmd in ("/behavior", "/myhabits", "/tradebehavior"):
+        return await _cmd_behavior(uid)
+    # 功能7: 即時重大快訊
+    if cmd in ("/breaking", "/breaknews", "/urgent"):
+        return await _cmd_breaking_news(uid)
+
     # ── 純數字 4-6 碼 → 直接查報價 ─────────────────────────────────────────
     t = text.strip()
     if t.isdigit() and 4 <= len(t) <= 6:
@@ -9011,3 +9049,126 @@ async def _cmd_chiphealth(code: str, uid: str) -> list:
         logger.error(f"[chiphealth] {code} {e}")
         return [_text(f"❌ 籌碼健康評分失敗：{e}",
                       qr_items(("重試", f"/chiphealth {code}")))]
+
+# ── Batch 10 Handler Functions ────────────────────────────────────────────────
+
+async def _cmd_ailearn(uid: str) -> list:
+    """AI 自動學習報告"""
+    try:
+        from backend.services.ailearn_service import get_ailearn_report, format_ailearn_report
+        data   = await get_ailearn_report()
+        report = format_ailearn_report(data)
+        return [_text(report[:4800], qr_items(
+            ("📊 技術評級",   "/techrating 2330"),
+            ("😱 恐慌貪婪",   "/feargreed"),
+            ("📉 空頭掃描",   "/bearish"),
+            ("📓 交易日記",   "/journal"),
+        ))]
+    except Exception as e:
+        logger.error(f"[ailearn] {e}")
+        return [_text(f"❌ AI學習報告失敗：{e}", qr_items(("重試", "/ailearn")))]
+
+
+async def _cmd_mtf(code: str, uid: str) -> list:
+    """多時框架技術分析"""
+    try:
+        from backend.services.mtf_service import get_mtf, format_mtf_report
+        data   = await get_mtf(code)
+        report = format_mtf_report(data, code)
+        return [_text(report[:4800], qr_items(
+            ("📊 技術評級",  f"/techrating {code}"),
+            ("💰 資金成本",  f"/fundcost {code}"),
+            ("📅 季節性",    f"/seasonal {code}"),
+            ("💹 報價",      f"/{code}"),
+        ))]
+    except Exception as e:
+        logger.error(f"[mtf] {code} {e}")
+        return [_text(f"❌ 多時框架分析失敗：{e}",
+                      qr_items(("重試", f"/mtf {code}")))]
+
+
+async def _cmd_supply_chain(query: str, uid: str) -> list:
+    """供應鏈分析"""
+    try:
+        from backend.services.supply_chain_service import get_supply_chain, format_supply_chain_report
+        data   = await get_supply_chain(query)
+        report = format_supply_chain_report(data)
+        return [_text(report[:4800], qr_items(
+            ("台積電", "/supply 台積電"),
+            ("聯發科", "/supply 聯發科"),
+            ("鴻海",   "/supply 鴻海"),
+            ("廣達",   "/supply 廣達"),
+        ))]
+    except Exception as e:
+        logger.error(f"[supply_chain] {query} {e}")
+        return [_text(f"❌ 供應鏈分析失敗：{e}",
+                      qr_items(("台積電", "/supply 台積電")))]
+
+
+async def _cmd_seasonal(code: str, uid: str) -> list:
+    """個股季節性分析"""
+    try:
+        from backend.services.seasonal_service import get_seasonal, format_seasonal_report
+        data   = await get_seasonal(code)
+        report = format_seasonal_report(data, code)
+        return [_text(report[:4800], qr_items(
+            ("📊 技術評級",  f"/techrating {code}"),
+            ("📅 多時框架",  f"/mtf {code}"),
+            ("💰 資金成本",  f"/fundcost {code}"),
+            ("💹 報價",      f"/{code}"),
+        ))]
+    except Exception as e:
+        logger.error(f"[seasonal] {code} {e}")
+        return [_text(f"❌ 季節性分析失敗：{e}",
+                      qr_items(("重試", f"/seasonal {code}")))]
+
+
+async def _cmd_bearish_scan(uid: str) -> list:
+    """空頭訊號掃描"""
+    try:
+        from backend.services.bearish_scanner_service import get_bearish_scan, format_bearish_report
+        data   = await get_bearish_scan()
+        report = format_bearish_report(data)
+        return [_text(report[:4800], qr_items(
+            ("😱 恐慌貪婪",  "/feargreed"),
+            ("📊 盤中解說",  "/midday"),
+            ("🔍 強勢選股",  "/screener"),
+            ("📊 多空評分",  "/scorecard"),
+        ))]
+    except Exception as e:
+        logger.error(f"[bearish_scan] {e}")
+        return [_text(f"❌ 空頭掃描失敗：{e}", qr_items(("重試", "/bearish")))]
+
+
+async def _cmd_behavior(uid: str) -> list:
+    """個人交易行為分析"""
+    try:
+        from backend.services.behavior_service import get_behavior, format_behavior_report
+        data   = await get_behavior(uid)
+        report = format_behavior_report(data)
+        return [_text(report[:4800], qr_items(
+            ("📓 投資日記",  "/journal"),
+            ("➕ 新增記錄",  "/journal add"),
+            ("🤖 AI學習",   "/ailearn"),
+            ("💹 績效",      "/perf"),
+        ))]
+    except Exception as e:
+        logger.error(f"[behavior] {e}")
+        return [_text(f"❌ 行為分析失敗：{e}", qr_items(("重試", "/behavior")))]
+
+
+async def _cmd_breaking_news(uid: str) -> list:
+    """即時重大快訊"""
+    try:
+        from backend.services.breaking_news_service import get_breaking_news, format_breaking_report
+        data   = await get_breaking_news()
+        report = format_breaking_report(data)
+        return [_text(report[:4800], qr_items(
+            ("🔄 刷新",       "/breaking"),
+            ("📰 完整新聞",   "/news"),
+            ("😱 恐慌貪婪",   "/feargreed"),
+            ("📊 盤中解說",   "/midday"),
+        ))]
+    except Exception as e:
+        logger.error(f"[breaking_news] {e}")
+        return [_text(f"❌ 新聞快訊失敗：{e}", qr_items(("重試", "/breaking")))]

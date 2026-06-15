@@ -711,6 +711,20 @@ def start_scheduler() -> AsyncIOScheduler:
         id="techrating_update", replace_existing=True,
     )
 
+    # ── Batch 10 排程 ─────────────────────────────────────────────────────────
+    # 即時新聞快訊 — 每 30 分鐘（09:00–21:00，含週末）
+    scheduler.add_job(
+        _run_breaking_news_push,
+        CronTrigger(hour="9-21", minute="*/30", timezone="Asia/Taipei"),
+        id="breaking_news_push", replace_existing=True,
+    )
+    # AI學習結果追蹤 — 每日 07:00（檢查到期預測）
+    scheduler.add_job(
+        _run_ailearn_check,
+        CronTrigger(hour=7, minute=0, timezone="Asia/Taipei"),
+        id="ailearn_check", replace_existing=True,
+    )
+
     _apply_line_quota_safe_mode(scheduler)
     scheduler.start()
     logger.info("Scheduler started (morning report 08:30 / weekly report Fri 14:30)")
@@ -2453,3 +2467,24 @@ async def _run_techrating_update() -> None:
         logger.info(f"[Scheduler] techrating_update: {result}")
     except Exception as e:
         logger.error(f"[Scheduler] techrating_update failed: {e}")
+
+
+async def _run_breaking_news_push() -> None:
+    """即時重大新聞推播 — 每30分鐘，只推播評分>=0.80且尚未推播的新聞"""
+    try:
+        from ..services.breaking_news_service import push_breaking_news
+        pushed = await push_breaking_news()
+        if pushed:
+            logger.info(f"[Scheduler] breaking_news_push: {pushed} items pushed")
+    except Exception as e:
+        logger.error(f"[Scheduler] breaking_news_push failed: {e}")
+
+
+async def _run_ailearn_check() -> None:
+    """AI學習結果追蹤 — 每日07:00，更新已到期的預測結果"""
+    try:
+        from ..services.ailearn_service import check_and_update_results
+        updated = await check_and_update_results()
+        logger.info(f"[Scheduler] ailearn_check: {updated} predictions updated")
+    except Exception as e:
+        logger.error(f"[Scheduler] ailearn_check failed: {e}")
