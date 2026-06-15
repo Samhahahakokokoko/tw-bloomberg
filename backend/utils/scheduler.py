@@ -195,6 +195,26 @@ def start_scheduler() -> AsyncIOScheduler:
         id="monthly_report_check", replace_existing=True,
     )
 
+    # 第五批排程 ─────────────────────────────────────────────────────────────
+    # 開盤前增強簡報 — 週一至五 08:10（早於一般早報 08:30）
+    scheduler.add_job(
+        _run_premarket_brief,
+        CronTrigger(day_of_week="mon-fri", hour=8, minute=10, timezone="Asia/Taipei"),
+        id="premarket_brief", replace_existing=True,
+    )
+    # 多空儀表板快照 — 盤中每 30 分鐘
+    scheduler.add_job(
+        _run_dashboard_snapshot,
+        CronTrigger(day_of_week="mon-fri", hour="9-13", minute="*/30", timezone="Asia/Taipei"),
+        id="dashboard_snapshot", replace_existing=True,
+    )
+    # PCR 警報 — 盤中每小時（PCR > 1.5 推播）
+    scheduler.add_job(
+        _run_pcr_alert,
+        CronTrigger(day_of_week="mon-fri", hour="9-13", minute=45, timezone="Asia/Taipei"),
+        id="pcr_alert", replace_existing=True,
+    )
+
     # Alpha Pipeline — 18:00 Layer 1: 動能啟動掃描 + 資金流向
     scheduler.add_job(
         _run_pipeline_movers,
@@ -2267,3 +2287,50 @@ async def _run_monthly_report_check() -> None:
             logger.info(f"[Scheduler] monthly_report pushed: {ok}")
     except Exception as e:
         logger.error(f"[Scheduler] monthly_report_check failed: {e}")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 第五批排程 runner functions
+# ══════════════════════════════════════════════════════════════════════════════
+
+async def _run_premarket_brief() -> None:
+    """開盤前增強簡報 — 週一至五 08:10"""
+    try:
+        from ..services.premarket_brief_service import push_premarket_brief
+        ok = await push_premarket_brief()
+        logger.info(f"[Scheduler] premarket_brief: {ok}")
+    except Exception as e:
+        logger.error(f"[Scheduler] premarket_brief failed: {e}")
+
+
+async def _run_dashboard_snapshot() -> None:
+    """多空儀表板快照 — 盤中每 30 分鐘（異常時推播）"""
+    try:
+        from ..services.dashboard_service import get_dashboard, format_dashboard_report
+        from ..services.line_push import push_to_admin
+        data  = await get_dashboard()
+        score = data.get("score", 50)
+        # Only push on extreme readings
+        if score >= 80 or score <= 20:
+            report = format_dashboard_report(data)
+            grade  = data.get("grade", "")
+            await push_to_admin(f"⚡ 多空極值警報【{grade}，{score}分】\n\n{report[:2000]}")
+            logger.info(f"[Scheduler] dashboard_snapshot: score={score}")
+    except Exception as e:
+        logger.error(f"[Scheduler] dashboard_snapshot failed: {e}")
+
+
+async def _run_pcr_alert() -> None:
+    """PCR 極值警報 — 每小時"""
+    try:
+        from ..services.pcr_service import get_pcr_data, format_pcr_report
+        from ..services.line_push import push_to_admin
+        data = await get_pcr_data()
+        pcr  = data.get("pcr", 1.0)
+        if pcr >= 1.5 or pcr <= 0.6:
+            report = format_pcr_report(data)
+            tag = "市場極度悲觀" if pcr >= 1.5 else "市場過度樂觀"
+            await push_to_admin(f"📊 PCR 警報！{tag}（PCR={pcr:.3f}）\n\n{report[:2000]}")
+            logger.info(f"[Scheduler] pcr_alert: PCR={pcr}")
+    except Exception as e:
+        logger.error(f"[Scheduler] pcr_alert failed: {e}")

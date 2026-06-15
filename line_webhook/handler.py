@@ -1111,6 +1111,44 @@ async def _handle_text(text: str, uid: str) -> list:
     if cmd in ("/monthly", "/monthreport"):
         return await _cmd_monthly_report(uid)
 
+    # ── 第五批 7 大新功能 ────────────────────────────────────────────────────
+    # 功能1: 籌碼洗盤偵測
+    if cmd in ("/washout", "/wash"):
+        code = parts[1].upper() if len(parts) > 1 else ""
+        return await _cmd_washout(code, uid) if code else [_text(
+            "格式：/washout 股票代號\n例：/washout 2330",
+            qr_items(("台積電", "/washout 2330"), ("聯發科", "/washout 2454"),
+                     ("鴻海", "/washout 2317"), ("聯電", "/washout 2303"))
+        )]
+    # 功能2: 選擇權 Put/Call 比率
+    if cmd in ("/pcr", "/putcall"):
+        return await _cmd_pcr(uid)
+    # 功能3: 跨市場相關性
+    if cmd in ("/global", "/world", "/overseas"):
+        return await _cmd_global_market(uid)
+    # 功能4: 個股支撐壓力
+    if cmd in ("/sr", "/support", "/resistance"):
+        code = parts[1].upper() if len(parts) > 1 else ""
+        return await _cmd_support_resistance(code, uid) if code else [_text(
+            "格式：/sr 股票代號\n例：/sr 2330",
+            qr_items(("台積電", "/sr 2330"), ("聯發科", "/sr 2454"),
+                     ("鴻海", "/sr 2317"), ("聯電", "/sr 2303"))
+        )]
+    # 功能5: 開盤前增強簡報
+    if cmd in ("/premarket", "/brief", "/morning2"):
+        return await _cmd_premarket_brief(uid)
+    # 功能6: 走勢相似度搜尋
+    if cmd in ("/similar", "/simsearch"):
+        code = parts[1].upper() if len(parts) > 1 else ""
+        return await _cmd_similar_stocks(code, uid) if code else [_text(
+            "格式：/similar 股票代號\n例：/similar 2330",
+            qr_items(("台積電", "/similar 2330"), ("聯發科", "/similar 2454"),
+                     ("鴻海", "/similar 2317"), ("聯電", "/similar 2303"))
+        )]
+    # 功能7: 多空力道儀表板
+    if cmd in ("/dashboard", "/dash", "/board"):
+        return await _cmd_dashboard(uid)
+
     # ── 純數字 4-6 碼 → 直接查報價 ─────────────────────────────────────────
     t = text.strip()
     if t.isdigit() and 4 <= len(t) <= 6:
@@ -8024,3 +8062,134 @@ async def _cmd_monthly_report(uid: str) -> list:
     except Exception as e:
         logger.error(f"[monthly] uid={uid} error: {e}")
         return [_text(f"❌ 月報生成失敗：{e}", qr_items(("重試", "/monthly")))]
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 第五批 7 大新功能 handler functions
+# ══════════════════════════════════════════════════════════════════════════════
+
+async def _cmd_washout(code: str, uid: str) -> list:
+    try:
+        from backend.services.washout_service import (
+            get_washout_analysis, format_washout_report
+        )
+        data   = await get_washout_analysis(code)
+        report = format_washout_report(data)
+        return [_text(report[:4800], qr_items(
+            ("📐 支撐壓力",  f"/sr {code}"),
+            ("🔗 相似股",    f"/similar {code}"),
+            ("🐋 大戶追蹤",  f"/bigplayer {code}"),
+            ("💎 估值評估",  f"/value {code}"),
+        ))]
+    except Exception as e:
+        logger.error(f"[washout] {code} error: {e}")
+        return [_text(f"❌ 洗盤偵測失敗：{e}",
+                      qr_items(("台積電", "/washout 2330"), ("重試", f"/washout {code}")))]
+
+
+async def _cmd_pcr(uid: str) -> list:
+    try:
+        from backend.services.pcr_service import get_pcr_data, format_pcr_report
+        data   = await get_pcr_data()
+        report = format_pcr_report(data)
+        return [_text(report[:4800], qr_items(
+            ("📊 多空儀表板", "/dashboard"),
+            ("🌐 全球市場",   "/global"),
+            ("😱 VIX 恐慌",   "/vix"),
+            ("🦢 黑天鵝",     "/blackswan"),
+        ))]
+    except Exception as e:
+        logger.error(f"[pcr] uid={uid} error: {e}")
+        return [_text(f"❌ PCR 資料取得失敗：{e}", qr_items(("重試", "/pcr")))]
+
+
+async def _cmd_global_market(uid: str) -> list:
+    try:
+        from backend.services.global_market_service import (
+            get_global_market, format_global_report
+        )
+        data   = await get_global_market()
+        report = format_global_report(data)
+        return [_text(report[:4800], qr_items(
+            ("📊 多空儀表板", "/dashboard"),
+            ("😱 VIX",        "/vix"),
+            ("🌅 開盤簡報",   "/premarket"),
+            ("🔄 資金輪動",   "/rotation"),
+        ))]
+    except Exception as e:
+        logger.error(f"[global] uid={uid} error: {e}")
+        return [_text(f"❌ 全球市場資料失敗：{e}", qr_items(("重試", "/global")))]
+
+
+async def _cmd_support_resistance(code: str, uid: str) -> list:
+    try:
+        from backend.services.support_resistance_service import (
+            get_support_resistance, format_sr_report
+        )
+        data   = await get_support_resistance(code)
+        report = format_sr_report(data)
+        return [_text(report[:4800], qr_items(
+            ("🔍 洗盤偵測",  f"/washout {code}"),
+            ("🔗 相似股",    f"/similar {code}"),
+            ("⚖️ RRR計算",   f"/rrr {code} 100 95 115"),
+            ("💎 估值",      f"/value {code}"),
+        ))]
+    except Exception as e:
+        logger.error(f"[sr] {code} error: {e}")
+        return [_text(f"❌ 支撐壓力計算失敗：{e}",
+                      qr_items(("台積電", "/sr 2330"), ("重試", f"/sr {code}")))]
+
+
+async def _cmd_premarket_brief(uid: str) -> list:
+    try:
+        from backend.services.premarket_brief_service import (
+            get_premarket_brief, format_premarket_brief
+        )
+        data   = await get_premarket_brief()
+        report = format_premarket_brief(data)
+        return [_text(report[:4800], qr_items(
+            ("🌍 全球市場",  "/global"),
+            ("📊 多空儀表板","/dashboard"),
+            ("📊 選擇權PCR", "/pcr"),
+            ("😱 VIX",       "/vix"),
+        ))]
+    except Exception as e:
+        logger.error(f"[premarket] uid={uid} error: {e}")
+        return [_text(f"❌ 開盤簡報失敗：{e}", qr_items(("重試", "/premarket")))]
+
+
+async def _cmd_similar_stocks(code: str, uid: str) -> list:
+    try:
+        from backend.services.similarity_service import (
+            get_similar_stocks, format_similarity_report
+        )
+        data   = await get_similar_stocks(code)
+        report = format_similarity_report(data)
+        return [_text(report[:4800], qr_items(
+            ("📐 支撐壓力",  f"/sr {code}"),
+            ("🔍 洗盤偵測",  f"/washout {code}"),
+            ("📊 因子分析",  f"/factor {code}"),
+            ("💎 估值評估",  f"/value {code}"),
+        ))]
+    except Exception as e:
+        logger.error(f"[similar] {code} error: {e}")
+        return [_text(f"❌ 相似度搜尋失敗：{e}",
+                      qr_items(("台積電", "/similar 2330"), ("重試", f"/similar {code}")))]
+
+
+async def _cmd_dashboard(uid: str) -> list:
+    try:
+        from backend.services.dashboard_service import (
+            get_dashboard, format_dashboard_report
+        )
+        data   = await get_dashboard()
+        report = format_dashboard_report(data)
+        return [_text(report[:4800], qr_items(
+            ("🌍 全球市場",  "/global"),
+            ("📊 選擇權PCR", "/pcr"),
+            ("🌅 開盤簡報",  "/premarket"),
+            ("🔄 資金輪動",  "/rotation"),
+        ))]
+    except Exception as e:
+        logger.error(f"[dashboard] uid={uid} error: {e}")
+        return [_text(f"❌ 儀表板資料失敗：{e}", qr_items(("重試", "/dashboard")))]
