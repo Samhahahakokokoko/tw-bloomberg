@@ -1188,6 +1188,48 @@ async def _handle_text(text: str, uid: str) -> list:
                      ("鴻海", "/forecast 2317"), ("聯電", "/forecast 2303"))
         )]
 
+    # ── Batch 7: 量價背離/基差/月營收/類股輪動/ADR/主題追蹤/停利策略 ────────
+    # 功能1: 量價背離偵測
+    if cmd in ("/divergence", "/div2", "/volprice"):
+        code = parts[1].upper() if len(parts) > 1 else ""
+        return await _cmd_divergence(code, uid) if code else [_text(
+            "格式：/divergence 股票代號\n例：/divergence 2330",
+            qr_items(("台積電", "/divergence 2330"), ("聯發科", "/divergence 2454"),
+                     ("鴻海", "/divergence 2317"),   ("聯電", "/divergence 2303"))
+        )]
+    # 功能2: 台指期現基差追蹤
+    if cmd in ("/basis", "/futbasis", "/spreadtx"):
+        return await _cmd_basis(uid)
+    # 功能3: 個股月營收追蹤
+    if cmd in ("/revenue", "/rev", "/monthrev"):
+        code = parts[1].upper() if len(parts) > 1 else ""
+        return await _cmd_revenue(code, uid) if code else [_text(
+            "格式：/revenue 股票代號\n例：/revenue 2330",
+            qr_items(("台積電", "/revenue 2330"), ("聯發科", "/revenue 2454"),
+                     ("鴻海", "/revenue 2317"),   ("台塑", "/revenue 1301"))
+        )]
+    # 功能4: 類股輪動訊號
+    if cmd in ("/rotate", "/rotation2", "/sectorflow"):
+        return await _cmd_rotate(uid)
+    # 功能5: 台股 ADR 溢價追蹤
+    if cmd in ("/adr", "/adrprice", "/usadr"):
+        return await _cmd_adr(uid)
+    # 功能6: 主題股追蹤（升級版，支援帶參數）
+    if cmd in ("/theme2", "/themes", "/themetrack"):
+        keyword = " ".join(parts[1:]).strip().lower() if len(parts) > 1 else ""
+        return await _cmd_theme_tracker(keyword, uid)
+    if cmd == "/theme" and len(parts) > 1:
+        keyword = " ".join(parts[1:]).strip().lower()
+        return await _cmd_theme_tracker(keyword, uid)
+    # 功能7: 智慧停利策略
+    if cmd in ("/exit", "/exstrat", "/takeprofit"):
+        code = parts[1].upper() if len(parts) > 1 else ""
+        return await _cmd_exit_strategy(code, uid) if code else [_text(
+            "格式：/exit 股票代號\n例：/exit 2330",
+            qr_items(("台積電", "/exit 2330"), ("聯發科", "/exit 2454"),
+                     ("鴻海", "/exit 2317"),   ("聯電", "/exit 2303"))
+        )]
+
     # ── 純數字 4-6 碼 → 直接查報價 ─────────────────────────────────────────
     t = text.strip()
     if t.isdigit() and 4 <= len(t) <= 6:
@@ -8365,3 +8407,131 @@ async def _cmd_price_forecast(code: str, uid: str) -> list:
         logger.error(f"[forecast] {code} error: {e}")
         return [_text(f"❌ AI預測失敗：{e}",
                       qr_items(("台積電", "/forecast 2330"), ("重試", f"/forecast {code}")))]
+
+
+# ── Batch 7 Handler Functions ─────────────────────────────────────────────────
+
+async def _cmd_divergence(code: str, uid: str) -> list:
+    try:
+        from backend.services.divergence_service import (
+            get_divergence, format_divergence_report
+        )
+        data   = await get_divergence(code)
+        report = format_divergence_report(data)
+        return [_text(report[:4800], qr_items(
+            ("📈 AI預測",    f"/forecast {code}"),
+            ("📐 支撐壓力",  f"/sr {code}"),
+            ("🎯 停利策略",  f"/exit {code}"),
+            ("💹 月營收",    f"/revenue {code}"),
+        ))]
+    except Exception as e:
+        logger.error(f"[divergence] {code} error: {e}")
+        return [_text(f"❌ 背離偵測失敗：{e}",
+                      qr_items(("台積電", "/divergence 2330"), ("重試", f"/divergence {code}")))]
+
+
+async def _cmd_basis(uid: str) -> list:
+    try:
+        from backend.services.basis_service import get_basis, format_basis_report
+        data   = await get_basis()
+        report = format_basis_report(data)
+        return [_text(report[:4800], qr_items(
+            ("💳 融資概況",    "/margin"),
+            ("🔄 類股輪動",    "/rotate"),
+            ("🌐 ADR溢價",     "/adr"),
+            ("📊 多空儀表板",  "/dashboard"),
+        ))]
+    except Exception as e:
+        logger.error(f"[basis] error: {e}")
+        return [_text(f"❌ 基差追蹤失敗：{e}", qr_items(("重試", "/basis")))]
+
+
+async def _cmd_revenue(code: str, uid: str) -> list:
+    try:
+        from backend.services.revenue_service import get_revenue, format_revenue_report
+        data   = await get_revenue(code)
+        report = format_revenue_report(data)
+        return [_text(report[:4800], qr_items(
+            ("📈 AI預測",    f"/forecast {code}"),
+            ("🔍 量價背離",  f"/divergence {code}"),
+            ("🎯 停利策略",  f"/exit {code}"),
+            ("⚖️ 估值",      f"/pe {code}"),
+        ))]
+    except Exception as e:
+        logger.error(f"[revenue] {code} error: {e}")
+        return [_text(f"❌ 月營收查詢失敗：{e}",
+                      qr_items(("台積電", "/revenue 2330"), ("重試", f"/revenue {code}")))]
+
+
+async def _cmd_rotate(uid: str) -> list:
+    try:
+        from backend.services.rotate_service import get_rotation, format_rotation_report
+        data   = await get_rotation()
+        report = format_rotation_report(data)
+        return [_text(report[:4800], qr_items(
+            ("🎯 主題追蹤",    "/theme2"),
+            ("🌐 ADR溢價",     "/adr"),
+            ("⚡ 期現基差",    "/basis"),
+            ("💳 融資概況",    "/margin"),
+        ))]
+    except Exception as e:
+        logger.error(f"[rotate] error: {e}")
+        return [_text(f"❌ 輪動分析失敗：{e}", qr_items(("重試", "/rotate")))]
+
+
+async def _cmd_adr(uid: str) -> list:
+    try:
+        from backend.services.adr_service import get_adr, format_adr_report
+        data   = await get_adr()
+        report = format_adr_report(data)
+        return [_text(report[:4800], qr_items(
+            ("🔄 類股輪動",    "/rotate"),
+            ("⚡ 期現基差",    "/basis"),
+            ("📊 多空儀表板",  "/dashboard"),
+            ("🌏 全球市場",    "/global"),
+        ))]
+    except Exception as e:
+        logger.error(f"[adr] error: {e}")
+        return [_text(f"❌ ADR追蹤失敗：{e}", qr_items(("重試", "/adr")))]
+
+
+async def _cmd_theme_tracker(keyword: str, uid: str) -> list:
+    try:
+        from backend.services.theme_tracker_service import (
+            get_theme, format_theme_report
+        )
+        data   = await get_theme(keyword)
+        single = bool(keyword and keyword != "all")
+        report = format_theme_report(data, single=single)
+        qr = qr_items(
+            ("🔄 類股輪動",  "/rotate"),
+            ("🎯 停利策略",  "/exit 2330"),
+            ("📐 支撐壓力",  "/sr 2330"),
+            ("🔮 AI預測",    "/forecast 2330"),
+        )
+        return [_text(report[:4800], qr)]
+    except Exception as e:
+        logger.error(f"[theme_tracker] {keyword} error: {e}")
+        return [_text(f"❌ 主題追蹤失敗：{e}",
+                      qr_items(("全市場掃描", "/theme2"),
+                               ("示範AI", "/theme ai"),
+                               ("示範半導體", "/theme 半導體")))]
+
+
+async def _cmd_exit_strategy(code: str, uid: str) -> list:
+    try:
+        from backend.services.exit_strategy_service import (
+            get_exit_strategy, format_exit_report
+        )
+        data   = await get_exit_strategy(code)
+        report = format_exit_report(data)
+        return [_text(report[:4800], qr_items(
+            ("🔍 量價背離",  f"/divergence {code}"),
+            ("📐 支撐壓力",  f"/sr {code}"),
+            ("📈 AI預測",    f"/forecast {code}"),
+            ("💹 月營收",    f"/revenue {code}"),
+        ))]
+    except Exception as e:
+        logger.error(f"[exit] {code} error: {e}")
+        return [_text(f"❌ 停利策略失敗：{e}",
+                      qr_items(("台積電", "/exit 2330"), ("重試", f"/exit {code}")))]
