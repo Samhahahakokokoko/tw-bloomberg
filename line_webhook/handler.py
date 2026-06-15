@@ -1149,6 +1149,45 @@ async def _handle_text(text: str, uid: str) -> list:
     if cmd in ("/dashboard", "/dash", "/board"):
         return await _cmd_dashboard(uid)
 
+    # ── 第六批 7 大新功能 ────────────────────────────────────────────────────
+    # 功能1: AI 新聞事件影響評估
+    if cmd in ("/impact", "/newsimpact"):
+        event = " ".join(parts[1:]).strip() if len(parts) > 1 else ""
+        return await _cmd_news_impact(event, uid) if event else [_text(
+            "格式：/impact [新聞事件描述]\n例：/impact 台積電 CoWoS 需求下滑",
+            qr_items(("示範：CoWoS", "/impact 台積電 CoWoS 需求下滑"),
+                     ("示範：Fed降息", "/impact Fed 降息一碼"))
+        )]
+    # 功能2: 除權息追蹤升級
+    if cmd in ("/dividend", "/div", "/exdiv"):
+        return await _cmd_dividend_tracker(uid)
+    # 功能3: 隔日沖追蹤
+    if cmd in ("/daytrader", "/dt", "/dtrade"):
+        code = parts[1].upper() if len(parts) > 1 else ""
+        return await _cmd_daytrader(code, uid) if code else [_text(
+            "格式：/daytrader 股票代號\n例：/daytrader 2330",
+            qr_items(("台積電", "/daytrader 2330"), ("聯發科", "/daytrader 2454"),
+                     ("鴻海", "/daytrader 2317"), ("聯電", "/daytrader 2303"))
+        )]
+    # 功能4: 全市場信用交易概況
+    if cmd in ("/margin", "/creditmarket"):
+        return await _cmd_margin_tracker(uid)
+    # 功能5: ETF 資金流向
+    if cmd in ("/etfflow", "/etfmoney"):
+        return await _cmd_etf_flow(uid)
+    # 功能6: 盤後法人明細
+    if cmd in ("/inst", "/institutional2"):
+        sub = parts[1].lower() if len(parts) > 1 else "today"
+        return await _cmd_institutional_detail(sub, uid)
+    # 功能7: AI 技術型態預測
+    if cmd in ("/forecast", "/fc", "/aipredict"):
+        code = parts[1].upper() if len(parts) > 1 else ""
+        return await _cmd_price_forecast(code, uid) if code else [_text(
+            "格式：/forecast 股票代號\n例：/forecast 2330",
+            qr_items(("台積電", "/forecast 2330"), ("聯發科", "/forecast 2454"),
+                     ("鴻海", "/forecast 2317"), ("聯電", "/forecast 2303"))
+        )]
+
     # ── 純數字 4-6 碼 → 直接查報價 ─────────────────────────────────────────
     t = text.strip()
     if t.isdigit() and 4 <= len(t) <= 6:
@@ -8193,3 +8232,136 @@ async def _cmd_dashboard(uid: str) -> list:
     except Exception as e:
         logger.error(f"[dashboard] uid={uid} error: {e}")
         return [_text(f"❌ 儀表板資料失敗：{e}", qr_items(("重試", "/dashboard")))]
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 第六批 7 大新功能 handler functions
+# ══════════════════════════════════════════════════════════════════════════════
+
+async def _cmd_news_impact(event: str, uid: str) -> list:
+    try:
+        from backend.services.news_impact_service import (
+            get_news_impact, format_impact_report
+        )
+        data   = await get_news_impact(event)
+        report = format_impact_report(data)
+        return [_text(report[:4800], qr_items(
+            ("🌍 全球市場",   "/global"),
+            ("🔮 AI預測",     "/forecast 2330"),
+            ("📰 產業新聞",   "/industry 半導體"),
+            ("📊 多空儀表板", "/dashboard"),
+        ))]
+    except Exception as e:
+        logger.error(f"[news_impact] error: {e}")
+        return [_text(f"❌ 事件影響分析失敗：{e}",
+                      qr_items(("示範", "/impact 台積電 CoWoS 需求下滑")))]
+
+
+async def _cmd_dividend_tracker(uid: str) -> list:
+    try:
+        from backend.services.dividend_tracker_service import (
+            get_dividend_tracker, format_dividend_tracker_report
+        )
+        data   = await get_dividend_tracker(uid)
+        report = format_dividend_tracker_report(data)
+        return [_text(report[:4800], qr_items(
+            ("💎 個股估值",   "/value 2330"),
+            ("📊 ETF流向",    "/etfflow"),
+            ("💼 我的庫存",   "/p"),
+            ("📅 月曆效應",   "/calendar"),
+        ))]
+    except Exception as e:
+        logger.error(f"[dividend_tracker] uid={uid} error: {e}")
+        return [_text(f"❌ 除息追蹤失敗：{e}", qr_items(("重試", "/dividend")))]
+
+
+async def _cmd_daytrader(code: str, uid: str) -> list:
+    try:
+        from backend.services.daytrader_service import (
+            get_daytrader, format_daytrader_report
+        )
+        data   = await get_daytrader(code)
+        report = format_daytrader_report(data)
+        return [_text(report[:4800], qr_items(
+            ("🔍 洗盤偵測",  f"/washout {code}"),
+            ("📐 支撐壓力",  f"/sr {code}"),
+            ("🐋 大戶追蹤",  f"/bigplayer {code}"),
+            ("🔮 AI預測",    f"/forecast {code}"),
+        ))]
+    except Exception as e:
+        logger.error(f"[daytrader] {code} error: {e}")
+        return [_text(f"❌ 隔日沖追蹤失敗：{e}",
+                      qr_items(("台積電", "/daytrader 2330"), ("重試", f"/daytrader {code}")))]
+
+
+async def _cmd_margin_tracker(uid: str) -> list:
+    try:
+        from backend.services.margin_tracker_service import (
+            get_margin_tracker, format_margin_tracker_report
+        )
+        data   = await get_margin_tracker()
+        report = format_margin_tracker_report(data)
+        return [_text(report[:4800], qr_items(
+            ("📊 多空儀表板", "/dashboard"),
+            ("📊 選擇權PCR",  "/pcr"),
+            ("😱 VIX",        "/vix"),
+            ("🦢 黑天鵝",     "/blackswan"),
+        ))]
+    except Exception as e:
+        logger.error(f"[margin_tracker] uid={uid} error: {e}")
+        return [_text(f"❌ 信用交易概況失敗：{e}", qr_items(("重試", "/margin")))]
+
+
+async def _cmd_etf_flow(uid: str) -> list:
+    try:
+        from backend.services.etf_flow_service import (
+            get_etf_flow, format_etf_flow_report
+        )
+        data   = await get_etf_flow()
+        report = format_etf_flow_report(data)
+        return [_text(report[:4800], qr_items(
+            ("💰 除息追蹤",   "/dividend"),
+            ("🌐 資金輪動",   "/rotation"),
+            ("📊 多空儀表板", "/dashboard"),
+            ("💎 個股估值",   "/value 0050"),
+        ))]
+    except Exception as e:
+        logger.error(f"[etf_flow] uid={uid} error: {e}")
+        return [_text(f"❌ ETF資金流向失敗：{e}", qr_items(("重試", "/etfflow")))]
+
+
+async def _cmd_institutional_detail(sub: str, uid: str) -> list:
+    try:
+        from backend.services.institutional_detail_service import (
+            get_institutional_detail, format_institutional_detail_report
+        )
+        data   = await get_institutional_detail()
+        report = format_institutional_detail_report(data)
+        return [_text(report[:4800], qr_items(
+            ("📊 多空儀表板", "/dashboard"),
+            ("🌐 全球市場",   "/global"),
+            ("💳 融資概況",   "/margin"),
+            ("🔮 AI預測",     "/forecast 2330"),
+        ))]
+    except Exception as e:
+        logger.error(f"[inst_detail] uid={uid} error: {e}")
+        return [_text(f"❌ 法人明細失敗：{e}", qr_items(("重試", "/inst today")))]
+
+
+async def _cmd_price_forecast(code: str, uid: str) -> list:
+    try:
+        from backend.services.price_forecast_service import (
+            get_price_forecast, format_forecast_report
+        )
+        data   = await get_price_forecast(code)
+        report = format_forecast_report(data)
+        return [_text(report[:4800], qr_items(
+            ("📐 支撐壓力",  f"/sr {code}"),
+            ("🔍 洗盤偵測",  f"/washout {code}"),
+            ("🔗 相似股",    f"/similar {code}"),
+            ("⚖️ RRR計算",   f"/rrr {code} 100 95 115"),
+        ))]
+    except Exception as e:
+        logger.error(f"[forecast] {code} error: {e}")
+        return [_text(f"❌ AI預測失敗：{e}",
+                      qr_items(("台積電", "/forecast 2330"), ("重試", f"/forecast {code}")))]

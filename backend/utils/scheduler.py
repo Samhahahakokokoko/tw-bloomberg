@@ -215,6 +215,20 @@ def start_scheduler() -> AsyncIOScheduler:
         id="pcr_alert", replace_existing=True,
     )
 
+    # 第六批排程 ─────────────────────────────────────────────────────────────
+    # 盤後法人明細推播 — 每日 15:30
+    scheduler.add_job(
+        _run_inst_detail_push,
+        CronTrigger(day_of_week="mon-fri", hour=15, minute=30, timezone="Asia/Taipei"),
+        id="inst_detail_push", replace_existing=True,
+    )
+    # 全市場融資概況 — 每日盤後 16:00
+    scheduler.add_job(
+        _run_margin_alert,
+        CronTrigger(day_of_week="mon-fri", hour=16, minute=0, timezone="Asia/Taipei"),
+        id="margin_alert", replace_existing=True,
+    )
+
     # Alpha Pipeline — 18:00 Layer 1: 動能啟動掃描 + 資金流向
     scheduler.add_job(
         _run_pipeline_movers,
@@ -2334,3 +2348,34 @@ async def _run_pcr_alert() -> None:
             logger.info(f"[Scheduler] pcr_alert: PCR={pcr}")
     except Exception as e:
         logger.error(f"[Scheduler] pcr_alert failed: {e}")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 第六批排程 runner functions
+# ══════════════════════════════════════════════════════════════════════════════
+
+async def _run_inst_detail_push() -> None:
+    """盤後法人明細推播 — 每日 15:30"""
+    try:
+        from ..services.institutional_detail_service import push_daily_institutional
+        ok = await push_daily_institutional()
+        logger.info(f"[Scheduler] inst_detail_push: {ok}")
+    except Exception as e:
+        logger.error(f"[Scheduler] inst_detail_push failed: {e}")
+
+
+async def _run_margin_alert() -> None:
+    """全市場融資槓桿警報 — 每日 16:00（使用率 >= 70% 推播）"""
+    try:
+        from ..services.margin_tracker_service import (
+            get_margin_tracker, format_margin_tracker_report
+        )
+        from ..services.line_push import push_to_admin
+        data  = await get_margin_tracker()
+        usage = data.get("margin", {}).get("usage_pct", 0)
+        if usage >= 70:
+            report = format_margin_tracker_report(data)
+            await push_to_admin(f"⚠️ 融資使用率警報！{usage:.1f}%（>=70%）\n\n{report[:2000]}")
+            logger.info(f"[Scheduler] margin_alert: usage={usage:.1f}%")
+    except Exception as e:
+        logger.error(f"[Scheduler] margin_alert failed: {e}")
