@@ -229,6 +229,14 @@ def start_scheduler() -> AsyncIOScheduler:
         id="margin_alert", replace_existing=True,
     )
 
+    # 第八批排程 ─────────────────────────────────────────────────────────────
+    # 週策略報告推播 — 每週日 20:00
+    scheduler.add_job(
+        _run_weekplan_push,
+        CronTrigger(day_of_week="sun", hour=20, minute=0, timezone="Asia/Taipei"),
+        id="weekplan_push", replace_existing=True,
+    )
+
     # Alpha Pipeline — 18:00 Layer 1: 動能啟動掃描 + 資金流向
     scheduler.add_job(
         _run_pipeline_movers,
@@ -2379,3 +2387,13 @@ async def _run_margin_alert() -> None:
             logger.info(f"[Scheduler] margin_alert: usage={usage:.1f}%")
     except Exception as e:
         logger.error(f"[Scheduler] margin_alert failed: {e}")
+
+
+async def _run_weekplan_push() -> None:
+    """週策略報告 — 每週日 20:00 推播"""
+    try:
+        from ..services.weekplan_service import push_weekplan_to_all
+        await push_weekplan_to_all()
+        logger.info("[Scheduler] weekplan_push: done")
+    except Exception as e:
+        logger.error(f"[Scheduler] weekplan_push failed: {e}")

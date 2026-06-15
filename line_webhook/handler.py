@@ -1230,6 +1230,50 @@ async def _handle_text(text: str, uid: str) -> list:
                      ("鴻海", "/exit 2317"),   ("聯電", "/exit 2303"))
         )]
 
+    # ── Batch 8: 評分板/高低點/ETF比較/行事曆/週計畫/熱度/投資日記 ──────────
+    # 功能1: 多空籌碼評分板
+    if cmd in ("/scorecard", "/score", "/chips"):
+        return await _cmd_scorecard(uid)
+    # 功能2: 個股歷史高低點
+    if cmd in ("/hl", "/highlow", "/hltrack"):
+        code = parts[1].upper() if len(parts) > 1 else ""
+        return await _cmd_hl(code, uid) if code else [_text(
+            "格式：/hl 股票代號\n例：/hl 2330",
+            qr_items(("台積電", "/hl 2330"), ("聯發科", "/hl 2454"),
+                     ("鴻海", "/hl 2317"),   ("聯電", "/hl 2303"))
+        )]
+    # 功能3: 產業ETF比較
+    if cmd in ("/etfcompare", "/etfcmp", "/etfrank"):
+        keyword = " ".join(parts[1:]).strip() if len(parts) > 1 else "高股息"
+        return await _cmd_etf_compare(keyword, uid)
+    # 功能4: 財經行事曆
+    if cmd in ("/events", "/calendar", "/evcal"):
+        return await _cmd_events(uid)
+    # 功能5: 週策略報告
+    if cmd in ("/weekplan", "/weekly2", "/wplan"):
+        return await _cmd_weekplan(uid)
+    # 功能6: 個股社群熱度
+    if cmd in ("/buzz", "/social", "/ptt"):
+        code = parts[1].upper() if len(parts) > 1 else ""
+        return await _cmd_buzz(code, uid) if code else [_text(
+            "格式：/buzz 股票代號\n例：/buzz 2330",
+            qr_items(("台積電", "/buzz 2330"), ("聯發科", "/buzz 2454"),
+                     ("鴻海", "/buzz 2317"),   ("聯電", "/buzz 2303"))
+        )]
+    # 功能7: 投資日記
+    if cmd in ("/journal", "/diary", "/tradelog"):
+        sub = parts[1].lower() if len(parts) > 1 else "list"
+        if sub == "add":
+            raw = " ".join(parts[2:]).strip() if len(parts) > 2 else ""
+            return await _cmd_journal_add(raw, uid)
+        elif sub in ("analysis", "analyze", "ai"):
+            return await _cmd_journal_analysis(uid)
+        elif sub in ("del", "delete", "rm"):
+            eid = int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else 0
+            return await _cmd_journal_del(eid, uid)
+        else:
+            return await _cmd_journal_list(uid)
+
     # ── 純數字 4-6 碼 → 直接查報價 ─────────────────────────────────────────
     t = text.strip()
     if t.isdigit() and 4 <= len(t) <= 6:
@@ -8535,3 +8579,176 @@ async def _cmd_exit_strategy(code: str, uid: str) -> list:
         logger.error(f"[exit] {code} error: {e}")
         return [_text(f"❌ 停利策略失敗：{e}",
                       qr_items(("台積電", "/exit 2330"), ("重試", f"/exit {code}")))]
+
+
+# ── Batch 8 Handler Functions ─────────────────────────────────────────────────
+
+async def _cmd_scorecard(uid: str) -> list:
+    try:
+        from backend.services.scorecard_service import get_scorecard, format_scorecard_report
+        data   = await get_scorecard()
+        report = format_scorecard_report(data)
+        return [_text(report[:4800], qr_items(
+            ("⚡ 期現基差",   "/basis"),
+            ("💳 融資概況",   "/margin"),
+            ("📈 PCR指標",    "/pcr"),
+            ("🔄 類股輪動",   "/rotate"),
+        ))]
+    except Exception as e:
+        logger.error(f"[scorecard] error: {e}")
+        return [_text(f"❌ 評分板失敗：{e}", qr_items(("重試", "/scorecard")))]
+
+
+async def _cmd_hl(code: str, uid: str) -> list:
+    try:
+        from backend.services.hl_service import get_hl, format_hl_report
+        data   = await get_hl(code)
+        report = format_hl_report(data)
+        return [_text(report[:4800], qr_items(
+            ("🎯 停利策略",  f"/exit {code}"),
+            ("🔍 量價背離",  f"/divergence {code}"),
+            ("📐 支撐壓力",  f"/sr {code}"),
+            ("📈 AI預測",    f"/forecast {code}"),
+        ))]
+    except Exception as e:
+        logger.error(f"[hl] {code} error: {e}")
+        return [_text(f"❌ 高低點查詢失敗：{e}",
+                      qr_items(("台積電", "/hl 2330"), ("重試", f"/hl {code}")))]
+
+
+async def _cmd_etf_compare(keyword: str, uid: str) -> list:
+    try:
+        from backend.services.etf_compare_service import (
+            get_etf_compare, format_etf_compare_report
+        )
+        data   = await get_etf_compare(keyword)
+        report = format_etf_compare_report(data)
+        return [_text(report[:4800], qr_items(
+            ("半導體ETF",  "/etfcompare 半導體"),
+            ("高股息ETF",  "/etfcompare 高股息"),
+            ("AI主題ETF",  "/etfcompare ai"),
+            ("科技ETF",    "/etfcompare 科技"),
+        ))]
+    except Exception as e:
+        logger.error(f"[etfcompare] {keyword} error: {e}")
+        return [_text(f"❌ ETF比較失敗：{e}",
+                      qr_items(("高股息", "/etfcompare 高股息"),
+                               ("半導體", "/etfcompare 半導體")))]
+
+
+async def _cmd_events(uid: str) -> list:
+    try:
+        from backend.services.events_service import get_events, format_events_report
+        data   = await get_events()
+        report = format_events_report(data)
+        return [_text(report[:4800], qr_items(
+            ("📋 週策略",    "/weekplan"),
+            ("🎯 多空評分",  "/scorecard"),
+            ("📅 行事曆",    "/events"),
+            ("🌏 全球市場",  "/global"),
+        ))]
+    except Exception as e:
+        logger.error(f"[events] error: {e}")
+        return [_text(f"❌ 行事曆失敗：{e}", qr_items(("重試", "/events")))]
+
+
+async def _cmd_weekplan(uid: str) -> list:
+    try:
+        from backend.services.weekplan_service import get_weekplan, format_weekplan_report
+        data   = await get_weekplan(uid)
+        report = format_weekplan_report(data)
+        return [_text(report[:4800], qr_items(
+            ("📅 行事曆",   "/events"),
+            ("🎯 多空評分", "/scorecard"),
+            ("🔄 類股輪動", "/rotate"),
+            ("🎯 主題追蹤", "/theme2"),
+        ))]
+    except Exception as e:
+        logger.error(f"[weekplan] error: {e}")
+        return [_text(f"❌ 週策略失敗：{e}", qr_items(("重試", "/weekplan")))]
+
+
+async def _cmd_buzz(code: str, uid: str) -> list:
+    try:
+        from backend.services.buzz_service import get_buzz, format_buzz_report
+        data   = await get_buzz(code)
+        report = format_buzz_report(data)
+        return [_text(report[:4800], qr_items(
+            ("📍 高低點",   f"/hl {code}"),
+            ("🔍 量價背離", f"/divergence {code}"),
+            ("🎯 停利策略", f"/exit {code}"),
+            ("📈 AI預測",   f"/forecast {code}"),
+        ))]
+    except Exception as e:
+        logger.error(f"[buzz] {code} error: {e}")
+        return [_text(f"❌ 社群熱度失敗：{e}",
+                      qr_items(("台積電", "/buzz 2330"), ("重試", f"/buzz {code}")))]
+
+
+async def _cmd_journal_add(raw: str, uid: str) -> list:
+    try:
+        from backend.services.journal_service import (
+            add_journal_entry, format_journal_add_confirm
+        )
+        if not raw:
+            return [_text(
+                "格式：/journal add 買入 2330 10張 900元 RSI超賣+支撐確立\n"
+                "      /journal add 賣出 2330 5張 950元 達到停利目標",
+                qr_items(("範例買入", "/journal add 買入 2330 10張 900元 RSI超賣"),
+                         ("範例賣出", "/journal add 賣出 2330 5張 950元 停利"))
+            )]
+        result = await add_journal_entry(uid, raw)
+        if not result["ok"]:
+            return [_text(f"❌ {result.get('error', '格式錯誤')}\n"
+                          "格式：/journal add 買入 2330 10張 900元 原因")]
+        return [_text(format_journal_add_confirm(result["entry"]),
+                      qr_items(("查看日記", "/journal"),
+                               ("AI分析", "/journal analysis")))]
+    except Exception as e:
+        logger.error(f"[journal add] uid={uid} error: {e}")
+        return [_text(f"❌ 新增失敗：{e}")]
+
+
+async def _cmd_journal_list(uid: str) -> list:
+    try:
+        from backend.services.journal_service import get_journal, format_journal_list
+        entries = await get_journal(uid, limit=10)
+        report  = format_journal_list(entries)
+        return [_text(report[:4800], qr_items(
+            ("➕ 新增記錄",  "/journal add"),
+            ("🤖 AI分析",    "/journal analysis"),
+            ("📔 投資日記",  "/journal"),
+        ))]
+    except Exception as e:
+        logger.error(f"[journal list] uid={uid} error: {e}")
+        return [_text(f"❌ 日記讀取失敗：{e}")]
+
+
+async def _cmd_journal_analysis(uid: str) -> list:
+    try:
+        from backend.services.journal_service import (
+            get_journal, analyze_journal, format_journal_list
+        )
+        entries  = await get_journal(uid, limit=100)
+        analysis = await analyze_journal(uid)
+        report   = format_journal_list(entries[:5], analysis)
+        return [_text(report[:4800], qr_items(
+            ("📔 查看日記",  "/journal"),
+            ("➕ 新增記錄",  "/journal add"),
+        ))]
+    except Exception as e:
+        logger.error(f"[journal analysis] uid={uid} error: {e}")
+        return [_text(f"❌ 分析失敗：{e}")]
+
+
+async def _cmd_journal_del(entry_id: int, uid: str) -> list:
+    try:
+        from backend.services.journal_service import delete_journal_entry
+        if not entry_id:
+            return [_text("格式：/journal del [記錄ID]\n例：/journal del 1718000000000")]
+        ok = await delete_journal_entry(uid, entry_id)
+        msg = f"✅ 已刪除記錄 ID:{entry_id}" if ok else f"❌ 找不到記錄 ID:{entry_id}"
+        return [_text(msg, qr_items(("查看日記", "/journal")))]
+    except Exception as e:
+        logger.error(f"[journal del] uid={uid} error: {e}")
+        return [_text(f"❌ 刪除失敗：{e}")]
