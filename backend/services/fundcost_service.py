@@ -45,7 +45,7 @@ def _extract_closes_and_volumes(data: dict) -> tuple[list[float], list[float]]:
         closes = [c for c in quote.get("close", []) if c is not None]
         volumes = [v for v in quote.get("volume", []) if v is not None]
         return closes, volumes
-    except Exception:
+    except Exception as e:
         return [], []
 
 

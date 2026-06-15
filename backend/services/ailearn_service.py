@@ -40,7 +40,7 @@ def load_weights() -> dict[str, float]:
         if os.path.exists(_WEIGHTS_FILE):
             with open(_WEIGHTS_FILE, encoding="utf-8") as f:
                 return {**DEFAULT_WEIGHTS, **json.load(f)}
-    except Exception:
+    except Exception as e:
         pass
     return dict(DEFAULT_WEIGHTS)
 
@@ -60,7 +60,7 @@ def load_predictions() -> list[dict]:
         if os.path.exists(_PRED_FILE):
             with open(_PRED_FILE, encoding="utf-8") as f:
                 return json.load(f)
-    except Exception:
+    except Exception as e:
         pass
     return []
 

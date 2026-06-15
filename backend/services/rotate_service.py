@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import time
 from loguru import logger
+import asyncio
 
 _cache: dict = {}
 _cache_ts: dict = {}
@@ -81,7 +82,7 @@ async def _get_sector_performance() -> dict:
                         if sector not in sector_returns:
                             sector_returns[sector] = []
                         sector_returns[sector].append(ret)
-                except Exception:
+                except Exception as e:
                     continue
 
             for sector, rets in sector_returns.items():
@@ -125,7 +126,7 @@ async def _get_sector_flow() -> dict:
                         result[sector] = round((avg_new - avg_old) / max(avg_old, 1) * 100, 1)
                     else:
                         result[sector] = 0.0
-                except Exception:
+                except Exception as e:
                     result[sector] = 0.0
         return result
     except Exception as e:

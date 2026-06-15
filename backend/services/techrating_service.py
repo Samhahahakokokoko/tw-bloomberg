@@ -70,7 +70,7 @@ def _extract_ohlcv(data: dict) -> tuple[list, list, list, list, list]:
         closes = [v for v in quote.get("close", []) if v is not None]
         volumes = [v for v in quote.get("volume", []) if v is not None]
         return opens, highs, lows, closes, volumes
-    except Exception:
+    except Exception as e:
         return [], [], [], [], []
 
 

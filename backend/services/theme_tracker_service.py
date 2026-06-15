@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import time
 from loguru import logger
+import asyncio
 
 _cache: dict = {}
 _cache_ts: dict = {}
@@ -117,7 +118,7 @@ async def _score_theme(theme_key: str, info: dict) -> dict:
                     if len(cls) >= 2:
                         ret = (cls[-1] - cls[0]) / cls[0] * 100
                         returns.append(round(ret, 2))
-                except Exception:
+                except Exception as e:
                     continue
     except Exception as e:
         logger.debug(f"[theme] {theme_key}: {e}")

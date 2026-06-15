@@ -117,7 +117,7 @@ async def _fetch_news_sources() -> list[dict]:
                         "pub_time": item.get("providerPublishTime", 0),
                         "url":      item.get("link", ""),
                     })
-        except Exception:
+        except Exception as e:
             pass
 
     return news

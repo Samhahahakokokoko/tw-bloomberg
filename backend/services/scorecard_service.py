@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import time
 from loguru import logger
+import asyncio
 
 _cache: dict = {}
 _cache_ts: dict = {}
@@ -71,7 +72,7 @@ async def _get_institutional() -> dict:
                 foreign_sell += int(str(row[3]).replace(",", "") or 0)
                 trust_buy    += int(str(row[5]).replace(",", "") or 0)
                 trust_sell   += int(str(row[6]).replace(",", "") or 0)
-            except Exception:
+            except Exception as e:
                 continue
         return {
             "foreign_net": foreign_buy - foreign_sell,
@@ -110,7 +111,7 @@ async def _get_bigplayer() -> dict:
             try:
                 big_pct = float(str(rows[0][7]).replace("%", "") or 60)
                 return {"big_pct": big_pct}
-            except Exception:
+            except Exception as e:
                 pass
     except Exception as e:
         logger.debug(f"[scorecard] bigplayer: {e}")

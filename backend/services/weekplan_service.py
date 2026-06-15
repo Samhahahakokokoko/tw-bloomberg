@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import time
 from loguru import logger
+import asyncio
 
 _cache: dict = {}
 _cache_ts: dict = {}
@@ -54,7 +55,7 @@ async def _get_watchlist(uid: str) -> list:
         from .stock_favorites import get_favorites
         favs = await get_favorites(uid)
         return favs[:5] if favs else []
-    except Exception:
+    except Exception as e:
         return ["2330", "2454", "2317"]
 
 

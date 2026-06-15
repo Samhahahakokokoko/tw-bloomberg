@@ -47,7 +47,7 @@ def _extract_price_change(data: dict) -> tuple[float, float, float]:
         volume = meta.get("regularMarketVolume", 0)
         change_pct = ((current - prev_close) / prev_close * 100) if prev_close else 0.0
         return float(current), float(change_pct), float(volume)
-    except Exception:
+    except Exception as e:
         return 0.0, 0.0, 0.0
 
 
@@ -58,7 +58,7 @@ def _extract_history(data: dict, days: int = 3) -> list[float]:
         closes = result["indicators"]["quote"][0].get("close", [])
         closes = [c for c in closes if c is not None]
         return closes[-days:] if len(closes) >= days else closes
-    except Exception:
+    except Exception as e:
         return []
 
 
@@ -95,7 +95,7 @@ async def _fetch_midday() -> dict:
             result = r["chart"]["result"][0]
             vols = result["indicators"]["quote"][0].get("volume", [])
             hist_vols = [v for v in vols if v is not None]
-        except Exception:
+        except Exception as e:
             hist_vols = []
         avg_vol = sum(hist_vols[:-1]) / max(len(hist_vols) - 1, 1) if len(hist_vols) > 1 else 1
         vol_ratio = vol / avg_vol if avg_vol > 0 else 1.0

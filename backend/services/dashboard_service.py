@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import time
 from loguru import logger
+import asyncio
 
 _cache: dict = {}
 _cache_ts: dict = {}
@@ -73,7 +74,7 @@ async def _get_market_breadth() -> dict:
                         "limit_up": int(str(row[4]).replace(",", "")),
                         "limit_dn": int(str(row[5]).replace(",", "")),
                     }
-                except Exception:
+                except Exception as e:
                     continue
     except Exception as e:
         logger.debug(f"[dashboard] breadth: {e}")

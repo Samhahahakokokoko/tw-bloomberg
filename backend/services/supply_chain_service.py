@@ -178,7 +178,7 @@ async def _fetch_supply_chain(code: str) -> dict:
         price_data = jdata.get("quoteSummary", {}).get("result", [{}])[0].get("price", {})
         current_price = price_data.get("regularMarketPrice", {}).get("raw", 0)
         chg_pct = price_data.get("regularMarketChangePercent", {}).get("raw", 0) * 100
-    except Exception:
+    except Exception as e:
         current_price = 0.0
         chg_pct = 0.0
 

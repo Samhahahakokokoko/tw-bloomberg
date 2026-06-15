@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import time
 from loguru import logger
+import asyncio
 
 _cache: dict = {}
 _cache_ts: dict = {}
@@ -70,7 +71,7 @@ async def _get_foreign_detail() -> dict:
                     buy_list.append(entry)
                 elif net < 0:
                     sell_list.append(entry)
-            except Exception:
+            except Exception as e:
                 continue
 
         buy_list.sort( key=lambda x: x["net"], reverse=True)
@@ -118,7 +119,7 @@ async def _get_trust_detail() -> dict:
                 entry = {"code": str(row[0]), "name": str(row[1]), "net": net}
                 if net > 0:   buy_list.append(entry)
                 elif net < 0: sell_list.append(entry)
-            except Exception:
+            except Exception as e:
                 continue
         buy_list.sort(key=lambda x: x["net"], reverse=True)
         sell_list.sort(key=lambda x: x["net"])
@@ -152,7 +153,7 @@ async def _get_dealer_summary() -> dict:
             if len(row) >= 6:
                 try:
                     total_net += int(str(row[5]).replace(",", "").replace("+", ""))
-                except Exception:
+                except Exception as e:
                     pass
         return {"total_net": total_net, "direction": "買超" if total_net > 0 else "賣超"}
     except Exception as e:

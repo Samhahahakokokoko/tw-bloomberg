@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import time
 from loguru import logger
+import asyncio
 
 _cache: dict = {}
 _cache_ts: dict = {}
@@ -105,7 +106,7 @@ def _parse_openapi_revenue(data: list) -> list:
                 "yoy":         yoy,
                 "is_new_high": False,
             })
-        except Exception:
+        except Exception as e:
             continue
     # Mark new highs
     if result:
@@ -139,7 +140,7 @@ async def _get_quote(code: str) -> dict:
     try:
         from .twse_service import fetch_realtime_quote
         return await fetch_realtime_quote(code) or {}
-    except Exception:
+    except Exception as e:
         return {}
 
 

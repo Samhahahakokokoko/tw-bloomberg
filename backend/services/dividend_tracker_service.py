@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import time
 from loguru import logger
+import asyncio
 
 _cache: dict = {}
 _cache_ts: dict = {}
@@ -57,7 +58,7 @@ async def _fetch_dividend_tracker(uid: str) -> dict:
             ex_date = datetime.date.fromisoformat(ex_date_str[:10])
             if today <= ex_date <= cutoff:
                 schedule.append(div)
-        except Exception:
+        except Exception as e:
             continue
 
     # Sort by ex-date
@@ -135,7 +136,7 @@ async def _get_yield_rankings(codes: list) -> list:
             name = pr.get("shortName", {})
             name = name.get("raw", code) if isinstance(name, dict) else (name or code)
             return {"code": code, "name": str(name)[:8], "yield": round(yld, 2)}
-        except Exception:
+        except Exception as e:
             return None
 
     results = await asyncio.gather(*[_one(c) for c in codes], return_exceptions=True)

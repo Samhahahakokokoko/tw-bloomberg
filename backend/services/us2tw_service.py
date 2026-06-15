@@ -45,7 +45,7 @@ def _extract_closes(data: dict, days: int = 30) -> list[float]:
         closes = result["indicators"]["quote"][0].get("close", [])
         closes = [c for c in closes if c is not None]
         return closes[-days:] if len(closes) >= days else closes
-    except Exception:
+    except Exception as e:
         return []
 
 
@@ -58,7 +58,7 @@ def _extract_last_price_change(data: dict) -> tuple[float, float]:
         prev = meta.get("chartPreviousClose", meta.get("previousClose", current))
         chg = ((current - prev) / prev * 100) if prev else 0.0
         return float(current), float(chg)
-    except Exception:
+    except Exception as e:
         return 0.0, 0.0
 
 

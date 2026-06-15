@@ -102,6 +102,7 @@ async def _save_all(uid: str, entries: list) -> None:
 # ── JSON file fallback ────────────────────────────────────────────────────────
 
 import os
+import re
 
 _JOURNAL_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "data", "journals")
 
@@ -122,7 +123,7 @@ async def _file_load(uid: str) -> list:
     try:
         with open(_journal_path(uid), encoding="utf-8") as f:
             return json.load(f)
-    except Exception:
+    except Exception as e:
         return []
 
 

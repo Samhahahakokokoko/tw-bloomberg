@@ -134,7 +134,7 @@ async def _get_channel_id(analyst_id: str) -> str:
             )
             row = r.scalar_one_or_none()
             return row or f"handle_{analyst_id}"
-    except Exception:
+    except Exception as e:
         return f"handle_{analyst_id}"
 
 
@@ -163,7 +163,7 @@ async def _push_notifications(new_videos: list) -> int:
             try:
                 await push_to_all_users(uid, f"📺 分析師早報\n\n{combined[:2000]}")
                 pushed += 1
-            except Exception:
+            except Exception as e:
                 pass
     except Exception as e:
         logger.warning(f"[yt_push] user push: {e}")
@@ -223,7 +223,7 @@ async def get_latest_analyst_views() -> list[dict]:
                     kp = []
                     try:
                         kp = json.loads(call.key_points or "[]")
-                    except Exception:
+                    except Exception as e:
                         pass
                     results.append({
                         "analyst_id":  ch["analyst_id"],

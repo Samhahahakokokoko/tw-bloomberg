@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import time
 from loguru import logger
+import asyncio
 
 _cache: dict = {}
 _cache_ts: dict = {}
@@ -76,7 +77,7 @@ async def _get_futures_quotes() -> dict:
                             "chg_pct": float(d.get("CChangeRate", 0) or 0),
                             "name":    d.get("CName", contract),
                         }
-                except Exception:
+                except Exception as e:
                     pass
         return results
     except Exception as e:
@@ -120,7 +121,7 @@ async def _get_hist_basis() -> list:
             r = await cl.get(url_f)
         # Fallback to synthetic if parse fails
         return [round(random.uniform(-50, 150), 2) for _ in range(30)]
-    except Exception:
+    except Exception as e:
         import random
         return [round(random.uniform(-50, 150), 2) for _ in range(30)]
 

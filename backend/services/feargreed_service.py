@@ -136,7 +136,7 @@ async def _score_margin() -> tuple[int, float | None, str]:
         from backend.services import margin_tracker_service  # type: ignore
         mdata = await margin_tracker_service.get_margin_ratio()
         margin_ratio = mdata.get("ratio") if isinstance(mdata, dict) else None
-    except Exception:
+    except Exception as e:
         pass
 
     if margin_ratio is None:

@@ -4,6 +4,7 @@ from __future__ import annotations
 import time
 import datetime
 from loguru import logger
+import asyncio
 
 _cache: dict = {}
 _cache_ts: dict = {}
@@ -110,7 +111,7 @@ def _get_static_calendar() -> list:
                 "date": d.isoformat(), "type": "台灣", "icon": "🇹🇼",
                 "title": t["title"], "impact": t["impact"], "tw_effect": t["tw_effect"],
             })
-        except Exception:
+        except Exception as e:
             continue
 
     return events
@@ -222,7 +223,7 @@ def format_events_report(data: dict) -> str:
                 )
                 if e.get("tw_effect"):
                     lines.append(f"     💡 {e['tw_effect'][:60]}")
-            except Exception:
+            except Exception as e:
                 continue
 
     lines += [

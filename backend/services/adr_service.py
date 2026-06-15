@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import time
 from loguru import logger
+import asyncio
 
 _cache: dict = {}
 _cache_ts: dict = {}
@@ -73,7 +74,7 @@ async def _get_tw_prices() -> dict:
                     cls = [c for c in cls if c]
                     if cls:
                         result[code] = round(cls[-1], 2)
-                except Exception:
+                except Exception as e:
                     continue
         return result
     except Exception as e:
@@ -110,7 +111,7 @@ async def _get_adr_prices() -> dict:
                     cls = [c for c in cls if c]
                     if cls:
                         result[ticker] = round(cls[-1], 4)
-                except Exception:
+                except Exception as e:
                     continue
         return result
     except Exception as e:

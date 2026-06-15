@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import time
 from loguru import logger
+import asyncio
 
 _cache: dict = {}
 _cache_ts: dict = {}
@@ -69,7 +70,7 @@ async def _get_market_margin() -> dict:
                         "usage_pct":  usage_pct,
                         "date":       js.get("date", ""),
                     }
-                except Exception:
+                except Exception as e:
                     continue
     except Exception as e:
         logger.debug(f"[margin_tracker] market margin: {e}")
@@ -106,7 +107,7 @@ async def _get_market_short() -> dict:
                         "balance": int(str(row[1]).replace(",", "")),
                         "chg":     int(str(row[2]).replace(",", "")),
                     }
-                except Exception:
+                except Exception as e:
                     continue
     except Exception as e:
         logger.debug(f"[margin_tracker] market short: {e}")

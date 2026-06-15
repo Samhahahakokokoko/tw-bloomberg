@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import time
 from loguru import logger
+import asyncio
 
 _cache: dict = {}
 _cache_ts: dict = {}
@@ -138,7 +139,7 @@ async def _enrich_etf(etf: dict) -> dict:
             ret_3m = round(random.uniform(-3, 15), 2)
             ret_1y = round(random.uniform(0, 25), 2)
             price  = round(random.uniform(20, 100), 2)
-    except Exception:
+    except Exception as e:
         import random
         ret_1m = round(random.uniform(-5, 8), 2)
         ret_3m = round(random.uniform(-3, 15), 2)
