@@ -724,6 +724,19 @@ def start_scheduler() -> AsyncIOScheduler:
         CronTrigger(hour=7, minute=0, timezone="Asia/Taipei"),
         id="ailearn_check", replace_existing=True,
     )
+    # ── Batch 11 排程 ──────────────────────────────────────────────────────
+    # 每日問答推播 — 每日 08:00（晨間投資思考）
+    scheduler.add_job(
+        _run_daily_qa_push,
+        CronTrigger(hour=8, minute=0, timezone="Asia/Taipei"),
+        id="daily_qa_push", replace_existing=True,
+    )
+    # 每日投資智慧推播 — 每日 08:05（稍後於問答）
+    scheduler.add_job(
+        _run_wisdom_push,
+        CronTrigger(hour=8, minute=5, timezone="Asia/Taipei"),
+        id="wisdom_push", replace_existing=True,
+    )
 
     _apply_line_quota_safe_mode(scheduler)
     scheduler.start()
@@ -2488,3 +2501,27 @@ async def _run_ailearn_check() -> None:
         logger.info(f"[Scheduler] ailearn_check: {updated} predictions updated")
     except Exception as e:
         logger.error(f"[Scheduler] ailearn_check failed: {e}")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Batch 11 runner functions
+# ══════════════════════════════════════════════════════════════════════════════
+
+async def _run_daily_qa_push() -> None:
+    """每日投資問答推播 — 每日 08:00"""
+    try:
+        from ..services.daily_qa_service import push_daily_qa
+        ok = await push_daily_qa()
+        logger.info(f"[Scheduler] daily_qa_push: {ok}")
+    except Exception as e:
+        logger.error(f"[Scheduler] daily_qa_push failed: {e}")
+
+
+async def _run_wisdom_push() -> None:
+    """每日投資智慧推播 — 每日 08:05"""
+    try:
+        from ..services.wisdom_service import push_wisdom_to_admin
+        ok = await push_wisdom_to_admin()
+        logger.info(f"[Scheduler] wisdom_push: {ok}")
+    except Exception as e:
+        logger.error(f"[Scheduler] wisdom_push failed: {e}")

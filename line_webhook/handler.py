@@ -1367,6 +1367,49 @@ async def _handle_text(text: str, uid: str) -> list:
     if cmd in ("/breaking", "/breaknews", "/urgent"):
         return await _cmd_breaking_news(uid)
 
+    # ── Batch 11 ─────────────────────────────────────────────────────────────
+    # 功能1: 個股壓力測試
+    if cmd in ("/stress", "/stresstest", "/scenario"):
+        code = args[0].upper() if args else ""
+        return await _cmd_stress_test(code, uid) if code else [_text(
+            "格式：/stress 股票代號\n例：/stress 2330",
+            qr_items(("台積電", "/stress 2330"), ("聯發科", "/stress 2454"),
+                     ("鴻海",   "/stress 2317"), ("廣達",   "/stress 2382"))
+        )]
+    # 功能2: 多維度評分卡 v2
+    if cmd in ("/scorecard2", "/sc2", "/rating2"):
+        code = args[0].upper() if args else ""
+        return await _cmd_scorecard2(code, uid) if code else [_text(
+            "格式：/scorecard2 股票代號\n例：/scorecard2 2330",
+            qr_items(("台積電", "/scorecard2 2330"), ("聯發科", "/scorecard2 2454"),
+                     ("廣達",   "/scorecard2 2382"), ("鴻海",   "/scorecard2 2317"))
+        )]
+    # 功能3: 每日投資思考問答
+    if cmd in ("/qa", "/dailyqa", "/think"):
+        return await _cmd_daily_qa(uid)
+    # 功能4: 指數成分股追蹤
+    if cmd in ("/index", "/indextrack", "/component"):
+        query = " ".join(args) if args else ""
+        return await _cmd_index_tracker(query, uid) if query else [_text(
+            "格式：/index 指數名稱\n例：/index 台灣50\n支援：台灣50 / 中型100 / 電子 / 0050",
+            qr_items(("台灣50", "/index 台灣50"), ("中型100", "/index 中型100"),
+                     ("電子",   "/index 電子"),   ("0050",    "/index 0050"))
+        )]
+    # 功能5: 個股事件時間軸
+    if cmd in ("/timeline", "/events", "/eventlog"):
+        code = args[0].upper() if args else ""
+        return await _cmd_timeline(code, uid) if code else [_text(
+            "格式：/timeline 股票代號\n例：/timeline 2330",
+            qr_items(("台積電", "/timeline 2330"), ("聯發科", "/timeline 2454"),
+                     ("鴻海",   "/timeline 2317"), ("廣達",   "/timeline 2382"))
+        )]
+    # 功能6: 融券追蹤 / 軋空分析
+    if cmd in ("/short", "/shorttrack", "/squeeze"):
+        return await _cmd_short_tracker(uid)
+    # 功能7: 每日投資智慧
+    if cmd in ("/wisdom", "/guru", "/quote"):
+        return await _cmd_wisdom(uid)
+
     # ── 純數字 4-6 碼 → 直接查報價 ─────────────────────────────────────────
     t = text.strip()
     if t.isdigit() and 4 <= len(t) <= 6:
@@ -9172,3 +9215,126 @@ async def _cmd_breaking_news(uid: str) -> list:
     except Exception as e:
         logger.error(f"[breaking_news] {e}")
         return [_text(f"❌ 新聞快訊失敗：{e}", qr_items(("重試", "/breaking")))]
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Batch 11 handler functions
+# ══════════════════════════════════════════════════════════════════════════════
+
+async def _cmd_stress_test(code: str, uid: str) -> list:
+    """個股壓力測試"""
+    try:
+        from backend.services.stress_test_service import get_stress_test, format_stress_report
+        data   = await get_stress_test(code)
+        report = format_stress_report(data, code)
+        return [_text(report[:4800], qr_items(
+            ("📊 評分卡",     f"/scorecard2 {code}"),
+            ("📅 事件軸",     f"/timeline {code}"),
+            ("💹 籌碼健康",   f"/chiphealth {code}"),
+            ("💹 報價",       f"/{code}"),
+        ))]
+    except Exception as e:
+        logger.error(f"[stress_test] {code} {e}")
+        return [_text(f"❌ 壓力測試失敗：{e}", qr_items(("重試", f"/stress {code}")))]
+
+
+async def _cmd_scorecard2(code: str, uid: str) -> list:
+    """多維度評分卡 v2"""
+    try:
+        from backend.services.scorecard2_service import get_scorecard2, format_scorecard2_report
+        data   = await get_scorecard2(code)
+        report = format_scorecard2_report(data, code)
+        return [_text(report[:4800], qr_items(
+            ("⚡ 壓力測試",   f"/stress {code}"),
+            ("📅 事件軸",     f"/timeline {code}"),
+            ("💹 籌碼健康",   f"/chiphealth {code}"),
+            ("💹 報價",       f"/{code}"),
+        ))]
+    except Exception as e:
+        logger.error(f"[scorecard2] {code} {e}")
+        return [_text(f"❌ 評分卡失敗：{e}", qr_items(("重試", f"/scorecard2 {code}")))]
+
+
+async def _cmd_daily_qa(uid: str) -> list:
+    """每日投資思考問答"""
+    try:
+        from backend.services.daily_qa_service import get_daily_qa, format_qa_report
+        data   = await get_daily_qa()
+        report = format_qa_report(data)
+        return [_text(report[:4800], qr_items(
+            ("📓 投資日記",  "/journal"),
+            ("➕ 新增記錄",  "/journal add"),
+            ("🧭 每日智慧",  "/wisdom"),
+            ("😱 恐慌貪婪",  "/feargreed"),
+        ))]
+    except Exception as e:
+        logger.error(f"[daily_qa] {e}")
+        return [_text(f"❌ 每日問答失敗：{e}", qr_items(("重試", "/qa")))]
+
+
+async def _cmd_index_tracker(query: str, uid: str) -> list:
+    """指數成分股追蹤"""
+    try:
+        from backend.services.index_tracker_service import get_index_tracker, format_index_report
+        data   = await get_index_tracker(query)
+        report = format_index_report(data)
+        return [_text(report[:4800], qr_items(
+            ("台灣50",   "/index 台灣50"),
+            ("中型100",  "/index 中型100"),
+            ("電子",     "/index 電子"),
+            ("恐慌貪婪", "/feargreed"),
+        ))]
+    except Exception as e:
+        logger.error(f"[index_tracker] {query} {e}")
+        return [_text(f"❌ 指數追蹤失敗：{e}", qr_items(("重試", f"/index {query}")))]
+
+
+async def _cmd_timeline(code: str, uid: str) -> list:
+    """個股事件時間軸"""
+    try:
+        from backend.services.timeline_service import get_timeline, format_timeline_report
+        data   = await get_timeline(code)
+        report = format_timeline_report(data, code)
+        return [_text(report[:4800], qr_items(
+            ("⚡ 壓力測試",   f"/stress {code}"),
+            ("📊 評分卡",     f"/scorecard2 {code}"),
+            ("💹 籌碼健康",   f"/chiphealth {code}"),
+            ("💹 報價",       f"/{code}"),
+        ))]
+    except Exception as e:
+        logger.error(f"[timeline] {code} {e}")
+        return [_text(f"❌ 事件時間軸失敗：{e}", qr_items(("重試", f"/timeline {code}")))]
+
+
+async def _cmd_short_tracker(uid: str) -> list:
+    """融券追蹤 / 軋空分析"""
+    try:
+        from backend.services.short_tracker_service import get_short_tracker, format_short_report
+        data   = await get_short_tracker()
+        report = format_short_report(data)
+        return [_text(report[:4800], qr_items(
+            ("🔄 刷新",       "/short"),
+            ("😱 恐慌貪婪",   "/feargreed"),
+            ("📊 盤中解說",   "/midday"),
+            ("🔍 空頭掃描",   "/bearish"),
+        ))]
+    except Exception as e:
+        logger.error(f"[short_tracker] {e}")
+        return [_text(f"❌ 融券追蹤失敗：{e}", qr_items(("重試", "/short")))]
+
+
+async def _cmd_wisdom(uid: str) -> list:
+    """每日投資智慧"""
+    try:
+        from backend.services.wisdom_service import get_wisdom, format_wisdom_report
+        data   = await get_wisdom()
+        report = format_wisdom_report(data)
+        return [_text(report[:4800], qr_items(
+            ("🧠 每日問答",   "/qa"),
+            ("📓 投資日記",   "/journal"),
+            ("😱 恐慌貪婪",   "/feargreed"),
+            ("🔄 明日再看",   "/wisdom"),
+        ))]
+    except Exception as e:
+        logger.error(f"[wisdom] {e}")
+        return [_text(f"❌ 每日智慧失敗：{e}", qr_items(("重試", "/wisdom")))]
