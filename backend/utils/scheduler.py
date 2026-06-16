@@ -737,6 +737,25 @@ def start_scheduler() -> AsyncIOScheduler:
         CronTrigger(hour=8, minute=5, timezone="Asia/Taipei"),
         id="wisdom_push", replace_existing=True,
     )
+    # ── Batch 12 排程 ──────────────────────────────────────────────────────
+    # 每週精選報告 — 每週五 15:30（收盤後推播）
+    scheduler.add_job(
+        _run_weekly_picks_push,
+        CronTrigger(day_of_week="fri", hour=15, minute=30, timezone="Asia/Taipei"),
+        id="weekly_picks_push", replace_existing=True,
+    )
+    # 配對監控警報 — 每日盤中（10:00/13:00 各一次）
+    scheduler.add_job(
+        _run_pair_monitor_alerts,
+        CronTrigger(day_of_week="mon-fri", hour="10,13", minute=0, timezone="Asia/Taipei"),
+        id="pair_monitor_alerts", replace_existing=True,
+    )
+    # 系統健康定時檢查 — 每日 06:00（部署前警告）
+    scheduler.add_job(
+        _run_system_health_check,
+        CronTrigger(hour=6, minute=0, timezone="Asia/Taipei"),
+        id="system_health_check", replace_existing=True,
+    )
 
     _apply_line_quota_safe_mode(scheduler)
     scheduler.start()
@@ -2525,3 +2544,58 @@ async def _run_wisdom_push() -> None:
         logger.info(f"[Scheduler] wisdom_push: {ok}")
     except Exception as e:
         logger.error(f"[Scheduler] wisdom_push failed: {e}")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Batch 12 runner functions
+# ══════════════════════════════════════════════════════════════════════════════
+
+async def _run_weekly_picks_push() -> None:
+    """每週精選報告 — 每週五 15:30"""
+    try:
+        from ..services.weekly_picks_service import push_weekly_picks
+        ok = await push_weekly_picks()
+        logger.info(f"[Scheduler] weekly_picks_push: {ok}")
+    except Exception as e:
+        logger.error(f"[Scheduler] weekly_picks_push failed: {e}")
+
+
+async def _run_pair_monitor_alerts() -> None:
+    """配對監控警報 — 盤中 10:00 / 13:00"""
+    try:
+        from ..services.pair_monitor_service import check_pair_alerts
+        from ..services.line_push import push_line_messages
+        import os
+
+        admin_uid = os.getenv("ADMIN_LINE_UID", "")
+        if not admin_uid:
+            return
+
+        alerts = await check_pair_alerts(admin_uid)
+        for alert in alerts:
+            msg = (
+                f"🔔 配對監控警報\n"
+                f"{alert['code1']} vs {alert['code2']}\n"
+                f"Z值：{alert['z']:+.2f}\n"
+                f"{alert['signal']}\n"
+                f"建議：{alert['suggestion']}"
+            )
+            await push_line_messages(
+                admin_uid,
+                [{"type": "text", "text": msg}],
+                context="pair_monitor.alert",
+            )
+        if alerts:
+            logger.info(f"[Scheduler] pair_monitor_alerts: {len(alerts)} alerts sent")
+    except Exception as e:
+        logger.error(f"[Scheduler] pair_monitor_alerts failed: {e}")
+
+
+async def _run_system_health_check() -> None:
+    """系統健康定時檢查 — 每日 06:00"""
+    try:
+        from ..services.system_status_service import push_alert_if_unhealthy
+        await push_alert_if_unhealthy()
+        logger.info("[Scheduler] system_health_check: done")
+    except Exception as e:
+        logger.error(f"[Scheduler] system_health_check failed: {e}")

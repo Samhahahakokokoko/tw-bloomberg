@@ -1410,6 +1410,53 @@ async def _handle_text(text: str, uid: str) -> list:
     if cmd in ("/wisdom", "/guru", "/quote"):
         return await _cmd_wisdom(uid)
 
+    # ── Batch 12 ─────────────────────────────────────────────────────────────
+    # 功能1: AI 投資組合最佳化（馬可維茲）
+    if cmd in ("/optimize_portfolio", "/portopt", "/markowitz"):
+        return await _cmd_portfolio_opt(uid)
+    # 功能2: 個股催化劑追蹤
+    if cmd in ("/catalyst", "/catalysts", "/trigger"):
+        code = args[0].upper() if args else ""
+        return await _cmd_catalyst(code, uid) if code else [_text(
+            "格式：/catalyst 股票代號\n例：/catalyst 2330",
+            qr_items(("台積電", "/catalyst 2330"), ("聯發科", "/catalyst 2454"),
+                     ("鴻海",   "/catalyst 2317"), ("廣達",   "/catalyst 2382"))
+        )]
+    # 功能3: 反向指標追蹤
+    if cmd in ("/contrarian", "/reverse", "/contrary"):
+        return await _cmd_contrarian(uid)
+    # 功能4: 配對交易監控
+    if cmd in ("/pairmonitor", "/pairwatch", "/spreadwatch"):
+        if len(args) >= 2:
+            c1, c2 = args[0].upper(), args[1].upper()
+            return await _cmd_pair_monitor(c1, c2, uid)
+        elif len(args) == 1 and args[0].lower() in ("list", "清單"):
+            return await _cmd_pair_monitor_list(uid)
+        else:
+            return [_text(
+                "格式：/pairmonitor 代號1 代號2\n例：/pairmonitor 2330 2454\n/pairmonitor list 查看監控清單",
+                qr_items(("台積/聯發科", "/pairmonitor 2330 2454"),
+                         ("台積/聯電",   "/pairmonitor 2330 2303"),
+                         ("鴻海/廣達",   "/pairmonitor 2317 2382"),
+                         ("監控清單",    "/pairmonitor list"))
+            )]
+    # 功能5: 每週精選報告
+    if cmd in ("/weeklypicks", "/picks", "/weekpicks"):
+        return await _cmd_weekly_picks(uid)
+    # 功能6: AI 問答助手升級（自然語言）
+    if cmd in ("/ask", "/aiask", "/question"):
+        q = " ".join(args) if args else ""
+        return await _cmd_ai_natural_qa(q, uid) if q else [_text(
+            "格式：/ask 你的問題\n例：/ask 台積電現在值得買嗎？\n例：/ask 最近哪個族群最強？",
+            qr_items(("台積電買嗎", "/ask 台積電現在值得買嗎"),
+                     ("哪族群最強", "/ask 最近哪個族群最強"),
+                     ("自選股分析", "/ask 我的自選股中哪支最危險"),
+                     ("市場分析",   "/ask 現在市場處於什麼階段"))
+        )]
+    # 功能7: 系統健康監控（增強版）
+    if cmd in ("/sysstatus", "/syshealth", "/systemcheck"):
+        return await _cmd_system_status(uid)
+
     # ── 純數字 4-6 碼 → 直接查報價 ─────────────────────────────────────────
     t = text.strip()
     if t.isdigit() and 4 <= len(t) <= 6:
@@ -9338,3 +9385,182 @@ async def _cmd_wisdom(uid: str) -> list:
     except Exception as e:
         logger.error(f"[wisdom] {e}")
         return [_text(f"❌ 每日智慧失敗：{e}", qr_items(("重試", "/wisdom")))]
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Batch 12 handler functions
+# ══════════════════════════════════════════════════════════════════════════════
+
+async def _cmd_portfolio_opt(uid: str) -> list:
+    """AI 投資組合最佳化"""
+    try:
+        from backend.services.portfolio_opt_service import get_portfolio_opt, format_portfolio_opt_report
+        data   = await get_portfolio_opt(uid)
+        report = format_portfolio_opt_report(data)
+        return [_text(report[:4800], qr_items(
+            ("📊 相關性",     "/correlation"),
+            ("💰 VaR",        "/var"),
+            ("📐 RSI最佳化",  "/optimize"),
+            ("💼 持倉",       "/portfolio"),
+        ))]
+    except Exception as e:
+        logger.error(f"[portfolio_opt] {uid} {e}")
+        return [_text(f"❌ 投資組合最佳化失敗：{e}",
+                      qr_items(("重試", "/optimize_portfolio")))]
+
+
+async def _cmd_catalyst(code: str, uid: str) -> list:
+    """個股催化劑追蹤"""
+    try:
+        from backend.services.catalyst_service import get_catalyst, format_catalyst_report
+        data   = await get_catalyst(code)
+        report = format_catalyst_report(data, code)
+        return [_text(report[:4800], qr_items(
+            ("📅 事件時間軸",  f"/timeline {code}"),
+            ("⚡ 壓力測試",    f"/stress {code}"),
+            ("📊 評分卡",      f"/scorecard2 {code}"),
+            ("💹 報價",        f"/{code}"),
+        ))]
+    except Exception as e:
+        logger.error(f"[catalyst] {code} {e}")
+        return [_text(f"❌ 催化劑追蹤失敗：{e}",
+                      qr_items(("重試", f"/catalyst {code}")))]
+
+
+async def _cmd_contrarian(uid: str) -> list:
+    """市場反向指標追蹤"""
+    try:
+        from backend.services.contrarian_service import get_contrarian, format_contrarian_report
+        data   = await get_contrarian()
+        report = format_contrarian_report(data)
+        return [_text(report[:4800], qr_items(
+            ("😱 恐慌貪婪",   "/feargreed"),
+            ("📊 籌碼健康",   "/chiphealth"),
+            ("🧭 每日智慧",   "/wisdom"),
+            ("🔍 空頭掃描",   "/bearish"),
+        ))]
+    except Exception as e:
+        logger.error(f"[contrarian] {e}")
+        return [_text(f"❌ 反向指標失敗：{e}", qr_items(("重試", "/contrarian")))]
+
+
+async def _cmd_pair_monitor(code1: str, code2: str, uid: str) -> list:
+    """配對交易監控"""
+    try:
+        from backend.services.pair_monitor_service import (
+            get_pair_monitor, format_pair_monitor_report, add_pair_monitor
+        )
+        data   = await get_pair_monitor(code1, code2)
+        report = format_pair_monitor_report(data, code1, code2)
+
+        # 自動加入監控列表
+        added = add_pair_monitor(uid, code1, code2)
+        suffix = "\n✅ 已加入監控清單（價差偏離 Z>2 自動推播）" if added else ""
+
+        return [_text((report + suffix)[:4800], qr_items(
+            ("🔄 刷新",         f"/pairmonitor {code1} {code2}"),
+            ("📊 深度分析",     f"/pair {code1} {code2}"),
+            ("📋 監控清單",     "/pairmonitor list"),
+            ("📈 相關性",       "/correlation"),
+        ))]
+    except Exception as e:
+        logger.error(f"[pair_monitor] {code1}/{code2} {e}")
+        return [_text(f"❌ 配對監控失敗：{e}",
+                      qr_items(("重試", f"/pairmonitor {code1} {code2}")))]
+
+
+async def _cmd_pair_monitor_list(uid: str) -> list:
+    """配對監控清單"""
+    try:
+        from backend.services.pair_monitor_service import list_pair_monitors
+        monitors = list_pair_monitors(uid)
+        if not monitors:
+            return [_text(
+                "目前無配對監控。\n使用 /pairmonitor 代號1 代號2 新增監控",
+                qr_items(("台積/聯發科", "/pairmonitor 2330 2454"),
+                         ("台積/聯電",   "/pairmonitor 2330 2303"))
+            )]
+        lines = ["📋 配對監控清單", "─" * 20, ""]
+        for m in monitors:
+            lines.append(
+                f"  {m['code1']} ↔ {m['code2']}  "
+                f"閾值：Z>{m['z_threshold']:.1f}  "
+                f"加入：{m['added_at']}"
+            )
+        lines += ["", "輸入 /pairmonitor 代號1 代號2 新增監控"]
+        return [_text("\n".join(lines), qr_items(
+            ("新增監控", "/pairmonitor 2330 2454"),
+            ("📈 相關性", "/correlation"),
+        ))]
+    except Exception as e:
+        logger.error(f"[pair_monitor_list] {e}")
+        return [_text(f"❌ 清單失敗：{e}")]
+
+
+async def _cmd_weekly_picks(uid: str) -> list:
+    """每週精選報告"""
+    try:
+        from backend.services.weekly_picks_service import get_weekly_picks, format_weekly_picks_report
+        data   = await get_weekly_picks()
+        report = format_weekly_picks_report(data)
+        return [_text(report[:4800], qr_items(
+            ("🔄 刷新",       "/weeklypicks"),
+            ("📊 選股",       "/screener"),
+            ("📅 事件行事曆", "/calendar"),
+            ("😱 恐慌貪婪",   "/feargreed"),
+        ))]
+    except Exception as e:
+        logger.error(f"[weekly_picks] {e}")
+        return [_text(f"❌ 週精選報告失敗：{e}",
+                      qr_items(("重試", "/weeklypicks")))]
+
+
+async def _cmd_ai_natural_qa(question: str, uid: str) -> list:
+    """AI 自然語言問答（整合系統數據）"""
+    if not question:
+        return [_text(
+            "請輸入你的問題\n例：/ask 台積電現在值得買嗎？",
+            qr_items(("台積電分析", "/ask 台積電現在值得買嗎"),
+                     ("族群分析",   "/ask 最近哪個族群最強"),
+                     ("自選股分析", "/ask 我的持股哪支最危險"))
+        )]
+    try:
+        from backend.services.ai_natural_qa_service import get_ai_natural_answer, get_quick_answer
+
+        # 快速回答不需 AI
+        quick = get_quick_answer(question)
+        if quick:
+            return [_text(quick, qr_items(("/market 大盤", "/market"), ("/morning 早報", "/morning")))]
+
+        answer = await get_ai_natural_answer(question, uid)
+        import re as _re
+        codes = _re.findall(r'\b(\d{4,5})\b', question)
+        if codes:
+            c0 = codes[0]
+            qr = qr_items((f"報價 {c0}", f"/{c0}"), (f"催化劑 {c0}", f"/catalyst {c0}"),
+                          (f"壓力測試 {c0}", f"/stress {c0}"), ("💼 持倉", "/portfolio"))
+        else:
+            qr = qr_items(("📊 大盤", "/market"), ("💼 持倉", "/portfolio"),
+                          ("🔍 選股", "/screener"), ("😱 恐慌", "/feargreed"))
+        return [_text(answer[:4800], qr)]
+    except Exception as e:
+        logger.error(f"[ai_natural_qa] {e}")
+        return [_text(f"❌ AI 問答失敗：{e}",
+                      qr_items(("重試", f"/ask {question[:20]}")))]
+
+
+async def _cmd_system_status(uid: str) -> list:
+    """增強版系統健康監控"""
+    try:
+        from backend.services.system_status_service import get_system_status, format_system_status_report
+        data   = await get_system_status()
+        report = format_system_status_report(data)
+        return [_text(report[:4800], qr_items(
+            ("🔄 刷新",       "/sysstatus"),
+            ("📊 簡易狀態",   "/status"),
+            ("🏥 健康儀表板", "/system_health"),
+        ))]
+    except Exception as e:
+        logger.error(f"[system_status] {e}")
+        return [_text(f"❌ 系統狀態查詢失敗：{e}",
+                      qr_items(("重試", "/sysstatus"), ("簡易狀態", "/status")))]
