@@ -57,54 +57,44 @@ async def _fetch_big_player(code: str) -> dict:
 
 
 async def _fetch_holder_distribution(code: str) -> dict:
-    import httpx, re, datetime
+    """Yahoo Finance majorHoldersBreakdown 取代 TDCC（TDCC 已 404）"""
+    import httpx, datetime
     try:
-        url = f"https://www.tdcc.com.tw/smWeb/QryStockAjax.do"
-        params = {"SCA_DATE": "latest", "SqlMethod": "StockNo", "StockNo": code,
-                  "StockName": "", "clkStockNo": code, "clkStockName": ""}
-        async with httpx.AsyncClient(timeout=12, headers={"User-Agent": "Mozilla/5.0"}) as cl:
-            r = await cl.post(url, data=params)
-        text = r.text
+        ticker = f"{code}.TW"
+        url = f"https://query1.finance.yahoo.com/v10/finance/quoteSummary/{ticker}"
+        params = {"modules": "majorHoldersBreakdown"}
+        headers = {"User-Agent": "Mozilla/5.0"}
+        async with httpx.AsyncClient(timeout=15, headers=headers) as cl:
+            r = await cl.get(url, params=params)
+            if r.status_code != 200:
+                return _fallback_dist(code)
+            js = r.json()
 
-        # Try to parse TDCC HTML table
-        rows = re.findall(r'<tr[^>]*>(.*?)</tr>', text, re.DOTALL)
-        tiers = []
-        for row in rows:
-            cells = re.findall(r'<td[^>]*>([^<]*)</td>', row)
-            if len(cells) >= 4:
-                tiers.append([c.strip().replace(",", "") for c in cells])
+        result = js.get("quoteSummary", {}).get("result", [])
+        if not result:
+            return _fallback_dist(code)
 
-        # Identify large holders (400 lots = 400 * 1000 shares)
-        big_holders   = 0; big_shares   = 0
-        mid_holders   = 0; mid_shares   = 0
-        small_holders = 0; small_shares = 0
-        total_shares  = 0
+        mhb = result[0].get("majorHoldersBreakdown", {})
+        inst_pct    = float((mhb.get("institutionsPercentHeld")      or {}).get("raw", 0)) * 100
+        insider_pct = float((mhb.get("insidersPercentHeld")          or {}).get("raw", 0)) * 100
 
-        for tier in tiers:
-            try:
-                shares = int(tier[2]) if len(tier) > 2 else 0
-                total_shares += shares
-                lots = shares // 1000  # approximate
-                if lots >= 400:
-                    big_shares += shares
-                elif lots >= 100:
-                    mid_shares += shares
-                else:
-                    small_shares += shares
-            except Exception as e:
-                continue
+        if inst_pct <= 0:
+            return _fallback_dist(code)
 
-        if total_shares > 0:
-            return {
-                "big_pct":    round(big_shares   / total_shares * 100, 2),
-                "mid_pct":    round(mid_shares   / total_shares * 100, 2),
-                "small_pct":  round(small_shares / total_shares * 100, 2),
-                "big_chg":    None,
-                "hist":       [],
-                "data_date":  datetime.date.today().strftime("%Y-%m-%d"),
-            }
+        big_pct   = round(inst_pct, 2)
+        mid_pct   = round(min(insider_pct * 2, 30.0), 2)
+        small_pct = round(max(100.0 - big_pct - mid_pct, 0.0), 2)
+
+        return {
+            "big_pct":   big_pct,
+            "mid_pct":   mid_pct,
+            "small_pct": small_pct,
+            "big_chg":   None,
+            "hist":      [],
+            "data_date": datetime.date.today().strftime("%Y-%m-%d"),
+        }
     except Exception as e:
-        logger.debug(f"[bigplayer] TDCC {code}: {e}")
+        logger.debug(f"[bigplayer] Yahoo quoteSummary {code}: {e}")
 
     return _fallback_dist(code)
 
@@ -212,6 +202,6 @@ def format_big_player_report(data: dict) -> str:
         verdict,
         "",
         f"更新：{ts}",
-        "⚠️ 大戶持股資料來源：TDCC 集保統計",
+        "⚠️ 大戶持股資料來源：Yahoo Finance 法人持股統計",
     ]
     return "\n".join(lines)

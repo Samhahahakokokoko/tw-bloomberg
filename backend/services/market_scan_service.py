@@ -93,25 +93,32 @@ async def _do_scan() -> dict:
 
 
 async def _get_foreign_top10() -> list[dict]:
-    """取得外資買超前10名"""
+    """取得外資買超前10名（TWSE TWT38U）"""
     try:
         import httpx
-        url = "https://openapi.twse.com.tw/v1/fund/TWT38U"
-        async with httpx.AsyncClient(timeout=15, follow_redirects=True) as c:
-            r = await c.get(url)
-            data = r.json()
+        url = "https://www.twse.com.tw/fund/TWT38U"
+        params = {"response": "json", "date": "", "selectType": "ALLBUT0999"}
+        headers = {"User-Agent": "Mozilla/5.0"}
+        async with httpx.AsyncClient(timeout=15, headers=headers, follow_redirects=True) as c:
+            r = await c.get(url, params=params)
+            js = r.json()
 
+        data = js.get("data", [])
         results = []
-        for item in data[:50]:
-            code = str(item.get("Code") or item.get("股票代號") or "").strip()
-            name = str(item.get("Name") or item.get("股票名稱") or code)
-            if not code or len(code) != 4:
+        for row in data:
+            if len(row) < 6:
                 continue
-            buy  = _parse_int(item.get("外資及陸資(不含外資自營商)買進股數") or item.get("買進股數") or 0)
-            sell = _parse_int(item.get("外資及陸資(不含外資自營商)賣出股數") or item.get("賣出股數") or 0)
-            net  = buy - sell
-            if net > 0:
-                results.append({"code": code, "name": name, "net": net // 1000})
+            code = str(row[1]).strip()
+            name = str(row[2]).strip()
+            if not code or len(code) != 4 or not code.isdigit():
+                continue
+            try:
+                net_shares = int(str(row[5]).replace(",", "").replace("+", ""))
+                net = net_shares // 1000  # 股 → 張
+                if net > 0:
+                    results.append({"code": code, "name": name, "net": net})
+            except Exception:
+                continue
 
         results.sort(key=lambda x: x["net"], reverse=True)
         return results[:10]

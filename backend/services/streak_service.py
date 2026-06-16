@@ -23,7 +23,7 @@ async def get_streak(code: str) -> dict:
 
 
 async def _fetch_price_data(code: str, days: int = 60) -> list[dict]:
-    """Fetch daily price data from Yahoo Finance v8 chart."""
+    """Fetch daily price data from Yahoo Finance v8 chart (3-retry on 429)."""
     import httpx
     ticker = f"{code}.TW"
     url = (
@@ -31,26 +31,32 @@ async def _fetch_price_data(code: str, days: int = 60) -> list[dict]:
         f"?range={days}d&interval=1d"
     )
     headers = {"User-Agent": "Mozilla/5.0"}
-    try:
-        async with httpx.AsyncClient(timeout=20, headers=headers) as client:
-            resp = await client.get(url)
+    for attempt in range(3):
+        try:
+            if attempt > 0:
+                await asyncio.sleep(attempt * 2)
+            async with httpx.AsyncClient(timeout=20, headers=headers) as client:
+                resp = await client.get(url)
+            if resp.status_code == 429:
+                logger.warning(f"streak price 429 for {code}, retry {attempt+1}")
+                continue
             if resp.status_code != 200:
                 return []
             data = resp.json()
-        result_obj = data.get("chart", {}).get("result", [])
-        if not result_obj:
-            return []
-        timestamps = result_obj[0].get("timestamp", [])
-        closes = result_obj[0].get("indicators", {}).get("quote", [{}])[0].get("close", [])
-        volumes = result_obj[0].get("indicators", {}).get("quote", [{}])[0].get("volume", [])
-        rows = []
-        for ts, c, v in zip(timestamps, closes, volumes):
-            if c is not None:
-                rows.append({"ts": ts, "close": c, "volume": v or 0})
-        return rows
-    except Exception as e:
-        logger.warning(f"streak price fetch error {code}: {e}")
-        return []
+            result_obj = data.get("chart", {}).get("result", [])
+            if not result_obj:
+                return []
+            timestamps = result_obj[0].get("timestamp", [])
+            closes  = result_obj[0].get("indicators", {}).get("quote", [{}])[0].get("close", [])
+            volumes = result_obj[0].get("indicators", {}).get("quote", [{}])[0].get("volume", [])
+            rows = []
+            for ts, c, v in zip(timestamps, closes, volumes):
+                if c is not None:
+                    rows.append({"ts": ts, "close": c, "volume": v or 0})
+            return rows
+        except Exception as e:
+            logger.warning(f"streak price fetch error {code} attempt {attempt+1}: {e}")
+    return []
 
 
 async def _fetch_inst_ownership(code: str) -> dict:

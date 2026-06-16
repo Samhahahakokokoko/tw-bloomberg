@@ -63,9 +63,9 @@ async def _get_foreign_detail() -> dict:
             if len(row) < 6:
                 continue
             try:
-                code   = str(row[0]).strip()
-                name   = str(row[1]).strip()
-                net    = int(str(row[5]).replace(",", "").replace("+", ""))
+                code   = str(row[1]).strip()   # row[0]=序號(space), row[1]=code
+                name   = str(row[2]).strip()   # row[2]=name
+                net    = int(str(row[5]).replace(",", "").replace("+", "")) // 1000  # 股→張
                 entry  = {"code": code, "name": name, "net": net}
                 if net > 0:
                     buy_list.append(entry)
@@ -115,8 +115,8 @@ async def _get_trust_detail() -> dict:
             if len(row) < 6:
                 continue
             try:
-                net = int(str(row[5]).replace(",", "").replace("+", ""))
-                entry = {"code": str(row[0]), "name": str(row[1]), "net": net}
+                net = int(str(row[5]).replace(",", "").replace("+", "")) // 1000  # 股→張
+                entry = {"code": str(row[1]).strip(), "name": str(row[2]).strip(), "net": net}
                 if net > 0:   buy_list.append(entry)
                 elif net < 0: sell_list.append(entry)
             except Exception as e:
@@ -152,7 +152,7 @@ async def _get_dealer_summary() -> dict:
         for row in data:
             if len(row) >= 6:
                 try:
-                    total_net += int(str(row[5]).replace(",", "").replace("+", ""))
+                    total_net += int(str(row[5]).replace(",", "").replace("+", "")) // 1000  # 股→張
                 except Exception as e:
                     pass
         return {"total_net": total_net, "direction": "買超" if total_net > 0 else "賣超"}
@@ -249,13 +249,19 @@ def format_institutional_detail_report(data: dict) -> str:
 
 async def push_daily_institutional() -> bool:
     """每日 15:30 推播法人明細"""
+    import os
     try:
-        from .line_push import push_to_admin
+        from .line_push import push_line_messages
+        admin_uid = os.getenv("ADMIN_LINE_UID", "")
+        if not admin_uid:
+            logger.warning("[inst_detail] ADMIN_LINE_UID not set, skip push")
+            return False
         data   = await get_institutional_detail()
         report = format_institutional_detail_report(data)
-        await push_to_admin(report[:3500])
-        logger.info("[inst_detail] pushed daily institutional detail")
-        return True
+        ok = await push_line_messages(admin_uid, [{"type": "text", "text": report[:3500]}], context="inst_detail.daily")
+        if ok:
+            logger.info("[inst_detail] pushed daily institutional detail")
+        return ok
     except Exception as e:
         logger.error(f"[inst_detail] push error: {e}")
         return False
