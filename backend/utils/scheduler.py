@@ -756,6 +756,13 @@ def start_scheduler() -> AsyncIOScheduler:
         CronTrigger(hour=6, minute=0, timezone="Asia/Taipei"),
         id="system_health_check", replace_existing=True,
     )
+    # ── Batch 13 排程 ──────────────────────────────────────────────────────
+    # 盤後深度覆盤 — 每日 16:30（收盤後 30 分鐘）
+    scheduler.add_job(
+        _run_deep_review_push,
+        CronTrigger(day_of_week="mon-fri", hour=16, minute=30, timezone="Asia/Taipei"),
+        id="deep_review_push", replace_existing=True,
+    )
 
     _apply_line_quota_safe_mode(scheduler)
     scheduler.start()
@@ -2599,3 +2606,17 @@ async def _run_system_health_check() -> None:
         logger.info("[Scheduler] system_health_check: done")
     except Exception as e:
         logger.error(f"[Scheduler] system_health_check failed: {e}")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Batch 13 runner functions
+# ══════════════════════════════════════════════════════════════════════════════
+
+async def _run_deep_review_push() -> None:
+    """盤後深度覆盤 — 每日 16:30"""
+    try:
+        from ..services.market_review_service import push_daily_review
+        ok = await push_daily_review()
+        logger.info(f"[Scheduler] deep_review_push: {ok}")
+    except Exception as e:
+        logger.error(f"[Scheduler] deep_review_push failed: {e}")

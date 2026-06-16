@@ -1457,6 +1457,44 @@ async def _handle_text(text: str, uid: str) -> list:
     if cmd in ("/sysstatus", "/syshealth", "/systemcheck"):
         return await _cmd_system_status(uid)
 
+    # ── Batch 13 ─────────────────────────────────────────────────────────────
+    # 功能1: 個股波段操作建議
+    if cmd in ("/swing", "/swingop", "/wave"):
+        code = args[0].upper() if args else ""
+        return await _cmd_swing(code, uid) if code else [_text(
+            "格式：/swing 股票代號\n例：/swing 2330",
+            qr_items(("台積電", "/swing 2330"), ("聯發科", "/swing 2454"),
+                     ("鴻海",   "/swing 2317"), ("廣達",   "/swing 2382"))
+        )]
+    # 功能2: 盤後深度覆盤
+    if cmd in ("/deepreview", "/aftermarket", "/postmarket"):
+        return await _cmd_deep_review(uid)
+    # 功能3: 個股比價系統
+    if cmd in ("/cheap", "/valcheck", "/isCheap"):
+        code = args[0].upper() if args else ""
+        return await _cmd_cheap(code, uid) if code else [_text(
+            "格式：/cheap 股票代號\n例：/cheap 2330",
+            qr_items(("台積電", "/cheap 2330"), ("聯發科", "/cheap 2454"),
+                     ("富邦金", "/cheap 2881"), ("廣達",   "/cheap 2382"))
+        )]
+    # 功能4: 增強市場廣度
+    if cmd in ("/mktbreadth", "/breadth2", "/advdec"):
+        return await _cmd_breadth_enhanced(uid)
+    # 功能5: 個股動態停損
+    if cmd in ("/dynstop", "/dynamicstop", "/atr_stop"):
+        code = args[0].upper() if args else ""
+        return await _cmd_dynstop(code, uid) if code else [_text(
+            "格式：/dynstop 股票代號\n例：/dynstop 2330",
+            qr_items(("台積電", "/dynstop 2330"), ("聯發科", "/dynstop 2454"),
+                     ("鴻海",   "/dynstop 2317"), ("廣達",   "/dynstop 2382"))
+        )]
+    # 功能6: 台股國際比較
+    if cmd in ("/global_compare", "/twvsglobal", "/intl"):
+        return await _cmd_global_compare(uid)
+    # 功能7: 個人投資總結
+    if cmd in ("/mysummary", "/myprofile", "/selfanalysis"):
+        return await _cmd_mysummary(uid)
+
     # ── 純數字 4-6 碼 → 直接查報價 ─────────────────────────────────────────
     t = text.strip()
     if t.isdigit() and 4 <= len(t) <= 6:
@@ -9564,3 +9602,129 @@ async def _cmd_system_status(uid: str) -> list:
         logger.error(f"[system_status] {e}")
         return [_text(f"❌ 系統狀態查詢失敗：{e}",
                       qr_items(("重試", "/sysstatus"), ("簡易狀態", "/status")))]
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Batch 13 handler functions
+# ══════════════════════════════════════════════════════════════════════════════
+
+async def _cmd_swing(code: str, uid: str) -> list:
+    """個股波段操作建議"""
+    try:
+        from backend.services.swing_service import get_swing, format_swing_report
+        data   = await get_swing(code)
+        report = format_swing_report(data, code)
+        return [_text(report[:4800], qr_items(
+            ("🛑 動態停損",   f"/dynstop {code}"),
+            ("💰 比價評估",   f"/cheap {code}"),
+            ("🎯 催化劑",     f"/catalyst {code}"),
+            ("💹 報價",       f"/{code}"),
+        ))]
+    except Exception as e:
+        logger.error(f"[swing] {code} {e}")
+        return [_text(f"❌ 波段分析失敗：{e}", qr_items(("重試", f"/swing {code}")))]
+
+
+async def _cmd_deep_review(uid: str) -> list:
+    """盤後深度覆盤"""
+    try:
+        from backend.services.market_review_service import get_market_review, format_review_report
+        data   = await get_market_review()
+        report = format_review_report(data)
+        return [_text(report[:4800], qr_items(
+            ("🔄 刷新",       "/deepreview"),
+            ("📊 市場廣度",   "/mktbreadth"),
+            ("🌐 全球比較",   "/global_compare"),
+            ("📊 大盤",       "/market"),
+        ))]
+    except Exception as e:
+        logger.error(f"[deep_review] {e}")
+        return [_text(f"❌ 盤後覆盤失敗：{e}", qr_items(("重試", "/deepreview")))]
+
+
+async def _cmd_cheap(code: str, uid: str) -> list:
+    """個股比價系統"""
+    try:
+        from backend.services.cheap_service import get_cheap, format_cheap_report
+        data   = await get_cheap(code)
+        report = format_cheap_report(data, code)
+        return [_text(report[:4800], qr_items(
+            ("📊 評分卡",     f"/scorecard2 {code}"),
+            ("🎯 催化劑",     f"/catalyst {code}"),
+            ("📐 波段分析",   f"/swing {code}"),
+            ("💹 報價",       f"/{code}"),
+        ))]
+    except Exception as e:
+        logger.error(f"[cheap] {code} {e}")
+        return [_text(f"❌ 比價評估失敗：{e}", qr_items(("重試", f"/cheap {code}")))]
+
+
+async def _cmd_breadth_enhanced(uid: str) -> list:
+    """增強版市場廣度分析"""
+    try:
+        from backend.services.breadth_enhanced_service import (
+            get_breadth_enhanced, format_breadth_enhanced_report
+        )
+        data   = await get_breadth_enhanced()
+        report = format_breadth_enhanced_report(data)
+        return [_text(report[:4800], qr_items(
+            ("🔄 刷新",       "/mktbreadth"),
+            ("📊 市場廣度",   "/breadth"),
+            ("😱 恐慌貪婪",   "/feargreed"),
+            ("🔁 反向指標",   "/contrarian"),
+        ))]
+    except Exception as e:
+        logger.error(f"[breadth_enhanced] {e}")
+        return [_text(f"❌ 廣度分析失敗：{e}", qr_items(("重試", "/mktbreadth")))]
+
+
+async def _cmd_dynstop(code: str, uid: str) -> list:
+    """個股動態停損計算"""
+    try:
+        from backend.services.dynstop_service import get_dynstop, format_dynstop_report
+        data   = await get_dynstop(code)
+        report = format_dynstop_report(data, code)
+        return [_text(report[:4800], qr_items(
+            ("📐 波段分析",   f"/swing {code}"),
+            ("💰 比價",       f"/cheap {code}"),
+            ("⚡ 壓力測試",   f"/stress {code}"),
+            ("💹 報價",       f"/{code}"),
+        ))]
+    except Exception as e:
+        logger.error(f"[dynstop] {code} {e}")
+        return [_text(f"❌ 動態停損失敗：{e}", qr_items(("重試", f"/dynstop {code}")))]
+
+
+async def _cmd_global_compare(uid: str) -> list:
+    """台股國際比較"""
+    try:
+        from backend.services.global_compare_service import (
+            get_global_compare, format_global_compare_report
+        )
+        data   = await get_global_compare()
+        report = format_global_compare_report(data)
+        return [_text(report[:4800], qr_items(
+            ("🔄 刷新",       "/global_compare"),
+            ("🌍 全球市場",   "/global"),
+            ("😱 恐慌貪婪",   "/feargreed"),
+            ("📊 深度覆盤",   "/deepreview"),
+        ))]
+    except Exception as e:
+        logger.error(f"[global_compare] {e}")
+        return [_text(f"❌ 國際比較失敗：{e}", qr_items(("重試", "/global_compare")))]
+
+
+async def _cmd_mysummary(uid: str) -> list:
+    """個人投資總結（AI 分析）"""
+    try:
+        from backend.services.mysummary_service import generate_mysummary_report
+        report = await generate_mysummary_report(uid)
+        return [_text(report[:4800], qr_items(
+            ("📓 投資日記",   "/journal"),
+            ("💼 持倉",       "/portfolio"),
+            ("🤖 行為分析",   "/behavior"),
+            ("🧭 每日智慧",   "/wisdom"),
+        ))]
+    except Exception as e:
+        logger.error(f"[mysummary] {uid} {e}")
+        return [_text(f"❌ 個人投資總結失敗：{e}", qr_items(("重試", "/mysummary")))]
