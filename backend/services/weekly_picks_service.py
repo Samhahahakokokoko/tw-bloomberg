@@ -4,6 +4,7 @@ from __future__ import annotations
 import time
 from datetime import datetime, date, timedelta
 from loguru import logger
+import asyncio
 
 _cache: dict = {}
 _cache_ts: float = 0.0
@@ -75,7 +76,7 @@ async def _fetch_weekly_picks() -> dict:
                 "vol_ratio": round(vol_ratio, 2),
                 "momentum": round(momentum, 2),
             }
-        except Exception:
+        except Exception as e:
             return None
 
     tasks   = [fetch_stock_week(c, n) for c, n in _UNIVERSE]

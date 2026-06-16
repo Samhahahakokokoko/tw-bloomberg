@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import time
 from loguru import logger
+import asyncio
 
 _cache: dict = {}
 _cache_ts: dict = {}
@@ -129,7 +130,7 @@ async def _get_fundamental(code: str) -> dict:
         return {"eps_growth": round(eps_g, 1), "gross_margin": round(gross_m, 1),
                 "roe": round(roe_val, 1), "revenue_growth": round(rev_g, 1),
                 "pe_ratio": round(float(pe), 1)}
-    except Exception:
+    except Exception as e:
         # Fallback for common stocks
         defaults = {
             "2330": {"eps_growth": 25.0, "gross_margin": 53.0, "roe": 28.0, "revenue_growth": 15.0, "pe_ratio": 22.0},
@@ -175,7 +176,7 @@ async def _get_news_sentiment(code: str) -> dict:
             sentiment = "bullish" if ratio > 0.6 else ("bearish" if ratio < 0.4 else "neutral")
         return {"score": round(score, 1), "sentiment": sentiment,
                 "pos": pos_cnt, "neg": neg_cnt}
-    except Exception:
+    except Exception as e:
         return {"score": 10.0, "sentiment": "neutral"}
 
 
@@ -220,7 +221,7 @@ async def _calc_chip_score(code: str, closes: list) -> float:
         ch = await get_chiphealth(code)
         total_ch = ch.get("total", 50)
         score = total_ch / 5  # 0-100 → 0-20
-    except Exception:
+    except Exception as e:
         if len(closes) >= 20:
             price = closes[-1]
             ma20  = sum(closes[-20:]) / 20

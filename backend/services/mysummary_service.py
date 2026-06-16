@@ -28,7 +28,7 @@ async def get_mysummary(uid: str) -> dict:
     try:
         from .trade_journal import get_journal
         journals = await get_journal(uid, limit=10)
-    except Exception:
+    except Exception as e:
         try:
             from .diary_service import get_recent_entries
             raw = await get_recent_entries(uid, n=10)
@@ -156,7 +156,7 @@ async def generate_mysummary_report(uid: str) -> str:
             try:
                 from ..utils.credit_guard import mark_exhausted as _me
                 _me()
-            except Exception:
+            except Exception as e:
                 pass
             logger.warning("[mysummary] Anthropic credit 耗盡 uid={}", uid[:8])
         else:

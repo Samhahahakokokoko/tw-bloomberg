@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import time
 from loguru import logger
+import re
 
 _cache: dict = {}
 _cache_ts: dict = {}
@@ -30,7 +31,7 @@ async def get_ai_natural_answer(question: str, uid: str) -> str:
     try:
         market_ctx = await _get_market_snapshot()
         context_parts.append(f"【今日市場】\n{market_ctx}")
-    except Exception:
+    except Exception as e:
         pass
 
     # 用戶持倉
@@ -42,7 +43,7 @@ async def get_ai_natural_answer(question: str, uid: str) -> str:
                        f"{h['shares']}股 損益{h.get('pnl_pct',0):+.1f}%"
                        for h in holdings[:8]]
             context_parts.append("【用戶持倉】\n" + "\n".join(h_lines))
-    except Exception:
+    except Exception as e:
         pass
 
     # 恐慌貪婪指數
@@ -52,7 +53,7 @@ async def get_ai_natural_answer(question: str, uid: str) -> str:
         score = fg.get("composite_score", 50)
         label = fg.get("label", "中性")
         context_parts.append(f"【恐慌貪婪指數】{score}/100（{label}）")
-    except Exception:
+    except Exception as e:
         pass
 
     # 問題中提到的個股資訊
@@ -72,7 +73,7 @@ async def get_ai_natural_answer(question: str, uid: str) -> str:
                 context_parts.append(
                     f"【{code} 今日資料】現價={closes[-1]:.1f} 漲跌={chg:+.1f}%"
                 )
-        except Exception:
+        except Exception as e:
             pass
 
     # 問題中的族群關鍵字 → 提供族群資訊
@@ -136,7 +137,7 @@ async def _get_market_snapshot() -> str:
         if len(closes) >= 2:
             chg = (closes[-1] - closes[-2]) / closes[-2] * 100
             return f"台股加權指數 {closes[-1]:.0f}，今日{chg:+.1f}%"
-    except Exception:
+    except Exception as e:
         pass
     return "台股資料暫時無法取得"
 

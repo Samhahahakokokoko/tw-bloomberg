@@ -4,6 +4,7 @@ from __future__ import annotations
 import time
 import math
 from loguru import logger
+import asyncio
 
 _cache: dict = {}
 _cache_ts: dict = {}
@@ -57,7 +58,7 @@ async def _fetch_portfolio_opt(uid: str) -> dict:
                 return code, []
             rets = [(closes[i] - closes[i-1]) / closes[i-1] for i in range(1, len(closes))]
             return code, rets
-        except Exception:
+        except Exception as e:
             return code, []
 
     tasks   = [fetch_returns(c) for c in codes]

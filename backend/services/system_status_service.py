@@ -4,6 +4,7 @@ from __future__ import annotations
 import time
 import os
 from loguru import logger
+import asyncio
 
 _cache: dict = {}
 _cache_ts: float = 0.0
@@ -123,7 +124,7 @@ async def _fetch_system_status() -> dict:
                     result = await db.execute(text(f"SELECT COUNT(*) FROM {table}"))
                     cnt = result.scalar()
                     db_stats[table] = cnt
-                except Exception:
+                except Exception as e:
                     db_stats[table] = "N/A"
     except Exception as e:
         logger.debug(f"[sysstatus] db_stats: {e}")
@@ -139,7 +140,7 @@ async def _fetch_system_status() -> dict:
                 "running":   scheduler.running,
                 "job_count": len(jobs),
             }
-    except Exception:
+    except Exception as e:
         scheduler_info = {"running": None, "job_count": None}
 
     # ── 4. 記憶體快取統計 ────────────────────────────────────────────────────
@@ -156,7 +157,7 @@ async def _fetch_system_status() -> dict:
             svc = importlib.import_module(f"..services.{module}", package=__name__)
             cache_cnt = len(getattr(svc, "_cache", {}))
             cache_stats[label] = cache_cnt
-        except Exception:
+        except Exception as e:
             cache_stats[label] = "N/A"
 
     # ── 5. 整體健康評級 ──────────────────────────────────────────────────────

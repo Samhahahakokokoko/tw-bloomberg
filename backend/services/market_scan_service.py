@@ -117,7 +117,7 @@ async def _get_foreign_top10() -> list[dict]:
                 net = net_shares // 1000  # 股 → 張
                 if net > 0:
                     results.append({"code": code, "name": name, "net": net})
-            except Exception:
+            except Exception as e:
                 continue
 
         results.sort(key=lambda x: x["net"], reverse=True)

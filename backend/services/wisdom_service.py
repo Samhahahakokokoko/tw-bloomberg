@@ -202,7 +202,7 @@ async def _get_market_context() -> dict:
         if len(closes) >= 2:
             chg = (closes[-1] - closes[-2]) / closes[-2] * 100
             return {"twii": round(closes[-1], 0), "chg_pct": round(chg, 2)}
-    except Exception:
+    except Exception as e:
         pass
     return {"twii": 0, "chg_pct": 0.0}
 

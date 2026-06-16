@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import time
 from loguru import logger
+import asyncio
 
 _cache: dict = {}
 _cache_ts: dict = {}
@@ -131,7 +132,7 @@ async def _fetch_index(key: str) -> dict:
             if len(closes) >= 2:
                 chg = (closes[-1] - closes[-2]) / closes[-2] * 100
                 return {"price": closes[-1], "chg_pct": round(chg, 2)}
-        except Exception:
+        except Exception as e:
             pass
         return {"price": 0.0, "chg_pct": 0.0}
 

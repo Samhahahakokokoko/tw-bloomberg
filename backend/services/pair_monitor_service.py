@@ -4,6 +4,7 @@ from __future__ import annotations
 import time
 import math
 from loguru import logger
+import asyncio
 
 # 持久化監控列表（按 uid 存儲）
 _monitors: dict[str, list[dict]] = {}  # uid -> [{code1, code2, z_threshold, added_at}]
