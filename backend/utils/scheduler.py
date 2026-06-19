@@ -764,57 +764,93 @@ def start_scheduler() -> AsyncIOScheduler:
         id="deep_review_push", replace_existing=True,
     )
 
+    # ── 精簡推播：08:45 精簡早報 ──────────────────────────────────────────────
+    scheduler.add_job(
+        _run_compact_morning,
+        CronTrigger(day_of_week="mon-fri", hour=8, minute=45, timezone="Asia/Taipei"),
+        id="compact_morning", replace_existing=True,
+    )
+    # ── 精簡推播：15:00 收盤總結 ──────────────────────────────────────────────
+    scheduler.add_job(
+        _run_closing_summary,
+        CronTrigger(day_of_week="mon-fri", hour=15, minute=0, timezone="Asia/Taipei"),
+        id="closing_summary", replace_existing=True,
+    )
+
     _apply_line_quota_safe_mode(scheduler)
     scheduler.start()
-    logger.info("Scheduler started (morning report 08:30 / weekly report Fri 14:30)")
+    logger.info("[Scheduler] 啟動完成：精簡早報 08:45 / 收盤總結 15:00")
+
+    global _scheduler_instance
+    _scheduler_instance = scheduler
     return scheduler
 
 
+# 全域 scheduler 參照（供 /notify 動態開關使用）
+_scheduler_instance: "AsyncIOScheduler | None" = None
+
+
+def get_scheduler() -> "AsyncIOScheduler | None":
+    return _scheduler_instance
+
+
 def _apply_line_quota_safe_mode(scheduler: AsyncIOScheduler) -> None:
-    enabled = os.getenv("LINE_QUOTA_SAFE_MODE", "1").lower() not in {"0", "false", "off"}
-    if not enabled:
-        logger.info("[Scheduler] LINE quota safe mode disabled")
-        return
+    # 精簡模式：移除所有選配推播任務，只保留基礎設施與兩個整合推播
+    # 個別任務可透過 LINE /notify on <job_id> 動態恢復
 
-    # Tier 1 — always removed in safe mode: bulk/low-value broadcast jobs
-    # NOTE: daily_decision, morning_picks, group_report, weekly_picks are CORE — never added here.
-    tier1_jobs = {
-        "agent_report",
-        "sector_heatmap",
-        "narrative_map_push",
-        "ai_debate_push",
-        "macro_weekly",
-        "mistake_detector_weekly",
-        "euphoria_stress_push",
+    # 永遠保留（基礎設施）：news_scraper, db_backup, system_health_check,
+    #   ailearn_check, market_anomaly, dividend_refresh, stop_loss_scanner,
+    #   alert_checker, watchlist_trigger, event_alert_scan, market_breadth,
+    #   rec_backfill, perf_snapshot, feature_weight_adjust, weight_adjust,
+    #   monthly_tier_update, self_learning_weights, dna_weekly_update,
+    #   post_market_breadth, pipeline_*, agent_a_*, agent_b_*,
+    #   youtube_fetch, analyst_performance, sandbox_daily_eval,
+    #   market_intel_scan, drift_detection, self_optimizer, auto_improve,
+    #   public_rankings, industry_sentiment, broker_data_update,
+    #   compact_morning, closing_summary
+
+    all_optional_push_jobs = {
+        # 盤前推播群
+        "morning_report", "industry_news_morning", "premarket_brief",
+        "daily_trade_plan", "daily_qa_push", "wisdom_push",
+        "conference_reminder", "opex_alert", "ai_feed",
+        "youtube_morning_check", "earnings_reminder",
+        "macro_weekly", "investor_meetings_weekly", "ai_contest_pick",
+        "morning_picks", "watchlist_morning", "morning_sentiment",
+        # 盤中推播群
+        "market_scan", "dashboard_snapshot", "pcr_alert",
+        "black_swan_alert", "vix_alert",
+        "midday_push_1030", "midday_push_1300",
+        "morning_alert_flush", "smart_alert_v2",
+        "price_zone_alert", "pair_monitor_alerts", "breaking_news_push",
+        # 收盤後推播群
+        "chip_alerts", "afternoon_alert_flush", "techrating_update",
+        "sector_strength_push", "inst_detail_push", "margin_alert",
+        "deep_review_push", "analyst_alert_check", "euphoria_stress_push",
+        "autonomous_research", "hedge_fund_agent_run",
+        "sector_heatmap", "smart_money", "smart_money_v2",
+        "watchlist_daily", "portfolio_overlay", "agent_c_decision",
+        "daily_advice", "daily_decision", "group_report",
+        "portfolio_manager_advice", "agent_report",
+        "analyst_consensus_push", "narrative_map_push",
+        "ai_debate_push", "committee_batch", "diary_report",
+        # 週/月推播群
+        "weekly_report", "weekly_picks", "weekly_picks_push",
+        "friday_summary", "ai_contest_score", "meta_alpha_weekly",
+        "mistake_detector_weekly", "prediction_market_weekly",
+        "weekplan_push", "monthly_report_check", "monthly_report",
+        "weekly_rating", "pipeline_movers",
     }
-
-    # Tier 2 — only removed when LINE_QUOTA_STRICT_MODE=1: high-value per-user alerts
-    tier2_jobs = {
-        "watchlist_daily",
-        "smart_money",
-        "smart_money_v2",
-        "smart_alert_v2",
-        "portfolio_overlay",
-        "portfolio_manager_advice",
-        "ai_feed",
-        "analyst_alert_check",
-        "autonomous_research",
-        "friday_summary",
-    }
-
-    strict = os.getenv("LINE_QUOTA_STRICT_MODE", "0").lower() not in {"0", "false", "off"}
-    to_remove = tier1_jobs | (tier2_jobs if strict else set())
 
     removed = []
-    for job_id in to_remove:
+    for job_id in all_optional_push_jobs:
         if scheduler.get_job(job_id):
             scheduler.remove_job(job_id)
             removed.append(job_id)
 
-    mode_label = "strict" if strict else "normal"
     logger.info(
-        f"[Scheduler] LINE quota safe mode ({mode_label}) removed {len(removed)} push jobs: "
-        f"{','.join(sorted(removed))}"
+        f"[Scheduler] 精簡模式：已停用 {len(removed)} 個選配推播任務。"
+        f"使用 /notify list 查看，/notify on <job> 恢復個別推播。"
     )
 
 
@@ -2620,3 +2656,116 @@ async def _run_deep_review_push() -> None:
         logger.info(f"[Scheduler] deep_review_push: {ok}")
     except Exception as e:
         logger.error(f"[Scheduler] deep_review_push failed: {e}")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 新整合推播：精簡早報 + 收盤總結
+# ══════════════════════════════════════════════════════════════════════════════
+
+async def _run_compact_morning() -> None:
+    """08:45 精簡早報：自選股重點 + 大盤情緒 + 今日重大事件"""
+    try:
+        from ..services.compact_morning_service import push_compact_morning_all
+        await push_compact_morning_all()
+        logger.info("[Scheduler] compact_morning done")
+    except Exception as e:
+        logger.error(f"[Scheduler] compact_morning failed: {e}")
+
+
+async def _run_closing_summary() -> None:
+    """15:00 收盤總結：自選股表現 + 法人動向 + 明日注意"""
+    try:
+        from ..services.closing_summary_service import push_closing_summary_all
+        await push_closing_summary_all()
+        logger.info("[Scheduler] closing_summary done")
+    except Exception as e:
+        logger.error(f"[Scheduler] closing_summary failed: {e}")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# /notify 動態開關支援
+# ══════════════════════════════════════════════════════════════════════════════
+
+# 所有可恢復的推播任務規格（job_id → (func_name, trigger_kwargs)）
+# 僅列出「已在 start_scheduler 中定義過」的任務
+_NOTIFY_JOB_SPECS: dict[str, tuple] = {
+    "morning_report":           (_run_morning_report,          {"day_of_week": "mon-fri", "hour": 8,  "minute": 30}),
+    "weekly_report":            (_run_weekly_report,           {"day_of_week": "fri",     "hour": 14, "minute": 30}),
+    "industry_news_morning":    (_run_industry_news_morning,   {"day_of_week": "mon-fri", "hour": 8,  "minute": 20}),
+    "premarket_brief":          (_run_premarket_brief,         {"day_of_week": "mon-fri", "hour": 8,  "minute": 10}),
+    "daily_trade_plan":         (_push_daily_trade_plan,       {"day_of_week": "mon-fri", "hour": 8,  "minute": 35}),
+    "daily_qa_push":            (_run_daily_qa_push,           {"hour": 8,  "minute": 0}),
+    "wisdom_push":              (_run_wisdom_push,             {"hour": 8,  "minute": 5}),
+    "conference_reminder":      (_run_conference_reminder,     {"day_of_week": "mon-fri", "hour": 8,  "minute": 5}),
+    "opex_alert":               (_push_opex_alert,             {"day_of_week": "mon-fri", "hour": 8,  "minute": 32}),
+    "ai_feed":                  (_push_ai_feed,                {"day_of_week": "mon-fri", "hour": 8,  "minute": 31}),
+    "earnings_reminder":        (_check_earnings_reminders,    {"day_of_week": "mon-fri", "hour": 8,  "minute": 15}),
+    "macro_weekly":             (_push_macro_weekly,           {"day_of_week": "mon",     "hour": 8,  "minute": 5}),
+    "investor_meetings_weekly": (_push_investor_meetings,      {"day_of_week": "mon",     "hour": 8,  "minute": 10}),
+    "morning_picks":            (_push_morning_picks,          {"day_of_week": "mon-fri", "hour": 8,  "minute": 30}),
+    "market_scan":              (_run_market_scan,             {"day_of_week": "mon-fri", "hour": "10,12,14", "minute": 0}),
+    "black_swan_alert":         (_run_black_swan_alert,        {"day_of_week": "mon-fri", "hour": "8,10,13",  "minute": 30}),
+    "vix_alert":                (_run_vix_alert,               {"day_of_week": "mon-fri", "hour": "9-15", "minute": 0}),
+    "midday_push_1030":         (_run_midday_push,             {"day_of_week": "mon-fri", "hour": 10, "minute": 30}),
+    "midday_push_1300":         (_run_midday_push,             {"day_of_week": "mon-fri", "hour": 13, "minute": 0}),
+    "smart_alert_v2":           (_run_smart_alert,             {"day_of_week": "mon-fri", "hour": "9-13", "minute": "*/30"}),
+    "breaking_news_push":       (_run_breaking_news_push,      {"hour": "9-21", "minute": "*/30"}),
+    "chip_alerts":              (_push_chip_alerts,            {"day_of_week": "mon-fri", "hour": 15, "minute": 32}),
+    "sector_strength_push":     (_push_sector_strength,        {"day_of_week": "mon-fri", "hour": 15, "minute": 5}),
+    "inst_detail_push":         (_run_inst_detail_push,        {"day_of_week": "mon-fri", "hour": 15, "minute": 30}),
+    "margin_alert":             (_run_margin_alert,            {"day_of_week": "mon-fri", "hour": 16, "minute": 0}),
+    "deep_review_push":         (_run_deep_review_push,        {"day_of_week": "mon-fri", "hour": 16, "minute": 30}),
+    "smart_money":              (_push_smart_money,            {"day_of_week": "mon-fri", "hour": 18, "minute": 30}),
+    "sector_heatmap":           (_push_sector_heatmap,         {"day_of_week": "mon-fri", "hour": 18, "minute": 30}),
+    "smart_money_v2":           (_push_smart_money_v2,         {"day_of_week": "mon-fri", "hour": 19, "minute": 0}),
+    "watchlist_daily":          (_push_watchlist_daily,        {"day_of_week": "mon-fri", "hour": 19, "minute": 0}),
+    "portfolio_overlay":        (_push_portfolio_overlay,      {"day_of_week": "mon-fri", "hour": 19, "minute": 0}),
+    "daily_advice":             (_push_daily_advice,           {"day_of_week": "mon-fri", "hour": 19, "minute": 30}),
+    "daily_decision":           (_push_daily_decision,         {"day_of_week": "mon-fri", "hour": 19, "minute": 30}),
+    "group_report":             (_push_group_report,           {"day_of_week": "mon-fri", "hour": 19, "minute": 30}),
+    "portfolio_manager_advice": (_push_portfolio_manager,      {"day_of_week": "mon-fri", "hour": 19, "minute": 30}),
+    "agent_report":             (_push_agent_report,           {"day_of_week": "mon-fri", "hour": 19, "minute": 30}),
+    "analyst_consensus_push":   (_push_analyst_consensus,      {"day_of_week": "mon-fri", "hour": 20, "minute": 0}),
+    "narrative_map_push":       (_push_narrative_map,          {"day_of_week": "mon-fri", "hour": 20, "minute": 0}),
+    "ai_debate_push":           (_push_ai_debate,              {"day_of_week": "mon-fri", "hour": 20, "minute": 30}),
+    "diary_report":             (_push_diary_report,           {"day_of_week": "mon-fri", "hour": 21, "minute": 0}),
+    "weekly_picks":             (_push_weekly_picks,           {"day_of_week": "fri",     "hour": 15, "minute": 0}),
+    "friday_summary":           (_push_friday_summary,         {"day_of_week": "fri",     "hour": 15, "minute": 0}),
+    "weekly_picks_push":        (_run_weekly_picks_push,       {"day_of_week": "fri",     "hour": 15, "minute": 30}),
+    "weekplan_push":            (_run_weekplan_push,           {"day_of_week": "sun",     "hour": 20, "minute": 0}),
+    "euphoria_stress_push":     (_push_euphoria_stress,        {"day_of_week": "mon-fri", "hour": 17, "minute": 0}),
+    "autonomous_research":      (_push_autonomous_research,    {"day_of_week": "mon-fri", "hour": 17, "minute": 30}),
+    "mistake_detector_weekly":  (_push_mistake_detector,       {"day_of_week": "fri",     "hour": 18, "minute": 0}),
+}
+
+
+def toggle_notify_job(job_id: str, enable: bool) -> bool:
+    """動態啟用或停用推播任務。回傳是否成功。"""
+    sched = get_scheduler()
+    if sched is None:
+        return False
+
+    if not enable:
+        if sched.get_job(job_id):
+            sched.remove_job(job_id)
+            logger.info(f"[notify] 已停用推播任務: {job_id}")
+        return True
+
+    # enable — 從 spec 重新加入
+    spec = _NOTIFY_JOB_SPECS.get(job_id)
+    if spec is None:
+        logger.warning(f"[notify] 未知 job_id: {job_id}")
+        return False
+
+    func, trigger_kwargs = spec
+    try:
+        sched.add_job(
+            func,
+            CronTrigger(**trigger_kwargs, timezone="Asia/Taipei"),
+            id=job_id, replace_existing=True,
+        )
+        logger.info(f"[notify] 已啟用推播任務: {job_id}")
+        return True
+    except Exception as e:
+        logger.error(f"[notify] 啟用 {job_id} 失敗: {e}")
+        return False

@@ -697,7 +697,13 @@ async def _handle_text(text: str, uid: str) -> list:
             qr_items(("交易記錄", "/trade history"), ("損益", "/trade pnl"))
         )]
     if cmd == "/ai_guide":                      return [_ai_guide()]
-    if cmd == "/help":                          return [_text(_help_text(), _home_qr())]
+    if cmd == "/help":
+        sub = parts[1].lower() if len(parts) > 1 else ""
+        if sub == "all":
+            return [_text(_help_text_full(), _home_qr())]
+        return [_text(_help_text(), _home_qr())]
+    if cmd == "/today":                         return await _cmd_today(uid)
+    if cmd == "/notify":                        return await _cmd_notify(parts[1:], uid)
     if cmd == "/screener":                      return await _cmd_screener(parts[1] if len(parts) > 1 else "top")
     if cmd == "/find"     and len(parts) >= 2:  return await _cmd_nl_screener(" ".join(parts[1:]))
     if cmd == "/accuracy" and len(parts) == 1: return await _cmd_accuracy()
@@ -3441,85 +3447,174 @@ def _home_qr() -> dict:
 
 
 def _help_text() -> str:
+    """精簡主選單（10 個最常用指令）"""
     return (
-        "📋 指令說明\n"
-        "─────────────\n"
-        "快速指令（4個）：\n"
-        "/n          今日財經新聞\n"
-        "/p          我的庫存\n"
-        "/r          今日選股選單\n"
-        "/ai [問題]  AI分析\n\n"
-        "輸入 4 碼        即時報價\n"
-        "「庫存」/「大盤」 口語查詢\n"
-        "/portfolio       我的庫存\n"
-        "/buy 代碼 股數 成本\n"
-        "/alert 代碼 類型 數值\n"
-        "\n📊 選股\n"
-        "/screener        多維度選股\n"
-        "/find 條件       自然語言選股\n"
-        "/accuracy        AI推薦準確率\n"
-        "\n🕵️ 分點追蹤\n"
-        "/broker 代碼     前10大分點\n"
-        "/track 分點名    分點持股動向\n"
-        "/smart           聰明錢訊號\n"
-        "\n📐 投組分析\n"
-        "/optimize        最佳持股比例\n"
-        "/var             風險值(VaR)\n"
-        "/correlation     持股相關性\n"
-        "/advice          今日操作建議\n"
-        "/ai 2330         個股深度分析\n"
-        "\n📊 選股系統\n"
-        "/screen               互動選股選單\n"
-        "/report all           全維度前20\n"
-        "/report momentum      動能選股\n"
-        "/report value         存股選股\n"
-        "/report chip          籌碼選股\n"
-        "/report breakout      技術突破\n"
-        "/report ai            AI族群\n"
-        "/report sector 散熱   族群選股\n"
-        "/report next          下一頁\n"
-        "/custom 外資連買3天   自訂條件\n"
-        "/save 2330            收藏股票\n"
-        "/myfav                我的收藏\n"
-        "/myfav report         收藏選股圖\n"
-        "/compare 2330 2454    比較圖\n"
-        "/track 2330           歷史追蹤\n"
-        "\n/morning /week /subscribe"
-        "\n\n🧠 分析師情報\n"
-        "/analyst      今日共識報告\n"
-        "/analyst list 追蹤清單\n"
-        "/drift        觀點飄移偵測\n"
-        "\n🔭 市場情報作戰\n"
-        "/timeline     市場週期位置\n"
-        "/leadlag      領先/滯後信號\n"
-        "/theme        主題擴散鏈\n"
-        "/footprint    法人4D足跡\n"
-        "/euphoria     過熱溫度計\n"
-        "/stress       壓力測試\n"
-        "/debate 代碼  AI多空辯論\n"
-        "/predict      預測市場\n"
-        "\n🏛️ 市場情報中心\n"
-        "/narrative    市場敘事地圖\n"
-        "/rotation     資金輪動預測\n"
-        "/memory       歷史情境比對\n"
-        "/committee 代碼  委員會決議\n"
-        "/weights      因子調權週報\n"
-        "\n📈 快速分析（整合自 stock-bot）\n"
-        "/chip 2330    三大法人近 5 日\n"
-        "/test 2330 RSI   簡易回測\n"
-        "/test 2330 MACD  MACD 回測\n"
-        "\n📡 智慧警報 & 情緒\n"
-        "/sentiment       大盤情緒指數（0-100）\n"
-        "/watchlist       自選股（含RSI & 訊號）\n"
-        "/watch 代碼 [sl=X] [tp=Y]  加入自選股\n"
-        "/alerts          我的警報清單\n"
-        "/alert 代碼 buy 買價 stop 停損 target 目標\n"
-        "/optimize 代碼 RSI  RSI 參數優化（3年回測）\n"
-        "\n💡 小技巧\n"
-        "• 直接輸入股名（台積電）→ 即時報價\n"
-        "• 輸入 4 碼 → 報價＋RSI＋量能\n"
-        "• /buy 代碼 股數 成本 sl=停損 tp=目標\n"
+        "📋 常用指令（輸入 /help all 查完整清單）\n"
+        "─────────────────────────\n"
+        "每日必看\n"
+        "  /today          今日自選股 + 大盤情緒 + 風控\n"
+        "\n查股票\n"
+        "  2330             直接輸入代號 → 即時報價\n"
+        "  /ai 2330         AI 深度分析\n"
+        "  /check 2330      快速健康評分\n"
+        "\n進階分析\n"
+        "  /chip 2330       三大法人籌碼\n"
+        "  /score 2330      健康評分\n"
+        "  /test 2330 RSI   回測\n"
+        "\n投資組合\n"
+        "  /watch 2330      加入自選股\n"
+        "  /p               我的庫存\n"
+        "  /risk            風控報告\n"
+        "\n─────────────────────────\n"
+        "💡 推播已精簡為每日 2 則：\n"
+        "   08:45 精簡早報  ·  15:00 收盤總結\n"
+        "   輸入 /notify list 管理推播設定"
     )
+
+
+def _help_text_full() -> str:
+    """完整指令清單（/help all）"""
+    return (
+        "📋 完整指令清單\n"
+        "─────────────\n"
+        "🗺️ 每日\n"
+        "/today  /morning  /week  /market  /sentiment\n"
+        "\n📈 查股票\n"
+        "代號  /ai  /check  /chip  /score  /pe  /vol\n"
+        "/inst  /margin  /revenue  /eps  /dividend\n"
+        "/pattern  /chart  /compare  /forecast\n"
+        "\n💼 投資組合\n"
+        "/p  /buy  /sell  /watch  /watchlist\n"
+        "/stops  /risk  /var  /correlation  /performance\n"
+        "/optimize  /rebalance  /mysummary\n"
+        "\n🔍 選股\n"
+        "/screen  /report all/momentum/value/chip\n"
+        "/find 條件  /rs  /breadth  /movers  /theme\n"
+        "/swing  /cheap  /mktbreadth\n"
+        "\n📊 技術分析\n"
+        "/test 代碼 RSI/MACD  /backtest  /divergence\n"
+        "/techrating  /mtf  /seasonal  /hl\n"
+        "\n🏦 籌碼法人\n"
+        "/chip  /inst  /cost  /fundcost  /chiphealth\n"
+        "/footprint  /bigplayer  /streak  /us2tw\n"
+        "\n📰 市場情報\n"
+        "/news  /breaking  /impact 事件\n"
+        "/sentiment  /feargreed  /vix  /global_compare\n"
+        "/rotation  /adr  /basis  /deepreview\n"
+        "\n🧠 AI 分析\n"
+        "/ai  /ask  /analysis  /scorecard2  /factor\n"
+        "/catalyst  /contrarian  /wisdom  /ailearn\n"
+        "\n🎯 策略\n"
+        "/strategy  /rec  /exit  /dynstop  /stress\n"
+        "/scorecard  /weekplan  /weeklypicks\n"
+        "\n🏛️ 法人/分析師\n"
+        "/analyst  /consensus  /debate  /predict\n"
+        "/timeline  /leadlag  /narrative  /weights\n"
+        "\n⚙️ 系統\n"
+        "/today  /notify list/on/off  /help\n"
+        "/system  /sysstatus  /subscribe  /feedback\n"
+        "/adduser  /removeuser  /userlist"
+    )
+
+
+# ── /today — 每日必看總覽 ─────────────────────────────────────────────────────
+
+async def _cmd_today(uid: str) -> list:
+    """一次性顯示：自選股即時狀態 + 大盤情緒 + 風險提醒"""
+    try:
+        from backend.services.compact_morning_service import generate_compact_morning
+        text = await generate_compact_morning(uid)
+
+        # 補充：是否有停損/停利觸發
+        try:
+            from backend.services.watchlist_monitor import scan_user_watchlist
+            items = await scan_user_watchlist(uid)
+            alerts = [it for it in items if it.get("sl_triggered") or it.get("tp_triggered")]
+            if alerts:
+                alert_lines = ["", "⚠️ 觸發警報："]
+                for a in alerts:
+                    tag = "🛑 停損!" if a.get("sl_triggered") else "🎯 達標!"
+                    alert_lines.append(f"  {tag} {a['code']} {a['name']} @ {a.get('price', 0):,.0f}")
+                text = text + "\n".join(alert_lines)
+        except Exception:
+            pass
+
+        qr = qr_items(
+            ("🔍 選股", "/screen"),
+            ("💼 庫存", "/p"),
+            ("📊 大盤", "/market"),
+        )
+        return [_text(text, qr)]
+    except Exception as e:
+        return [_text(f"❌ /today 查詢失敗：{e}")]
+
+
+# ── /notify — 推播開關管理 ────────────────────────────────────────────────────
+
+async def _cmd_notify(args: list[str], uid: str) -> list:
+    """
+    /notify list              — 列出所有推播任務狀態
+    /notify on  <job_id>      — 啟用推播任務
+    /notify off <job_id>      — 停用推播任務
+    """
+    from backend.services.notify_config import (
+        is_push_enabled, set_push_enabled, list_config, NOTIFY_LABELS,
+    )
+
+    sub = args[0].lower() if args else "list"
+
+    if sub == "list":
+        cfg  = list_config()
+        on   = [v["label"] for v in cfg.values() if v["enabled"]]
+        off  = [v["label"] for v in cfg.values() if not v["enabled"]]
+        lines = ["📡 推播任務狀態", "─" * 18]
+        lines.append(f"✅ 已啟用（{len(on)} 個）：")
+        for lb in on[:10]:
+            lines.append(f"  • {lb}")
+        if len(on) > 10:
+            lines.append(f"  … 另 {len(on)-10} 個")
+        lines.append(f"\n⏸️ 已停用（{len(off)} 個），可輸入：")
+        lines.append("/notify on <job_id> 恢復")
+        lines.append("\n常用 job_id：")
+        for jid, lbl in list(NOTIFY_LABELS.items())[:8]:
+            lines.append(f"  {jid} → {lbl}")
+        return [_text("\n".join(lines), qr_items(("主選單", "/help"), ("今日總覽", "/today")))]
+
+    if sub in ("on", "off") and len(args) >= 2:
+        job_id  = args[1]
+        enable  = (sub == "on")
+        ok_cfg  = set_push_enabled(job_id, enable)
+        if not ok_cfg:
+            return [_text(f"❌ 未知推播任務：{job_id}\n\n輸入 /notify list 查看所有可用 job_id")]
+
+        # 動態操作排程器
+        try:
+            from backend.utils.scheduler import toggle_notify_job
+            ok_sched = toggle_notify_job(job_id, enable)
+        except Exception as e:
+            ok_sched = False
+            _ = e
+
+        label = NOTIFY_LABELS.get(job_id, job_id)
+        icon  = "✅" if enable else "⏸️"
+        sched_note = "" if ok_sched else "\n（排程將於下次重啟後生效）"
+        return [_text(
+            f"{icon} {label}\n已{'啟用' if enable else '停用'}{sched_note}",
+            qr_items(("查看狀態", "/notify list"), ("今日總覽", "/today")),
+        )]
+
+    # help
+    return [_text(
+        "📡 推播管理\n\n"
+        "/notify list         查看所有推播狀態\n"
+        "/notify on  <job_id> 啟用推播\n"
+        "/notify off <job_id> 停用推播\n\n"
+        "範例：\n"
+        "/notify on  weekly_report   恢復週報\n"
+        "/notify off breaking_news_push  關閉即時新聞\n\n"
+        "輸入 /notify list 查看完整 job_id 清單",
+        qr_items(("查看清單", "/notify list"), ("今日總覽", "/today")),
+    )]
 
 
 # ── 訊息建構輔助 ──────────────────────────────────────────────────────────────
