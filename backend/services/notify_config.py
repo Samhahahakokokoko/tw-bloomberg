@@ -161,7 +161,7 @@ def is_quiet_mode() -> bool:
             _save()
             return False
         return True
-    except Exception:
+    except Exception as e:
         return False
 
 
@@ -173,7 +173,7 @@ def get_quiet_until() -> "datetime | None":
         return None
     try:
         return datetime.fromisoformat(ts)
-    except Exception:
+    except Exception as e:
         return None
 
 

@@ -94,7 +94,7 @@ async def generate_compact_morning(uid: str) -> str:
         if today_divs:
             codes = "、".join(str(d.get("code", "")) for d in today_divs[:3])
             events.append(f"💰 除息：{codes}")
-    except Exception:
+    except Exception as e:
         pass
 
     try:
@@ -104,7 +104,7 @@ async def generate_compact_morning(uid: str) -> str:
             name = confs[0].get("company_name") or confs[0].get("name", "")
             extra = f"等 {len(confs)} 場" if len(confs) > 1 else ""
             events.append(f"🏢 法說：{name}{extra}")
-    except Exception:
+    except Exception as e:
         pass
 
     if events:

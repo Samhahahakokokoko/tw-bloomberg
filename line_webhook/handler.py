@@ -128,7 +128,7 @@ async def _dispatch_event(event) -> None:
                             messages=[TextMessage(text="⚠️ 系統暫時無法回應，請稍後再試")]
                         )
                     )
-            except Exception:
+            except Exception as e:
                 pass
 
 
@@ -3544,7 +3544,7 @@ async def _cmd_today(uid: str) -> list:
         items = []
         try:
             items = await scan_user_watchlist(uid)
-        except Exception:
+        except Exception as e:
             pass
 
         text = await generate_compact_morning(uid)

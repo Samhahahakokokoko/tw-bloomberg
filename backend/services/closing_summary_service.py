@@ -56,7 +56,7 @@ async def generate_closing_summary(uid: str) -> str:
                 parts.append("買超：" + "、".join(f"{x['code']}{x['name']}" for x in _buy))
             if _sell:
                 parts.append("賣超：" + "、".join(f"{x['code']}{x['name']}" for x in _sell))
-    except Exception:
+    except Exception as e:
         pass
 
     # ── 3. 明日注意事項 ────────────────────────────────────────────
@@ -69,7 +69,7 @@ async def generate_closing_summary(uid: str) -> str:
         if tmr_divs:
             names = "、".join(f"{d.get('code','')} {d.get('name','')}" for d in tmr_divs[:3])
             tomorrow_notes.append(f"💰 除息：{names}")
-    except Exception:
+    except Exception as e:
         pass
 
     try:
@@ -79,14 +79,14 @@ async def generate_closing_summary(uid: str) -> str:
         if tmr_confs:
             names = "、".join(c.get("company_name") or c.get("name", "") for c in tmr_confs[:2])
             tomorrow_notes.append(f"🏢 法說：{names}")
-    except Exception:
+    except Exception as e:
         pass
 
     try:
         from .earnings_service import check_and_push_reminders
         # just check for upcoming earnings, don't push here
         pass
-    except Exception:
+    except Exception as e:
         pass
 
     if tomorrow_notes:
