@@ -125,10 +125,10 @@ async def _dispatch_event(event) -> None:
                     await AsyncMessagingApi(c).reply_message(
                         ReplyMessageRequest(
                             reply_token=reply_token,
-                            messages=[TextMessage(text=f"系統錯誤: {type(e).__name__}")]
+                            messages=[TextMessage(text="⚠️ 系統暫時無法回應，請稍後再試")]
                         )
                     )
-            except Exception as e:
+            except Exception:
                 pass
 
 
@@ -194,6 +194,20 @@ async def _reply_by_token(reply_token: str, messages: list[dict]) -> bool:
     return False
 
 
+# ── 標準化錯誤訊息輔助 ────────────────────────────────────────────────────────
+
+def _fmt_err(prefix: str, e: Exception) -> str:
+    """將例外轉換為使用者友善的中文訊息，隱藏技術細節"""
+    msg = str(e).lower()
+    if any(k in msg for k in ("timeout", "timed out", "connect", "connection")):
+        return f"❌ {prefix}：連線逾時，請稍後再試"
+    if any(k in msg for k in ("not found", "404", "no data", "no result", "empty")):
+        return f"❌ {prefix}：查無資料，請確認代號是否正確"
+    if any(k in msg for k in ("401", "403", "unauthorized", "forbidden")):
+        return f"❌ {prefix}：服務暫時無法存取"
+    return f"❌ {prefix}，請稍後再試"
+
+
 # ── Postback 處理 ─────────────────────────────────────────────────────────────
 
 async def _handle_postback(data: str, uid: str) -> list:
@@ -201,7 +215,7 @@ async def _handle_postback(data: str, uid: str) -> list:
         return await _handle_postback_inner(data, uid)
     except Exception as e:
         logger.error(f"[postback] EXCEPTION act data={data!r} uid={uid[:8]} err={e}", exc_info=True)
-        return [_text(f"⚠️ 處理失敗\n{type(e).__name__}: {str(e)[:120]}", _home_qr())]
+        return [_text("⚠️ 操作失敗，請稍後再試", _home_qr())]
 
 
 async def _handle_postback_inner(data: str, uid: str) -> list:
@@ -704,6 +718,7 @@ async def _handle_text(text: str, uid: str) -> list:
         return [_text(_help_text(), _home_qr())]
     if cmd == "/today":                         return await _cmd_today(uid)
     if cmd == "/notify":                        return await _cmd_notify(parts[1:], uid)
+    if cmd == "/quiet":                         return await _cmd_quiet(parts[1:], uid)
     if cmd == "/screener":                      return await _cmd_screener(parts[1] if len(parts) > 1 else "top")
     if cmd == "/find"     and len(parts) >= 2:  return await _cmd_nl_screener(" ".join(parts[1:]))
     if cmd == "/accuracy" and len(parts) == 1: return await _cmd_accuracy()
@@ -740,7 +755,7 @@ async def _handle_text(text: str, uid: str) -> list:
                 ))]
             except Exception as e:
                 logger.error(f"[optimize RSI] {code} error: {e}")
-                return [_text(f"❌ RSI優化失敗：{e}")]
+                return [_text(_fmt_err("RSI優化失敗", e))]
         return await _cmd_optimize(uid)
     if cmd == "/var":                           return await _cmd_var(uid)
     if cmd == "/correlation":                   return await _cmd_correlation(uid)
@@ -1845,7 +1860,7 @@ async def _cmd_portfolio(uid: str) -> list:
         ))]
     except Exception as e:
         logger.error("[cmd_portfolio] {}", e, exc_info=True)
-        return [_text(f"❌ 庫存讀取失敗：{type(e).__name__}")]
+        return [_text(_fmt_err("庫存讀取失敗", e))]
 
 
 def _parse_buy_args(parts: list) -> tuple:
@@ -1939,7 +1954,7 @@ async def _cmd_buy(parts: list, uid: str) -> list:
             ("📋 交易紀錄", "/history"),
         ))]
     except Exception as e:
-        return [_text(f"❌ 買進失敗：{e}")]
+        return [_text(_fmt_err("買進失敗", e))]
 
 
 # ── 停損停利指令 ──────────────────────────────────────────────────────────────
@@ -1971,7 +1986,7 @@ async def _cmd_set_sl(code: str, price_str: str, uid: str) -> list:
         )]
     except Exception as e:
         logger.error("[cmd_set_sl] {}", e)
-        return [_text(f"❌ 設定失敗：{e}")]
+        return [_text(_fmt_err("設定失敗", e))]
 
 
 async def _cmd_set_tp(code: str, price_str: str, uid: str) -> list:
@@ -2001,7 +2016,7 @@ async def _cmd_set_tp(code: str, price_str: str, uid: str) -> list:
         )]
     except Exception as e:
         logger.error("[cmd_set_tp] {}", e)
-        return [_text(f"❌ 設定失敗：{e}")]
+        return [_text(_fmt_err("設定失敗", e))]
 
 
 async def _cmd_stops(uid: str) -> list:
@@ -2037,7 +2052,7 @@ async def _cmd_stops(uid: str) -> list:
         ))]
     except Exception as e:
         logger.error("[cmd_stops] {}", e)
-        return [_text(f"❌ 查詢失敗：{e}")]
+        return [_text(_fmt_err("查詢失敗", e))]
 
 
 async def _cmd_rm_stop(code: str, uid: str) -> list:
@@ -2049,7 +2064,7 @@ async def _cmd_rm_stop(code: str, uid: str) -> list:
             return [_text(f"✅ 已移除 {code} 停損停利設定", qr_items(("查設定", "/stops"), ("💼 庫存", "/p")))]
         return [_text(f"❌ 找不到 {code} 的設定")]
     except Exception as e:
-        return [_text(f"❌ 移除失敗：{e}")]
+        return [_text(_fmt_err("移除失敗", e))]
 
 
 async def _cmd_sell(parts: list, uid: str) -> list:
@@ -2060,7 +2075,7 @@ async def _cmd_sell(parts: list, uid: str) -> list:
         shares = int(parts[2])
         price  = float(parts[3])
     except (ValueError, IndexError) as e:
-        return [_text(f"❌ 格式錯誤：{e}")]
+        return [_text(_fmt_err("格式錯誤", e))]
 
     try:
         async with AsyncSessionLocal() as db:
@@ -2106,7 +2121,7 @@ async def _cmd_sell(parts: list, uid: str) -> list:
             ("💰 稅務", "/tax"),
         ))]
     except Exception as e:
-        return [_text(f"❌ 賣出失敗：{e}")]
+        return [_text(_fmt_err("賣出失敗", e))]
 
 
 async def _cmd_history(uid: str, code: str = None) -> list:
@@ -2228,7 +2243,7 @@ async def _cmd_analysis(uid: str) -> list:
         ))]
     except Exception as e:
         logger.error("[cmd_analysis] {}", e)
-        return [_text(f"❌ 分析失敗：{e}",
+        return [_text(_fmt_err("分析失敗", e),
                       qr_items(("重試", "/analysis"), ("💼 庫存", "/p")))]
 
 
@@ -2276,7 +2291,7 @@ async def _cmd_alert(code: str, atype: str, threshold: str, uid: str) -> list:
         return [_text(f"🔔 {code} {labels[atype]} 觸發時通知",
                       qr_items(("📈 報價", f"/quote {code}"), ("📋 警報列表", "/alert_list")))]
     except Exception as e:
-        return [_text(f"❌ {e}")]
+        return [_text(_fmt_err("操作", e))]
 
 
 async def _cmd_alert_buy(code: str, price: str, stop: str, target: str, uid: str) -> list:
@@ -2335,7 +2350,7 @@ async def _cmd_alert_clear(code: str, uid: str) -> list:
             return [_text(f"ℹ️ {code} 無啟用中的警報",
                           qr_items(("📋 警報列表", "/alert_list")))]
     except Exception as e:
-        return [_text(f"❌ {e}")]
+        return [_text(_fmt_err("操作", e))]
 
 
 async def _cmd_alert_list(uid: str) -> list:
@@ -2520,7 +2535,7 @@ async def _cmd_dividend(code: str, uid: str = "") -> list:
         ))]
     except Exception as e:
         logger.error("[cmd_dividend] {}", e)
-        return [_text(f"❌ 查詢失敗：{type(e).__name__}")]
+        return [_text(_fmt_err("查詢失敗", e))]
 
 
 def _cmd_etf_list() -> list:
@@ -2557,7 +2572,7 @@ async def _cmd_etf(code: str) -> list:
         ))]
     except Exception as e:
         logger.error("[cmd_etf] {}", e, exc_info=True)
-        return [_text(f"❌ ETF 查詢失敗：{type(e).__name__}")]
+        return [_text(_fmt_err("ETF 查詢失敗", e))]
 
 
 async def _cmd_etf_compare(code1: str, code2: str) -> list:
@@ -2577,7 +2592,7 @@ async def _cmd_etf_compare(code1: str, code2: str) -> list:
         ))]
     except Exception as e:
         logger.error("[cmd_etf_compare] {}", e, exc_info=True)
-        return [_text(f"❌ 比較失敗：{type(e).__name__}")]
+        return [_text(_fmt_err("比較失敗", e))]
 
 
 async def _cmd_dca(code: str, monthly_amount: int) -> list:
@@ -2601,7 +2616,7 @@ async def _cmd_dca(code: str, monthly_amount: int) -> list:
         ))]
     except Exception as e:
         logger.error("[cmd_dca] {}", e, exc_info=True)
-        return [_text(f"❌ 試算失敗：{type(e).__name__}")]
+        return [_text(_fmt_err("試算失敗", e))]
 
 
 async def _cmd_exdiv(uid: str) -> list:
@@ -2616,7 +2631,7 @@ async def _cmd_exdiv(uid: str) -> list:
         ))]
     except Exception as e:
         logger.error("[cmd_exdiv] {}", e, exc_info=True)
-        return [_text(f"❌ 配息清單查詢失敗：{type(e).__name__}")]
+        return [_text(_fmt_err("配息清單查詢失敗", e))]
 
 
 async def _cmd_backups() -> list:
@@ -2628,7 +2643,7 @@ async def _cmd_backups() -> list:
                       qr_items(("💾 立即備份", "/backup")))]
     except Exception as e:
         logger.error("[cmd_backups] {}", e)
-        return [_text(f"❌ 備份清單查詢失敗：{type(e).__name__}")]
+        return [_text(_fmt_err("備份清單查詢失敗", e))]
 
 
 async def _backup_bg(uid: str) -> None:
@@ -2655,7 +2670,7 @@ async def _backup_bg(uid: str) -> None:
                                  timeout=30, context="handler.backup_bg")
     except Exception as e:
         logger.error("[backup_bg] {}", e)
-        await push_line_messages(uid, [{"type": "text", "text": f"❌ 備份異常：{type(e).__name__}"}],
+        await push_line_messages(uid, [{"type": "text", "text": _fmt_err("備份異常", e)}],
                                  timeout=15, context="handler.backup_bg.error")
 
 
@@ -2753,7 +2768,7 @@ async def _cmd_rec_dispatch(uid: str) -> list:
                       qr_items(("💼 庫存", "/portfolio")))]
     except Exception as e:
         logger.error("[rec] {}", e, exc_info=True)
-        return [_text(f"❌ 策略推薦失敗：{type(e).__name__}",
+        return [_text(_fmt_err("策略推薦失敗", e),
                       qr_items(("💼 庫存", "/portfolio")))]
 
 
@@ -2888,7 +2903,7 @@ async def _cmd_ai_portfolio(uid: str) -> TextMessage:
             _mark_credit_exhausted()
             logger.warning("[AI] Anthropic credit 耗盡")
             return _text("❌ AI 分析暫時無法使用（額度不足），請稍後再試")
-        return _text(f"❌ AI 錯誤：{e}")
+        return _text(_fmt_err("AI 錯誤", e))
 
 
 async def _cmd_apply_rec(code: str, strategy: str, uid: str) -> list:
@@ -2933,7 +2948,7 @@ async def _cmd_daily_advice() -> list:
             ("📊 選股", "/screener"), ("💼 庫存", "/portfolio"), ("📈 早報", "/morning")
         ))]
     except Exception as e:
-        return [_text(f"❌ 建議生成失敗：{e}")]
+        return [_text(_fmt_err("建議生成失敗", e))]
 
 
 async def _cmd_ai_stock(stock_code: str) -> list:
@@ -2986,7 +3001,7 @@ async def _cmd_accuracy() -> list:
             lines.append(f"💔 最差推薦：{worst['stock_code']} {worst.get('stock_name','')} ({worst.get('return_5d',0):+.1f}%)")
         return [_text("\n".join(lines), qr_items(("💼 庫存","/portfolio"),("📊 選股","/screener")))]
     except Exception as e:
-        return [_text(f"❌ 查詢失敗：{e}")]
+        return [_text(_fmt_err("查詢失敗", e))]
 
 
 async def _cmd_broker(stock_code: str) -> list:
@@ -3027,7 +3042,7 @@ async def _cmd_broker(stock_code: str) -> list:
             qr_items(("📈 報價", f"/quote {stock_code}"), ("🧠 聰明錢", "/smart"))
         )]
     except Exception as e:
-        return [_text(f"❌ 分點查詢失敗：{e}")]
+        return [_text(_fmt_err("分點查詢失敗", e))]
 
 
 async def _cmd_track(broker_name: str) -> list:
@@ -3048,7 +3063,7 @@ async def _cmd_track(broker_name: str) -> list:
             lines.append(f"• {s['stock_code']} {s.get('stock_name','')} +{s['net_shares']:,}張 ({s['active_days']}日)")
         return [_text("\n".join(lines), qr_items(("🕵️ 主力訊號", "/smart"), ("💼 庫存", "/portfolio")))]
     except Exception as e:
-        return [_text(f"❌ 分點追蹤失敗：{e}")]
+        return [_text(_fmt_err("分點追蹤失敗", e))]
 
 
 async def _cmd_smart_money() -> list:
@@ -3091,7 +3106,7 @@ async def _cmd_smart_money() -> list:
             qr_items(("📊 選股", "/screener"), ("🏦 分點查詢", "/broker 2330"))
         )]
     except Exception as e:
-        return [_text(f"❌ 訊號偵測失敗：{e}")]
+        return [_text(_fmt_err("訊號偵測失敗", e))]
 
 
 async def _cmd_optimize(uid: str) -> list:
@@ -3125,7 +3140,7 @@ async def _cmd_optimize(uid: str) -> list:
 
         return [_text("\n".join(lines), qr_items(("💰 VaR", "/var"), ("🔗 相關性", "/correlation"), ("💼 庫存", "/portfolio")))]
     except Exception as e:
-        return [_text(f"❌ 最佳化失敗：{e}")]
+        return [_text(_fmt_err("最佳化失敗", e))]
 
 
 async def _cmd_var(uid: str) -> list:
@@ -3155,7 +3170,7 @@ async def _cmd_var(uid: str) -> list:
         ]
         return [_text("\n".join(lines), qr_items(("📐 最佳化", "/optimize"), ("🔗 相關性", "/correlation")))]
     except Exception as e:
-        return [_text(f"❌ VaR 計算失敗：{e}")]
+        return [_text(_fmt_err("VaR 計算失敗", e))]
 
 
 async def _cmd_correlation(uid: str) -> list:
@@ -3191,7 +3206,7 @@ async def _cmd_correlation(uid: str) -> list:
 
         return [_text("\n".join(lines), qr_items(("📐 最佳化", "/optimize"), ("💰 VaR", "/var")))]
     except Exception as e:
-        return [_text(f"❌ 相關性分析失敗：{e}")]
+        return [_text(_fmt_err("相關性分析失敗", e))]
 
 
 async def _cmd_screener(preset_or_top: str = "top") -> list:
@@ -3259,7 +3274,7 @@ async def _cmd_screener(preset_or_top: str = "top") -> list:
             )
         )]
     except Exception as e:
-        return [_text(f"❌ 選股失敗：{e}")]
+        return [_text(_fmt_err("選股失敗", e))]
 
 
 async def _cmd_nl_screener(query: str) -> list:
@@ -3295,7 +3310,7 @@ async def _cmd_nl_screener(query: str) -> list:
         top3_qr = [(f"🔍{r['stock_code']}", f"/quote {r['stock_code']}") for r in results[:3]]
         return [_text("\n".join(lines), qr_items(*top3_qr, ("🎯 選股選單", "/screen"), ("💼 庫存", "/p")))]
     except Exception as e:
-        return [_text(f"❌ 選股失敗：{e}")]
+        return [_text(_fmt_err("選股失敗", e))]
 
 
 async def _cmd_subscribe(uid: str) -> TextMessage:
@@ -3327,7 +3342,7 @@ async def _cmd_subscribe(uid: str) -> TextMessage:
             qr_items(("📋 自選股", "/watchlist"), ("🔔 設定警報", "/alert_guide")),
         )
     except Exception as e:
-        return _text(f"❌ {e}")
+        return _text(_fmt_err("操作", e))
 
 
 async def _cmd_unsubscribe(uid: str) -> TextMessage:
@@ -3341,7 +3356,7 @@ async def _cmd_unsubscribe(uid: str) -> TextMessage:
                 return _text("已取消訂閱")
         return _text("您尚未訂閱")
     except Exception as e:
-        return _text(f"❌ {e}")
+        return _text(_fmt_err("操作", e))
 
 
 # ── 靜態訊息 ──────────────────────────────────────────────────────────────────
@@ -3414,7 +3429,7 @@ async def _cmd_news_stock(code: str, uid: str) -> list:
             msg   = format_stock_news_for_line(code, name, news)
         except Exception as e:
             logger.warning("[news_stock] {}", e)
-            msg = f"❌ 個股新聞查詢失敗：{type(e).__name__}"
+            msg = _fmt_err("個股新聞查詢失敗", e)
     return [_text(msg[:5000], qr_items(
         ("📰 市場新聞", "/news"),
         (f"📊 報價",   f"/quote {code}"),
@@ -3523,30 +3538,38 @@ async def _cmd_today(uid: str) -> list:
     """一次性顯示：自選股即時狀態 + 大盤情緒 + 風險提醒"""
     try:
         from backend.services.compact_morning_service import generate_compact_morning
-        text = await generate_compact_morning(uid)
+        from backend.services.watchlist_monitor import scan_user_watchlist
 
-        # 補充：是否有停損/停利觸發
+        # 同時取得內容和自選股清單
+        items = []
         try:
-            from backend.services.watchlist_monitor import scan_user_watchlist
             items = await scan_user_watchlist(uid)
-            alerts = [it for it in items if it.get("sl_triggered") or it.get("tp_triggered")]
-            if alerts:
-                alert_lines = ["", "⚠️ 觸發警報："]
-                for a in alerts:
-                    tag = "🛑 停損!" if a.get("sl_triggered") else "🎯 達標!"
-                    alert_lines.append(f"  {tag} {a['code']} {a['name']} @ {a.get('price', 0):,.0f}")
-                text = text + "\n".join(alert_lines)
         except Exception:
             pass
 
+        text = await generate_compact_morning(uid)
+
+        # 停損/停利警報補充
+        alerts = [it for it in items if it.get("sl_triggered") or it.get("tp_triggered")]
+        if alerts:
+            alert_lines = ["", "⚠️ 觸發警報："]
+            for a in alerts:
+                tag = "🛑 停損!" if a.get("sl_triggered") else "🎯 達標!"
+                alert_lines.append(f"  {tag} {a['code']} {a['name']} @ {a.get('price', 0):,.0f}")
+            text = text + "\n".join(alert_lines)
+
+        # 動態 QR 按鈕 — 若有自選股則第一支帶入
+        first_code = items[0]["code"] if items else "2330"
         qr = qr_items(
-            ("🔍 選股", "/screen"),
-            ("💼 庫存", "/p"),
-            ("📊 大盤", "/market"),
+            ("🤖 詳細分析", f"/ai {first_code}"),
+            ("📊 籌碼",     f"/chip {first_code}"),
+            ("⚠️ 風險",     "/risk"),
+            ("🌡️ 市場",    "/sentiment"),
         )
         return [_text(text, qr)]
     except Exception as e:
-        return [_text(f"❌ /today 查詢失敗：{e}")]
+        logger.error(f"[/today] error: {e}")
+        return [_text("⚠️ 查詢失敗，請稍後再試", qr_items(("📊 大盤", "/market"), ("💼 庫存", "/p")))]
 
 
 # ── /notify — 推播開關管理 ────────────────────────────────────────────────────
@@ -3614,6 +3637,61 @@ async def _cmd_notify(args: list[str], uid: str) -> list:
         "/notify off breaking_news_push  關閉即時新聞\n\n"
         "輸入 /notify list 查看完整 job_id 清單",
         qr_items(("查看清單", "/notify list"), ("今日總覽", "/today")),
+    )]
+
+
+# ── /quiet — 24 小時安靜模式 ──────────────────────────────────────────────────
+
+async def _cmd_quiet(args: list[str], uid: str) -> list:
+    """
+    /quiet on  [小時數]  — 暫停所有推播，預設 24 小時後自動恢復
+    /quiet off           — 立即恢復推播
+    /quiet               — 查看目前狀態
+    """
+    from backend.services.notify_config import (
+        set_quiet_mode, clear_quiet_mode, get_quiet_until, is_quiet_mode,
+    )
+    from datetime import datetime
+
+    sub = args[0].lower() if args else "status"
+
+    if sub == "on":
+        hours = 24
+        if len(args) >= 2:
+            try:
+                hours = max(1, min(72, int(args[1])))
+            except ValueError:
+                pass
+        until = set_quiet_mode(hours)
+        until_str = until.strftime("%m/%d %H:%M")
+        return [_text(
+            f"🔕 安靜模式已開啟\n"
+            f"所有推播暫停 {hours} 小時\n"
+            f"自動恢復時間：{until_str}\n\n"
+            f"提早恢復請輸入 /quiet off",
+            qr_items(("立即恢復", "/quiet off"), ("今日總覽", "/today")),
+        )]
+
+    if sub == "off":
+        clear_quiet_mode()
+        return [_text(
+            "🔔 安靜模式已關閉\n推播已恢復正常",
+            qr_items(("查看推播", "/notify list"), ("今日總覽", "/today")),
+        )]
+
+    # 查看狀態
+    if is_quiet_mode():
+        until = get_quiet_until()
+        until_str = until.strftime("%m/%d %H:%M") if until else "未知"
+        return [_text(
+            f"🔕 安靜模式中\n自動恢復：{until_str}\n\n輸入 /quiet off 立即恢復",
+            qr_items(("立即恢復", "/quiet off"), ("今日總覽", "/today")),
+        )]
+    return [_text(
+        "🔔 推播正常運作\n\n"
+        "/quiet on      暫停推播 24 小時\n"
+        "/quiet on 48   暫停推播 48 小時",
+        qr_items(("暫停 24h", "/quiet on"), ("查看推播", "/notify list")),
     )]
 
 
@@ -3738,7 +3816,7 @@ async def _cmd_pipeline(code: str, uid: str) -> list:
         return [_text(f"⏱ {code} 量化分析逾時，請稍後再試 /pipeline {code}")]
     except Exception as e:
         logger.error("[pipeline] {}", e)
-        return [_text(f"❌ 量化分析失敗：{type(e).__name__}")]
+        return [_text(_fmt_err("量化分析失敗", e))]
 
 
 async def _pipeline_bg(code: str, uid: str) -> None:
@@ -3961,7 +4039,7 @@ async def _daily_bg(uid: str) -> None:
     except Exception as e:
         logger.error("[daily_bg] 失敗：{}", e, exc_info=True)
         try:
-            await _push(f"❌ 決策報告失敗：{type(e).__name__}: {e}")
+            await _push(_fmt_err("決策報告失敗", e))
         except Exception as e:
             pass
 
@@ -3980,7 +4058,7 @@ async def _cmd_movers(uid: str) -> list:
         ))]
     except Exception as e:
         logger.error("[movers] {}", e)
-        return [_text(f"❌ 動能掃描失敗：{e}")]
+        return [_text(_fmt_err("動能掃描失敗", e))]
 
 
 async def _cmd_overlay(uid: str) -> list:
@@ -4017,7 +4095,7 @@ async def _cmd_research(code: str, uid: str) -> list:
         ))]
     except Exception as e:
         logger.error("[research] {}", e)
-        return [_text(f"❌ 研究清單失敗：{e}")]
+        return [_text(_fmt_err("研究清單失敗", e))]
 
 
 async def _cmd_sector(uid: str) -> list:
@@ -4055,7 +4133,7 @@ async def _cmd_sentiment(uid: str) -> list:
         ))]
     except Exception as e:
         logger.error("[sentiment] {}", e)
-        return [_text(f"❌ 情緒指數取得失敗：{e}",
+        return [_text(_fmt_err("情緒指數取得失敗", e),
                       qr_items(("🔥 族群輪動", "/sector"), ("📊 大盤", "/market")))]
 
 
@@ -4091,7 +4169,7 @@ async def _cmd_alpha_health(uid: str) -> list:
         ))]
     except Exception as e:
         logger.error("[alpha] {}", e)
-        return [_text(f"❌ Alpha 健康查詢失敗：{e}")]
+        return [_text(_fmt_err("Alpha 健康查詢失敗", e))]
 
 
 async def _cmd_conviction(code: str, uid: str) -> list:
@@ -4135,7 +4213,7 @@ async def _cmd_conviction(code: str, uid: str) -> list:
         ))]
     except Exception as e:
         logger.error("[conviction] {}", e)
-        return [_text(f"❌ 信心指數計算失敗：{e}")]
+        return [_text(_fmt_err("信心指數計算失敗", e))]
 
 
 # ── 回測功能 ─────────────────────────────────────────────────────────────────
@@ -4289,7 +4367,7 @@ async def _cmd_backtest_v2(parts: list[str], uid: str) -> list:
         return [_text(f"⏱ {code}《{label}》計算較久，改背景執行…完成後推送")]
     except Exception as e:
         logger.error("[backtest_v2] {}", e)
-        return [_text(f"❌ 回測失敗：{type(e).__name__}", _BACKTEST_QR)]
+        return [_text(_fmt_err("回測失敗", e), _BACKTEST_QR)]
 
 
 # ── 向後相容（postback 用）────────────────────────────────────────────────────
@@ -4325,7 +4403,7 @@ async def _cmd_test(parts: list[str]) -> list:
         ))]
     except Exception as e:
         logger.error(f"[test] {code} {strategy} error: {e}")
-        return [_text(f"❌ 回測失敗：{e}")]
+        return [_text(_fmt_err("回測失敗", e))]
 
 
 def _run_yf_backtest(code: str, strategy: str) -> str:
@@ -4805,7 +4883,7 @@ async def _backtest_single_bg(code: str, strategy: str,
                                          timeout=20, context="backtest.single_bg")
     except Exception as e:
         logger.error("[backtest_single_bg] {}", e)
-        await push_line_messages(uid, [{"type":"text","text":f"❌ 回測失敗：{e}"}],
+        await push_line_messages(uid, [{"type":"text","text":_fmt_err("回測失敗", e)}],
                                  timeout=10, context="backtest.single_bg.err")
 
 
@@ -4855,7 +4933,7 @@ async def _backtest_multi_bg(codes: list[str], strategy: str,
                                  timeout=20, context="backtest.multi_bg")
     except Exception as e:
         logger.error("[backtest_multi_bg] {}", e)
-        await push_line_messages(uid, [{"type":"text","text":f"❌ 多股回測失敗：{e}"}],
+        await push_line_messages(uid, [{"type":"text","text":_fmt_err("多股回測失敗", e)}],
                                  timeout=10, context="backtest.multi_bg.err")
 
 
@@ -4906,7 +4984,7 @@ async def _backtest_compare_bg(code: str, uid: str) -> None:
                                  timeout=20, context="backtest.compare_bg")
     except Exception as e:
         logger.error("[backtest_compare_bg] {}", e)
-        await push_line_messages(uid, [{"type":"text","text":f"❌ 比較失敗：{e}"}],
+        await push_line_messages(uid, [{"type":"text","text":_fmt_err("比較失敗", e)}],
                                  timeout=10, context="backtest.compare_bg.err")
 
 
@@ -5034,7 +5112,7 @@ async def _backtest_bg(strategy: str, label: str, uid: str) -> None:
         )
     except Exception as e:
         logger.error("[backtest_bg] {}", e)
-        await push_line_messages(uid, [{"type": "text", "text": f"❌ 回測計算失敗：{e}"}], timeout=10, context="handler.backtest_bg.error")
+        await push_line_messages(uid, [{"type": "text", "text": _fmt_err("回測計算失敗", e)}], timeout=10, context="handler.backtest_bg.error")
 
 
 def _mock_kline_90d(stock_code: str) -> "pd.DataFrame":
@@ -6227,7 +6305,7 @@ async def _cmd_watch_add(code: str, uid: str,
         )]
     except Exception as e:
         logger.error(f"[watch_add] {e}")
-        return [_text(f"❌ 加入失敗：{code}\n{type(e).__name__}: {str(e)[:80]}")]
+        return [_text(_fmt_err("加入失敗：{code}\n", e))]
 
 
 async def _cmd_watch_remove(code: str, uid: str) -> list:
@@ -6246,7 +6324,7 @@ async def _cmd_watch_remove(code: str, uid: str) -> list:
         return [_text(f"🗑️ {code} 已從自選股移除",
                       qr_items(("📋 查看清單", "/watchlist")))]
     except Exception as e:
-        return [_text(f"❌ 移除失敗：{e}")]
+        return [_text(_fmt_err("移除失敗", e))]
 
 
 async def _cmd_watchlist(uid: str) -> list:
@@ -6417,7 +6495,7 @@ async def _cmd_public(sub: str, uid: str) -> list:
             qr_items(("🏆 排行榜", "/top"), ("💼 庫存", "/portfolio"))
         )]
     except Exception as e:
-        return [_text(f"❌ 設定失敗：{e}")]
+        return [_text(_fmt_err("設定失敗", e))]
 
 
 async def _cmd_top_portfolios() -> list:
@@ -6431,7 +6509,7 @@ async def _cmd_top_portfolios() -> list:
             ("💼 看庫存", "/portfolio"),
         ))]
     except Exception as e:
-        return [_text(f"❌ 排行榜讀取失敗：{e}")]
+        return [_text(_fmt_err("排行榜讀取失敗", e))]
 
 
 async def _cmd_strategy_list() -> list:
@@ -6445,7 +6523,7 @@ async def _cmd_strategy_list() -> list:
             ("📊 今日選股", "/r"),
         ))]
     except Exception as e:
-        return [_text(f"❌ 策略市集讀取失敗：{e}")]
+        return [_text(_fmt_err("策略市集讀取失敗", e))]
 
 
 async def _cmd_strategy_publish(name: str, uid: str) -> list:
@@ -6463,7 +6541,7 @@ async def _cmd_strategy_publish(name: str, uid: str) -> list:
             qr_items(("策略市集", "/strategy list"))
         )]
     except Exception as e:
-        return [_text(f"❌ 上架失敗：{e}")]
+        return [_text(_fmt_err("上架失敗", e))]
 
 
 async def _cmd_strategy_subscribe(strategy_id: str, uid: str) -> list:
@@ -6558,7 +6636,7 @@ async def _cmd_gh_agent(task: str, uid: str) -> list:
             )]
         return [_text(f"❌ GitHub API 回應 {resp.status_code}：{resp.text[:200]}")]
     except Exception as e:
-        return [_text(f"❌ 觸發失敗：{e}")]
+        return [_text(_fmt_err("觸發失敗", e))]
 
 
 async def _cmd_agent(uid: str) -> list:
@@ -6578,7 +6656,7 @@ async def _cmd_agent(uid: str) -> list:
             )
         )]
     except Exception as e:
-        return [_text(f"❌ 啟動失敗：{e}")]
+        return [_text(_fmt_err("啟動失敗", e))]
 
 
 async def _agent_bg(uid: str) -> None:
@@ -6644,7 +6722,7 @@ async def _cmd_auto_trade(sub: str, val: str, uid: str) -> list:
                 qr_items(("下單說明", "/order")),
             )]
     except Exception as e:
-        return [_text(f"❌ 設定失敗：{e}")]
+        return [_text(_fmt_err("設定失敗", e))]
 
 
 async def _cmd_rebalance(uid: str) -> list:
@@ -6655,7 +6733,7 @@ async def _cmd_rebalance(uid: str) -> list:
         text   = report.to_line_text()
         return [TextMessage(text=text, quick_reply=_make_qr(report.to_line_qr()))]
     except Exception as e:
-        return [_text(f"❌ 再平衡計算失敗：{e}")]
+        return [_text(_fmt_err("再平衡計算失敗", e))]
 
 
 async def _cmd_feedback(content: str, uid: str, kind: str = "feedback") -> list:
@@ -6719,7 +6797,7 @@ async def _cmd_analyst_list() -> list:
             ("今日共識",     "analyst_consensus"),
         ))]
     except Exception as e:
-        return [_text(f"❌ 分析師清單讀取失敗：{e}")]
+        return [_text(_fmt_err("分析師清單讀取失敗", e))]
 
 
 async def _cmd_analyst_ranking() -> list:
@@ -6736,7 +6814,7 @@ async def _cmd_analyst_ranking() -> list:
             )
         return [_text("\n".join(lines), qr_items(("今日共識", "/analyst"), ("追蹤清單", "/analyst list")))]
     except Exception as e:
-        return [_text(f"❌ 排行讀取失敗：{e}")]
+        return [_text(_fmt_err("排行讀取失敗", e))]
 
 
 async def _cmd_analyst_add(name: str, uid: str) -> list:
@@ -6764,7 +6842,7 @@ async def _cmd_analyst_add_v2(name: str, channel_id: str, specialty: str, uid: s
             )]
         return [_text(f"❌ {result.get('error', '新增失敗')}")]
     except Exception as e:
-        return [_text(f"❌ 新增失敗：{e}")]
+        return [_text(_fmt_err("新增失敗", e))]
 
 
 async def _cmd_analyst_remove(name: str) -> list:
@@ -6776,7 +6854,7 @@ async def _cmd_analyst_remove(name: str) -> list:
             return [_text(f"🗑️ 已移除：{name}", qr_items(("查看清單", "/analyst list")))]
         return [_text(f"❌ {result.get('error', '移除失敗')}")]
     except Exception as e:
-        return [_text(f"❌ 移除失敗：{e}")]
+        return [_text(_fmt_err("移除失敗", e))]
 
 
 async def _cmd_analyst_set_enabled(name: str, enabled: bool) -> list:
@@ -6789,7 +6867,7 @@ async def _cmd_analyst_set_enabled(name: str, enabled: bool) -> list:
             return [_text(f"{status}：{name}", qr_items(("查看清單", "/analyst list")))]
         return [_text(f"❌ {result.get('error', '操作失敗')}")]
     except Exception as e:
-        return [_text(f"❌ 操作失敗：{e}")]
+        return [_text(_fmt_err("操作失敗", e))]
 
 
 async def _cmd_analyst_set_tier(name: str, tier: str) -> list:
@@ -6805,7 +6883,7 @@ async def _cmd_analyst_set_tier(name: str, tier: str) -> list:
             )]
         return [_text(f"❌ {result.get('error', '調整失敗')}")]
     except Exception as e:
-        return [_text(f"❌ 調整失敗：{e}")]
+        return [_text(_fmt_err("調整失敗", e))]
 
 
 async def _cmd_analyst_topics(analyst_id: str) -> list:
@@ -6816,7 +6894,7 @@ async def _cmd_analyst_topics(analyst_id: str) -> list:
         text   = format_topic_profile(analyst_id, topics)
         return [_text(text, qr_items(("績效統計", f"/analyst stats {analyst_id}")))]
     except Exception as e:
-        return [_text(f"❌ 話題分析讀取失敗：{e}")]
+        return [_text(_fmt_err("話題分析讀取失敗", e))]
 
 
 async def _cmd_analyst_stats(analyst_id: str) -> list:
@@ -6828,7 +6906,7 @@ async def _cmd_analyst_stats(analyst_id: str) -> list:
             return [_text(f"❌ 找不到分析師：{analyst_id}\n/analyst list 查看清單")]
         return [_text(format_analyst_stats(stats), qr_items(("今日共識", "/analyst")))]
     except Exception as e:
-        return [_text(f"❌ 統計讀取失敗：{e}")]
+        return [_text(_fmt_err("統計讀取失敗", e))]
 
 
 async def _cmd_analyst_stock(stock_id: str) -> list:
@@ -6881,7 +6959,7 @@ async def _cmd_analyst_stock(stock_id: str) -> list:
         ))]
     except Exception as e:
         logger.error(f"[analyst_stock] {stock_id}: {type(e).__name__}: {e}")
-        return [_text(f"❌ 查詢失敗：{type(e).__name__}")]
+        return [_text(_fmt_err("查詢失敗", e))]
 
 
 async def _cmd_consensus_heatmap(uid: str) -> list:
@@ -6921,7 +6999,7 @@ async def _cmd_consensus_heatmap(uid: str) -> list:
         ]
     except Exception as e:
         logger.error(f"[consensus_heatmap] {e}")
-        return [_text(f"❌ 熱度圖生成失敗：{type(e).__name__}: {str(e)[:80]}")]
+        return [_text(_fmt_err("熱度圖生成失敗", e))]
 
 
 async def _cmd_system_health(uid: str) -> list:
@@ -6932,7 +7010,7 @@ async def _cmd_system_health(uid: str) -> list:
         text     = format_health_dashboard(statuses)
         return [_text(text, qr_items(("🏠 主選單", "/help")))]
     except Exception as e:
-        return [_text(f"❌ 系統狀態查詢失敗：{e}")]
+        return [_text(_fmt_err("系統狀態查詢失敗", e))]
 
 
 async def _cmd_pushlog(uid: str) -> list:
@@ -6950,7 +7028,7 @@ async def _cmd_pushlog(uid: str) -> list:
             lines.append(f"✅ {label}  {r['pushed_at'][11:]}")
         return [_text("\n".join(lines))]
     except Exception as e:
-        return [_text(f"❌ 查詢失敗：{e}")]
+        return [_text(_fmt_err("查詢失敗", e))]
 
 
 async def _cmd_status(uid: str) -> list:
@@ -6985,7 +7063,7 @@ async def _cmd_status(uid: str) -> list:
 
         return [_text("\n".join(lines), qr_items(("推送記錄", "/pushlog"), ("主選單", "/help")))]
     except Exception as e:
-        return [_text(f"❌ 無法取得系統狀態：{e}")]
+        return [_text(_fmt_err("無法取得系統狀態", e))]
 
 
 async def _cmd_heatmap(uid: str) -> list:
@@ -7021,7 +7099,7 @@ async def _cmd_heatmap(uid: str) -> list:
         ]
     except Exception as e:
         logger.error(f"[heatmap] {e}")
-        return [_text(f"❌ 熱力圖生成失敗\n{type(e).__name__}: {str(e)[:80]}")]
+        return [_text(_fmt_err("熱力圖生成失敗\n", e))]
 
 
 # ── 市場情報作戰系統指令 ──────────────────────────────────────────────────────
@@ -7047,7 +7125,7 @@ async def _cmd_timeline(stock_id: str) -> list:
                                      ("領先信號", "/leadlag")))]
     except Exception as e:
         logger.error(f"[timeline] {e}")
-        return [_text(f"❌ 週期分析失敗：{type(e).__name__}")]
+        return [_text(_fmt_err("週期分析失敗", e))]
 
 
 async def _cmd_lead_lag() -> list:
@@ -7061,7 +7139,7 @@ async def _cmd_lead_lag() -> list:
                                      ("週期位置", "/timeline")))]
     except Exception as e:
         logger.error(f"[leadlag] {e}")
-        return [_text(f"❌ 領先滯後分析失敗：{type(e).__name__}")]
+        return [_text(_fmt_err("領先滯後分析失敗", e))]
 
 
 async def _cmd_theme() -> list:
@@ -7081,7 +7159,7 @@ async def _cmd_theme() -> list:
                                           ("週期位置", "/timeline")))]
     except Exception as e:
         logger.error(f"[theme] {e}")
-        return [_text(f"❌ 主題擴散分析失敗：{type(e).__name__}")]
+        return [_text(_fmt_err("主題擴散分析失敗", e))]
 
 
 async def _cmd_footprint(stock_id: str) -> list:
@@ -7103,7 +7181,7 @@ async def _cmd_footprint(stock_id: str) -> list:
                                      ("主題擴散", "/theme")))]
     except Exception as e:
         logger.error(f"[footprint] {e}")
-        return [_text(f"❌ 法人足跡分析失敗：{type(e).__name__}")]
+        return [_text(_fmt_err("法人足跡分析失敗", e))]
 
 
 async def _cmd_euphoria() -> list:
@@ -7117,7 +7195,7 @@ async def _cmd_euphoria() -> list:
                                 ("AI辯論", "/debate 2330")))]
     except Exception as e:
         logger.error(f"[euphoria] {e}")
-        return [_text(f"❌ 過熱分析失敗：{type(e).__name__}")]
+        return [_text(_fmt_err("過熱分析失敗", e))]
 
 
 async def _cmd_stress() -> list:
@@ -7131,7 +7209,7 @@ async def _cmd_stress() -> list:
                                 ("預測市場", "/predict")))]
     except Exception as e:
         logger.error(f"[stress] {e}")
-        return [_text(f"❌ 壓力測試失敗：{type(e).__name__}")]
+        return [_text(_fmt_err("壓力測試失敗", e))]
 
 
 async def _cmd_debate(stock_id: str) -> list:
@@ -7151,7 +7229,7 @@ async def _cmd_debate(stock_id: str) -> list:
                                 ("預測市場", "/predict")))]
     except Exception as e:
         logger.error(f"[debate] {e}")
-        return [_text(f"❌ AI辯論失敗：{type(e).__name__}")]
+        return [_text(_fmt_err("AI辯論失敗", e))]
 
 
 async def _cmd_predict(proposition: str) -> list:
@@ -7171,7 +7249,7 @@ async def _cmd_predict(proposition: str) -> list:
                                 ("AI辯論", "/debate 2330")))]
     except Exception as e:
         logger.error(f"[predict] {e}")
-        return [_text(f"❌ 預測市場失敗：{type(e).__name__}")]
+        return [_text(_fmt_err("預測市場失敗", e))]
 
 
 async def _cmd_drift() -> list:
@@ -7185,7 +7263,7 @@ async def _cmd_drift() -> list:
                                 ("週期位置", "/timeline")))]
     except Exception as e:
         logger.error(f"[drift] {e}")
-        return [_text(f"❌ 飄移偵測失敗：{type(e).__name__}")]
+        return [_text(_fmt_err("飄移偵測失敗", e))]
 
 
 # ── 市場情報作戰中心指令 ─────────────────────────────────────────────────────
@@ -7201,7 +7279,7 @@ async def _cmd_narrative() -> list:
                                 ("委員會", "/committee 2330")))]
     except Exception as e:
         logger.error(f"[narrative] {e}")
-        return [_text(f"❌ 敘事分析失敗：{type(e).__name__}")]
+        return [_text(_fmt_err("敘事分析失敗", e))]
 
 
 async def _cmd_rotation() -> list:
@@ -7215,7 +7293,7 @@ async def _cmd_rotation() -> list:
                                 ("週期位置", "/timeline")))]
     except Exception as e:
         logger.error(f"[rotation] {e}")
-        return [_text(f"❌ 輪動分析失敗：{type(e).__name__}")]
+        return [_text(_fmt_err("輪動分析失敗", e))]
 
 
 async def _cmd_memory() -> list:
@@ -7231,7 +7309,7 @@ async def _cmd_memory() -> list:
                                 ("委員會", "/committee 2330")))]
     except Exception as e:
         logger.error(f"[memory] {e}")
-        return [_text(f"❌ 歷史比對失敗：{type(e).__name__}")]
+        return [_text(_fmt_err("歷史比對失敗", e))]
 
 
 async def _cmd_committee(stock_id: str) -> list:
@@ -7251,7 +7329,7 @@ async def _cmd_committee(stock_id: str) -> list:
                                 ("法人足跡", f"/footprint {sid}")))]
     except Exception as e:
         logger.error(f"[committee] {e}")
-        return [_text(f"❌ 委員會執行失敗：{type(e).__name__}")]
+        return [_text(_fmt_err("委員會執行失敗", e))]
 
 
 async def _cmd_weights() -> list:
@@ -7264,7 +7342,7 @@ async def _cmd_weights() -> list:
                                 ("Alpha監控", "/alpha")))]
     except Exception as e:
         logger.error(f"[weights] {e}")
-        return [_text(f"❌ 調權計算失敗：{type(e).__name__}")]
+        return [_text(_fmt_err("調權計算失敗", e))]
 
 
 # ── YouTube 分析師入職流程指令 ────────────────────────────────────────────────
@@ -7286,7 +7364,7 @@ async def _cmd_analyst_add_url(url: str) -> list:
         )]
     except Exception as e:
         logger.error(f"[analyst_add_url] {e}")
-        return [_text(f"❌ URL 解析失敗：{type(e).__name__}: {str(e)[:80]}")]
+        return [_text(_fmt_err("URL 解析失敗", e))]
 
 
 async def _cmd_analyst_approve(channel_id: str) -> list:
@@ -7301,7 +7379,7 @@ async def _cmd_analyst_approve(channel_id: str) -> list:
             ))]
         return [_text(f"❌ {msg}")]
     except Exception as e:
-        return [_text(f"❌ 核准失敗：{type(e).__name__}")]
+        return [_text(_fmt_err("核准失敗", e))]
 
 
 async def _cmd_analyst_reject_pending(channel_id: str, reason: str) -> list:
@@ -7311,7 +7389,7 @@ async def _cmd_analyst_reject_pending(channel_id: str, reason: str) -> list:
         msg = await reject_channel(channel_id, reason)
         return [_text(msg, qr_items(("待審清單", "/analyst pending"), ("追蹤清單", "/analyst list")))]
     except Exception as e:
-        return [_text(f"❌ 拒絕操作失敗：{type(e).__name__}")]
+        return [_text(_fmt_err("拒絕操作失敗", e))]
 
 
 async def _cmd_analyst_pending() -> list:
@@ -7332,7 +7410,7 @@ async def _cmd_analyst_pending() -> list:
             ("今日共識", "/analyst"),
         ))]
     except Exception as e:
-        return [_text(f"❌ 待審清單取得失敗：{type(e).__name__}")]
+        return [_text(_fmt_err("待審清單取得失敗", e))]
 
 
 async def _cmd_analyst_sandbox() -> list:
@@ -7355,7 +7433,7 @@ async def _cmd_analyst_sandbox() -> list:
             ("新增分析師", "/analyst add"),
         ))]
     except Exception as e:
-        return [_text(f"❌ 沙盒狀態取得失敗：{type(e).__name__}")]
+        return [_text(_fmt_err("沙盒狀態取得失敗", e))]
 
 
 async def _cmd_analyst_promote(analyst_id: str, new_tier: str = "") -> list:
@@ -7367,7 +7445,7 @@ async def _cmd_analyst_promote(analyst_id: str, new_tier: str = "") -> list:
             return [_text(msg, qr_items(("追蹤清單", "/analyst list"), ("今日共識", "/analyst")))]
         return [_text(f"⚠️ {msg}")]
     except Exception as e:
-        return [_text(f"❌ 晉升失敗：{type(e).__name__}")]
+        return [_text(_fmt_err("晉升失敗", e))]
 
 
 async def _cmd_analyst_dna(analyst_id: str) -> list:
@@ -7382,7 +7460,7 @@ async def _cmd_analyst_dna(analyst_id: str) -> list:
             ("追蹤清單", "/analyst list"),
         ))]
     except Exception as e:
-        return [_text(f"❌ DNA 查詢失敗：{type(e).__name__}")]
+        return [_text(_fmt_err("DNA 查詢失敗", e))]
 
 
 # ── Auto-Improve 指令 ────────────────────────────────────────────────────────
@@ -7430,7 +7508,7 @@ async def _execute_fixes_bg(uid: str, fix_ids: list[int] | None) -> None:
         await push_line_messages(uid, [{"type": "text", "text": text}], timeout=30, context="handler.execute_fixes")
     except Exception as e:
         logger.error(f"[execute_fixes_bg] {e}", exc_info=True)
-        await push_line_messages(uid, [{"type": "text", "text": f"❌ 執行失敗：{e}"}], timeout=15, context="handler.execute_fixes.error")
+        await push_line_messages(uid, [{"type": "text", "text": _fmt_err("執行失敗", e)}], timeout=15, context="handler.execute_fixes.error")
 
 
 # ── /chart ────────────────────────────────────────────────────────────────────
@@ -7758,7 +7836,7 @@ async def _cmd_trade_buy(uid: str, code: str, shares: int, price: float) -> list
         return [_text(result["message"], qr)]
     except Exception as e:
         logger.error(f"[trade_buy] {e}")
-        return [_text(f"❌ 記錄失敗：{e}")]
+        return [_text(_fmt_err("記錄失敗", e))]
 
 
 async def _cmd_trade_sell(uid: str, code: str, shares: int, price: float) -> list:
@@ -7769,7 +7847,7 @@ async def _cmd_trade_sell(uid: str, code: str, shares: int, price: float) -> lis
         return [_text(result["message"], qr)]
     except Exception as e:
         logger.error(f"[trade_sell] {e}")
-        return [_text(f"❌ 記錄失敗：{e}")]
+        return [_text(_fmt_err("記錄失敗", e))]
 
 
 async def _cmd_trade_history(uid: str) -> list:
@@ -7812,7 +7890,7 @@ async def _cmd_target(code: str, uid: str) -> list:
         ))]
     except Exception as e:
         logger.error(f"[target] {code} error: {e}")
-        return [_text(f"❌ 目標價預測失敗：{e}")]
+        return [_text(_fmt_err("目標價預測失敗", e))]
 
 
 async def _cmd_pair(code1: str, code2: str, uid: str) -> list:
@@ -7830,7 +7908,7 @@ async def _cmd_pair(code1: str, code2: str, uid: str) -> list:
         ))]
     except Exception as e:
         logger.error(f"[pair] {code1}/{code2} error: {e}")
-        return [_text(f"❌ 配對分析失敗：{e}")]
+        return [_text(_fmt_err("配對分析失敗", e))]
 
 
 async def _cmd_opex(uid: str) -> list:
@@ -7844,7 +7922,7 @@ async def _cmd_opex(uid: str) -> list:
         ))]
     except Exception as e:
         logger.error(f"[opex] error: {e}")
-        return [_text(f"❌ 結算日查詢失敗：{e}")]
+        return [_text(_fmt_err("結算日查詢失敗", e))]
 
 
 async def _cmd_health_score(code: str, uid: str) -> list:
@@ -7863,7 +7941,7 @@ async def _cmd_health_score(code: str, uid: str) -> list:
         ))]
     except Exception as e:
         logger.error(f"[score] {code} error: {e}")
-        return [_text(f"❌ 健康評分失敗：{e}")]
+        return [_text(_fmt_err("健康評分失敗", e))]
 
 
 # ── 功能 1: 多因子評分 ─────────────────────────────────────────────────────────
@@ -7882,7 +7960,7 @@ async def _cmd_factor(code: str, uid: str) -> list:
         ))]
     except Exception as e:
         logger.error(f"[factor] {code} error: {e}")
-        return [_text(f"❌ 因子評分失敗：{e}",
+        return [_text(_fmt_err("因子評分失敗", e),
                       qr_items(("重試", f"/factor {code}"), ("AI分析", f"/ai {code}")))]
 
 
@@ -7902,7 +7980,7 @@ async def _cmd_vol(code: str, uid: str) -> list:
         ))]
     except Exception as e:
         logger.error(f"[vol] {code} error: {e}")
-        return [_text(f"❌ 波動率分析失敗：{e}",
+        return [_text(_fmt_err("波動率分析失敗", e),
                       qr_items(("重試", f"/vol {code}")))]
 
 
@@ -8014,7 +8092,7 @@ async def _cmd_scan(uid: str) -> list:
         ))]
     except Exception as e:
         logger.error(f"[scan] error: {e}")
-        return [_text(f"❌ 市場掃描失敗：{e}",
+        return [_text(_fmt_err("市場掃描失敗", e),
                       qr_items(("重試", "/scan"), ("大盤", "/market")))]
 
 
@@ -8036,7 +8114,7 @@ async def _cmd_personal_performance(uid: str) -> list:
         ))]
     except Exception as e:
         logger.error(f"[performance] uid={uid} error: {e}")
-        return [_text(f"❌ 績效報告失敗：{e}",
+        return [_text(_fmt_err("績效報告失敗", e),
                       qr_items(("💼 庫存", "/p"), ("📊 分析", "/analysis")))]
 
 
@@ -8056,7 +8134,7 @@ async def _cmd_cycle(uid: str) -> list:
         ))]
     except Exception as e:
         logger.error(f"[cycle] error: {e}")
-        return [_text(f"❌ 市場週期判斷失敗：{e}",
+        return [_text(_fmt_err("市場週期判斷失敗", e),
                       qr_items(("重試", "/cycle"), ("大盤", "/market")))]
 
 
@@ -8080,7 +8158,7 @@ async def _cmd_sector_flow(uid: str) -> list:
         ))]
     except Exception as e:
         logger.error(f"[sector_flow] error: {e}")
-        return [_text(f"❌ 產業籌碼地圖失敗：{e}",
+        return [_text(_fmt_err("產業籌碼地圖失敗", e),
                       qr_items(("重試", "/heatmap flow"), ("大盤", "/market")))]
 
 
@@ -8100,7 +8178,7 @@ async def _cmd_main_cost(code: str, uid: str) -> list:
         ))]
     except Exception as e:
         logger.error(f"[main_cost] {code} error: {e}")
-        return [_text(f"❌ 主力成本分析失敗：{e}",
+        return [_text(_fmt_err("主力成本分析失敗", e),
                       qr_items(("重試", f"/cost {code}")))]
 
 
@@ -8122,7 +8200,7 @@ async def _cmd_watch_zone_set(code: str, uid: str, support: float, resistance: f
         )]
     except Exception as e:
         logger.error(f"[watch_zone_set] {code} error: {e}")
-        return [_text(f"❌ 設定失敗：{e}")]
+        return [_text(_fmt_err("設定失敗", e))]
 
 
 async def _cmd_watch_zone_del(code: str, uid: str) -> list:
@@ -8133,7 +8211,7 @@ async def _cmd_watch_zone_del(code: str, uid: str) -> list:
         msg = f"🗑️ {code} 警戒區間已移除" if ok else f"❌ {code} 沒有設定警戒區間"
         return [_text(msg, qr_items(("查看清單", "/watch list"), ("重新設定", f"/watch add {code} 0 0")))]
     except Exception as e:
-        return [_text(f"❌ 移除失敗：{e}")]
+        return [_text(_fmt_err("移除失敗", e))]
 
 
 async def _cmd_watch_zone_list(uid: str) -> list:
@@ -8146,7 +8224,7 @@ async def _cmd_watch_zone_list(uid: str) -> list:
             ("新增區間", "/watch add 2330 800 1000"),
         ))]
     except Exception as e:
-        return [_text(f"❌ 查詢失敗：{e}")]
+        return [_text(_fmt_err("查詢失敗", e))]
 
 
 # ── 功能 4: 法說會追蹤 ────────────────────────────────────────────────────────
@@ -8165,7 +8243,7 @@ async def _cmd_conference(uid: str) -> list:
         ))]
     except Exception as e:
         logger.error(f"[conf] error: {e}")
-        return [_text(f"❌ 法說會資料取得失敗：{e}",
+        return [_text(_fmt_err("法說會資料取得失敗", e),
                       qr_items(("重試", "/conf"), ("新聞", "/news")))]
 
 
@@ -8185,7 +8263,7 @@ async def _cmd_futures(uid: str) -> list:
         ))]
     except Exception as e:
         logger.error(f"[futures] error: {e}")
-        return [_text(f"❌ 外資期貨資料取得失敗：{e}",
+        return [_text(_fmt_err("外資期貨資料取得失敗", e),
                       qr_items(("重試", "/futures"), ("大盤", "/market")))]
 
 
@@ -8205,7 +8283,7 @@ async def _cmd_rating(code: str, uid: str) -> list:
         ))]
     except Exception as e:
         logger.error(f"[rating] {code} error: {e}")
-        return [_text(f"❌ 評級查詢失敗：{e}",
+        return [_text(_fmt_err("評級查詢失敗", e),
                       qr_items(("重試", f"/rating {code}")))]
 
 
@@ -8227,7 +8305,7 @@ async def _cmd_smart_money_stock(code: str, uid: str) -> list:
         ))]
     except Exception as e:
         logger.error(f"[smart_stock] {code} error: {e}")
-        return [_text(f"❌ 聰明錢分析失敗：{e}",
+        return [_text(_fmt_err("聰明錢分析失敗", e),
                       qr_items(("重試", f"/smart {code}")))]
 
 
@@ -8251,7 +8329,7 @@ async def _cmd_vix(uid: str) -> list:
         ))]
     except Exception as e:
         logger.error(f"[vix] error: {e}")
-        return [_text(f"❌ VIX 資料取得失敗：{e}",
+        return [_text(_fmt_err("VIX 資料取得失敗", e),
                       qr_items(("重試", "/vix"), ("大盤", "/market")))]
 
 
@@ -8271,7 +8349,7 @@ async def _cmd_asset_rotation(uid: str) -> list:
         ))]
     except Exception as e:
         logger.error(f"[asset_rotation] error: {e}")
-        return [_text(f"❌ 資金輪動資料取得失敗：{e}",
+        return [_text(_fmt_err("資金輪動資料取得失敗", e),
                       qr_items(("重試", "/rotation"), ("大盤", "/market")))]
 
 
@@ -8291,7 +8369,7 @@ async def _cmd_eps(code: str, uid: str) -> list:
         ))]
     except Exception as e:
         logger.error(f"[eps] {code} error: {e}")
-        return [_text(f"❌ 季報資料取得失敗：{e}",
+        return [_text(_fmt_err("季報資料取得失敗", e),
                       qr_items(("重試", f"/eps {code}")))]
 
 
@@ -8311,7 +8389,7 @@ async def _cmd_black_swan(uid: str) -> list:
         ))]
     except Exception as e:
         logger.error(f"[blackswan] error: {e}")
-        return [_text(f"❌ 黑天鵝掃描失敗：{e}",
+        return [_text(_fmt_err("黑天鵝掃描失敗", e),
                       qr_items(("重試", "/blackswan"), ("大盤", "/market")))]
 
 
@@ -8331,7 +8409,7 @@ async def _cmd_momentum_ranking(uid: str) -> list:
         ))]
     except Exception as e:
         logger.error(f"[momentum] error: {e}")
-        return [_text(f"❌ 動能排行計算失敗：{e}",
+        return [_text(_fmt_err("動能排行計算失敗", e),
                       qr_items(("重試", "/momentum"), ("選股", "/r")))]
 
 
@@ -8351,7 +8429,7 @@ async def _cmd_psychology(uid: str) -> list:
         ))]
     except Exception as e:
         logger.error(f"[psychology] error: {e}")
-        return [_text(f"❌ 心理分析失敗：{e}",
+        return [_text(_fmt_err("心理分析失敗", e),
                       qr_items(("重試", "/psychology"), ("大盤", "/market")))]
 
 
@@ -8373,7 +8451,7 @@ async def _cmd_portfolio_suggest(uid: str) -> list:
         ))]
     except Exception as e:
         logger.error(f"[portfolio_suggest] uid={uid} error: {e}")
-        return [_text(f"❌ 投資組合建議失敗：{e}",
+        return [_text(_fmt_err("投資組合建議失敗", e),
                       qr_items(("重試", "/suggest"), ("庫存", "/p")))]
 
 
@@ -8396,7 +8474,7 @@ async def _cmd_ai_contest(uid: str) -> list:
         ))]
     except Exception as e:
         logger.error(f"[ai_contest] uid={uid} error: {e}")
-        return [_text(f"❌ AI 競賽失敗：{e}", qr_items(("重試", "/contest")))]
+        return [_text(_fmt_err("AI 競賽失敗", e), qr_items(("重試", "/contest")))]
 
 
 async def _cmd_rrr(code: str, entry: float, stop: float,
@@ -8413,7 +8491,7 @@ async def _cmd_rrr(code: str, entry: float, stop: float,
         ))]
     except Exception as e:
         logger.error(f"[rrr] {code} error: {e}")
-        return [_text(f"❌ RRR 計算失敗：{e}", qr_items(("說明", "/rrr")))]
+        return [_text(_fmt_err("RRR 計算失敗", e), qr_items(("說明", "/rrr")))]
 
 
 async def _cmd_industry_news(industry: str, uid: str) -> list:
@@ -8431,7 +8509,7 @@ async def _cmd_industry_news(industry: str, uid: str) -> list:
         ))]
     except Exception as e:
         logger.error(f"[industry_news] {industry} error: {e}")
-        return [_text(f"❌ 產業新聞失敗：{e}",
+        return [_text(_fmt_err("產業新聞失敗", e),
                       qr_items(("重試", f"/industry {industry}")))]
 
 
@@ -8450,7 +8528,7 @@ async def _cmd_calendar_effect(uid: str) -> list:
         ))]
     except Exception as e:
         logger.error(f"[calendar] uid={uid} error: {e}")
-        return [_text(f"❌ 月曆效應失敗：{e}", qr_items(("重試", "/calendar")))]
+        return [_text(_fmt_err("月曆效應失敗", e), qr_items(("重試", "/calendar")))]
 
 
 async def _cmd_value_assessment(code: str, uid: str) -> list:
@@ -8468,7 +8546,7 @@ async def _cmd_value_assessment(code: str, uid: str) -> list:
         ))]
     except Exception as e:
         logger.error(f"[value] {code} error: {e}")
-        return [_text(f"❌ 估值評估失敗：{e}",
+        return [_text(_fmt_err("估值評估失敗", e),
                       qr_items(("台積電", "/value 2330"), ("重試", f"/value {code}")))]
 
 
@@ -8487,7 +8565,7 @@ async def _cmd_big_player(code: str, uid: str) -> list:
         ))]
     except Exception as e:
         logger.error(f"[bigplayer] {code} error: {e}")
-        return [_text(f"❌ 大戶追蹤失敗：{e}",
+        return [_text(_fmt_err("大戶追蹤失敗", e),
                       qr_items(("台積電", "/bigplayer 2330"), ("重試", f"/bigplayer {code}")))]
 
 
@@ -8506,7 +8584,7 @@ async def _cmd_monthly_report(uid: str) -> list:
         ))]
     except Exception as e:
         logger.error(f"[monthly] uid={uid} error: {e}")
-        return [_text(f"❌ 月報生成失敗：{e}", qr_items(("重試", "/monthly")))]
+        return [_text(_fmt_err("月報生成失敗", e), qr_items(("重試", "/monthly")))]
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -8528,7 +8606,7 @@ async def _cmd_washout(code: str, uid: str) -> list:
         ))]
     except Exception as e:
         logger.error(f"[washout] {code} error: {e}")
-        return [_text(f"❌ 洗盤偵測失敗：{e}",
+        return [_text(_fmt_err("洗盤偵測失敗", e),
                       qr_items(("台積電", "/washout 2330"), ("重試", f"/washout {code}")))]
 
 
@@ -8545,7 +8623,7 @@ async def _cmd_pcr(uid: str) -> list:
         ))]
     except Exception as e:
         logger.error(f"[pcr] uid={uid} error: {e}")
-        return [_text(f"❌ PCR 資料取得失敗：{e}", qr_items(("重試", "/pcr")))]
+        return [_text(_fmt_err("PCR 資料取得失敗", e), qr_items(("重試", "/pcr")))]
 
 
 async def _cmd_global_market(uid: str) -> list:
@@ -8563,7 +8641,7 @@ async def _cmd_global_market(uid: str) -> list:
         ))]
     except Exception as e:
         logger.error(f"[global] uid={uid} error: {e}")
-        return [_text(f"❌ 全球市場資料失敗：{e}", qr_items(("重試", "/global")))]
+        return [_text(_fmt_err("全球市場資料失敗", e), qr_items(("重試", "/global")))]
 
 
 async def _cmd_support_resistance(code: str, uid: str) -> list:
@@ -8581,7 +8659,7 @@ async def _cmd_support_resistance(code: str, uid: str) -> list:
         ))]
     except Exception as e:
         logger.error(f"[sr] {code} error: {e}")
-        return [_text(f"❌ 支撐壓力計算失敗：{e}",
+        return [_text(_fmt_err("支撐壓力計算失敗", e),
                       qr_items(("台積電", "/sr 2330"), ("重試", f"/sr {code}")))]
 
 
@@ -8600,7 +8678,7 @@ async def _cmd_premarket_brief(uid: str) -> list:
         ))]
     except Exception as e:
         logger.error(f"[premarket] uid={uid} error: {e}")
-        return [_text(f"❌ 開盤簡報失敗：{e}", qr_items(("重試", "/premarket")))]
+        return [_text(_fmt_err("開盤簡報失敗", e), qr_items(("重試", "/premarket")))]
 
 
 async def _cmd_similar_stocks(code: str, uid: str) -> list:
@@ -8618,7 +8696,7 @@ async def _cmd_similar_stocks(code: str, uid: str) -> list:
         ))]
     except Exception as e:
         logger.error(f"[similar] {code} error: {e}")
-        return [_text(f"❌ 相似度搜尋失敗：{e}",
+        return [_text(_fmt_err("相似度搜尋失敗", e),
                       qr_items(("台積電", "/similar 2330"), ("重試", f"/similar {code}")))]
 
 
@@ -8637,7 +8715,7 @@ async def _cmd_dashboard(uid: str) -> list:
         ))]
     except Exception as e:
         logger.error(f"[dashboard] uid={uid} error: {e}")
-        return [_text(f"❌ 儀表板資料失敗：{e}", qr_items(("重試", "/dashboard")))]
+        return [_text(_fmt_err("儀表板資料失敗", e), qr_items(("重試", "/dashboard")))]
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -8659,7 +8737,7 @@ async def _cmd_news_impact(event: str, uid: str) -> list:
         ))]
     except Exception as e:
         logger.error(f"[news_impact] error: {e}")
-        return [_text(f"❌ 事件影響分析失敗：{e}",
+        return [_text(_fmt_err("事件影響分析失敗", e),
                       qr_items(("示範", "/impact 台積電 CoWoS 需求下滑")))]
 
 
@@ -8678,7 +8756,7 @@ async def _cmd_dividend_tracker(uid: str) -> list:
         ))]
     except Exception as e:
         logger.error(f"[dividend_tracker] uid={uid} error: {e}")
-        return [_text(f"❌ 除息追蹤失敗：{e}", qr_items(("重試", "/dividend")))]
+        return [_text(_fmt_err("除息追蹤失敗", e), qr_items(("重試", "/dividend")))]
 
 
 async def _cmd_daytrader(code: str, uid: str) -> list:
@@ -8696,7 +8774,7 @@ async def _cmd_daytrader(code: str, uid: str) -> list:
         ))]
     except Exception as e:
         logger.error(f"[daytrader] {code} error: {e}")
-        return [_text(f"❌ 隔日沖追蹤失敗：{e}",
+        return [_text(_fmt_err("隔日沖追蹤失敗", e),
                       qr_items(("台積電", "/daytrader 2330"), ("重試", f"/daytrader {code}")))]
 
 
@@ -8715,7 +8793,7 @@ async def _cmd_margin_tracker(uid: str) -> list:
         ))]
     except Exception as e:
         logger.error(f"[margin_tracker] uid={uid} error: {e}")
-        return [_text(f"❌ 信用交易概況失敗：{e}", qr_items(("重試", "/margin")))]
+        return [_text(_fmt_err("信用交易概況失敗", e), qr_items(("重試", "/margin")))]
 
 
 async def _cmd_etf_flow(uid: str) -> list:
@@ -8733,7 +8811,7 @@ async def _cmd_etf_flow(uid: str) -> list:
         ))]
     except Exception as e:
         logger.error(f"[etf_flow] uid={uid} error: {e}")
-        return [_text(f"❌ ETF資金流向失敗：{e}", qr_items(("重試", "/etfflow")))]
+        return [_text(_fmt_err("ETF資金流向失敗", e), qr_items(("重試", "/etfflow")))]
 
 
 async def _cmd_institutional_detail(sub: str, uid: str) -> list:
@@ -8751,7 +8829,7 @@ async def _cmd_institutional_detail(sub: str, uid: str) -> list:
         ))]
     except Exception as e:
         logger.error(f"[inst_detail] uid={uid} error: {e}")
-        return [_text(f"❌ 法人明細失敗：{e}", qr_items(("重試", "/inst today")))]
+        return [_text(_fmt_err("法人明細失敗", e), qr_items(("重試", "/inst today")))]
 
 
 async def _cmd_price_forecast(code: str, uid: str) -> list:
@@ -8769,7 +8847,7 @@ async def _cmd_price_forecast(code: str, uid: str) -> list:
         ))]
     except Exception as e:
         logger.error(f"[forecast] {code} error: {e}")
-        return [_text(f"❌ AI預測失敗：{e}",
+        return [_text(_fmt_err("AI預測失敗", e),
                       qr_items(("台積電", "/forecast 2330"), ("重試", f"/forecast {code}")))]
 
 
@@ -8790,7 +8868,7 @@ async def _cmd_divergence(code: str, uid: str) -> list:
         ))]
     except Exception as e:
         logger.error(f"[divergence] {code} error: {e}")
-        return [_text(f"❌ 背離偵測失敗：{e}",
+        return [_text(_fmt_err("背離偵測失敗", e),
                       qr_items(("台積電", "/divergence 2330"), ("重試", f"/divergence {code}")))]
 
 
@@ -8807,7 +8885,7 @@ async def _cmd_basis(uid: str) -> list:
         ))]
     except Exception as e:
         logger.error(f"[basis] error: {e}")
-        return [_text(f"❌ 基差追蹤失敗：{e}", qr_items(("重試", "/basis")))]
+        return [_text(_fmt_err("基差追蹤失敗", e), qr_items(("重試", "/basis")))]
 
 
 async def _cmd_revenue(code: str, uid: str) -> list:
@@ -8823,7 +8901,7 @@ async def _cmd_revenue(code: str, uid: str) -> list:
         ))]
     except Exception as e:
         logger.error(f"[revenue] {code} error: {e}")
-        return [_text(f"❌ 月營收查詢失敗：{e}",
+        return [_text(_fmt_err("月營收查詢失敗", e),
                       qr_items(("台積電", "/revenue 2330"), ("重試", f"/revenue {code}")))]
 
 
@@ -8840,7 +8918,7 @@ async def _cmd_rotate(uid: str) -> list:
         ))]
     except Exception as e:
         logger.error(f"[rotate] error: {e}")
-        return [_text(f"❌ 輪動分析失敗：{e}", qr_items(("重試", "/rotate")))]
+        return [_text(_fmt_err("輪動分析失敗", e), qr_items(("重試", "/rotate")))]
 
 
 async def _cmd_adr(uid: str) -> list:
@@ -8856,7 +8934,7 @@ async def _cmd_adr(uid: str) -> list:
         ))]
     except Exception as e:
         logger.error(f"[adr] error: {e}")
-        return [_text(f"❌ ADR追蹤失敗：{e}", qr_items(("重試", "/adr")))]
+        return [_text(_fmt_err("ADR追蹤失敗", e), qr_items(("重試", "/adr")))]
 
 
 async def _cmd_theme_tracker(keyword: str, uid: str) -> list:
@@ -8876,7 +8954,7 @@ async def _cmd_theme_tracker(keyword: str, uid: str) -> list:
         return [_text(report[:4800], qr)]
     except Exception as e:
         logger.error(f"[theme_tracker] {keyword} error: {e}")
-        return [_text(f"❌ 主題追蹤失敗：{e}",
+        return [_text(_fmt_err("主題追蹤失敗", e),
                       qr_items(("全市場掃描", "/theme2"),
                                ("示範AI", "/theme ai"),
                                ("示範半導體", "/theme 半導體")))]
@@ -8897,7 +8975,7 @@ async def _cmd_exit_strategy(code: str, uid: str) -> list:
         ))]
     except Exception as e:
         logger.error(f"[exit] {code} error: {e}")
-        return [_text(f"❌ 停利策略失敗：{e}",
+        return [_text(_fmt_err("停利策略失敗", e),
                       qr_items(("台積電", "/exit 2330"), ("重試", f"/exit {code}")))]
 
 
@@ -8916,7 +8994,7 @@ async def _cmd_scorecard(uid: str) -> list:
         ))]
     except Exception as e:
         logger.error(f"[scorecard] error: {e}")
-        return [_text(f"❌ 評分板失敗：{e}", qr_items(("重試", "/scorecard")))]
+        return [_text(_fmt_err("評分板失敗", e), qr_items(("重試", "/scorecard")))]
 
 
 async def _cmd_hl(code: str, uid: str) -> list:
@@ -8932,7 +9010,7 @@ async def _cmd_hl(code: str, uid: str) -> list:
         ))]
     except Exception as e:
         logger.error(f"[hl] {code} error: {e}")
-        return [_text(f"❌ 高低點查詢失敗：{e}",
+        return [_text(_fmt_err("高低點查詢失敗", e),
                       qr_items(("台積電", "/hl 2330"), ("重試", f"/hl {code}")))]
 
 
@@ -8951,7 +9029,7 @@ async def _cmd_etf_compare(keyword: str, uid: str) -> list:
         ))]
     except Exception as e:
         logger.error(f"[etfcompare] {keyword} error: {e}")
-        return [_text(f"❌ ETF比較失敗：{e}",
+        return [_text(_fmt_err("ETF比較失敗", e),
                       qr_items(("高股息", "/etfcompare 高股息"),
                                ("半導體", "/etfcompare 半導體")))]
 
@@ -8969,7 +9047,7 @@ async def _cmd_events(uid: str) -> list:
         ))]
     except Exception as e:
         logger.error(f"[events] error: {e}")
-        return [_text(f"❌ 行事曆失敗：{e}", qr_items(("重試", "/events")))]
+        return [_text(_fmt_err("行事曆失敗", e), qr_items(("重試", "/events")))]
 
 
 async def _cmd_weekplan(uid: str) -> list:
@@ -8985,7 +9063,7 @@ async def _cmd_weekplan(uid: str) -> list:
         ))]
     except Exception as e:
         logger.error(f"[weekplan] error: {e}")
-        return [_text(f"❌ 週策略失敗：{e}", qr_items(("重試", "/weekplan")))]
+        return [_text(_fmt_err("週策略失敗", e), qr_items(("重試", "/weekplan")))]
 
 
 async def _cmd_buzz(code: str, uid: str) -> list:
@@ -9001,7 +9079,7 @@ async def _cmd_buzz(code: str, uid: str) -> list:
         ))]
     except Exception as e:
         logger.error(f"[buzz] {code} error: {e}")
-        return [_text(f"❌ 社群熱度失敗：{e}",
+        return [_text(_fmt_err("社群熱度失敗", e),
                       qr_items(("台積電", "/buzz 2330"), ("重試", f"/buzz {code}")))]
 
 
@@ -9026,7 +9104,7 @@ async def _cmd_journal_add(raw: str, uid: str) -> list:
                                ("AI分析", "/journal analysis")))]
     except Exception as e:
         logger.error(f"[journal add] uid={uid} error: {e}")
-        return [_text(f"❌ 新增失敗：{e}")]
+        return [_text(_fmt_err("新增失敗", e))]
 
 
 async def _cmd_journal_list(uid: str) -> list:
@@ -9041,7 +9119,7 @@ async def _cmd_journal_list(uid: str) -> list:
         ))]
     except Exception as e:
         logger.error(f"[journal list] uid={uid} error: {e}")
-        return [_text(f"❌ 日記讀取失敗：{e}")]
+        return [_text(_fmt_err("日記讀取失敗", e))]
 
 
 async def _cmd_journal_analysis(uid: str) -> list:
@@ -9058,7 +9136,7 @@ async def _cmd_journal_analysis(uid: str) -> list:
         ))]
     except Exception as e:
         logger.error(f"[journal analysis] uid={uid} error: {e}")
-        return [_text(f"❌ 分析失敗：{e}")]
+        return [_text(_fmt_err("分析失敗", e))]
 
 
 async def _cmd_journal_del(entry_id: int, uid: str) -> list:
@@ -9071,7 +9149,7 @@ async def _cmd_journal_del(entry_id: int, uid: str) -> list:
         return [_text(msg, qr_items(("查看日記", "/journal")))]
     except Exception as e:
         logger.error(f"[journal del] uid={uid} error: {e}")
-        return [_text(f"❌ 刪除失敗：{e}")]
+        return [_text(_fmt_err("刪除失敗", e))]
 
 
 # ── YouTube Analyst Handler Functions ──────────────────────────────────────────
@@ -9092,7 +9170,7 @@ async def _cmd_analyst_yt_summary(uid: str) -> list:
         ))]
     except Exception as e:
         logger.error(f"[analyst_yt] error: {e}")
-        return [_text(f"❌ YouTube觀點彙整失敗：{e}",
+        return [_text(_fmt_err("YouTube觀點彙整失敗", e),
                       qr_items(("重試", "/analyst yt"), ("舊版共識", "/analyst")))]
 
 
@@ -9130,7 +9208,7 @@ async def _cmd_consensus_debug(uid: str) -> list:
         ))]
     except Exception as e:
         logger.error(f"[consensus_debug] {e}")
-        return [_text(f"❌ Debug查詢失敗：{e}")]
+        return [_text(_fmt_err("Debug查詢失敗", e))]
 
 
 async def _cmd_analyst_accuracy_by_id(handle: str, uid: str) -> list:
@@ -9148,7 +9226,7 @@ async def _cmd_analyst_accuracy_by_id(handle: str, uid: str) -> list:
         ))]
     except Exception as e:
         logger.error(f"[accuracy_by_id] {handle} error: {e}")
-        return [_text(f"❌ 查詢失敗：{e}",
+        return [_text(_fmt_err("查詢失敗", e),
                       qr_items(("全體排行", "/analyst ranking"),
                                ("重試", f"/accuracy {handle}")))]
 
@@ -9169,7 +9247,7 @@ async def _cmd_midday(uid: str) -> list:
         ))]
     except Exception as e:
         logger.error(f"[midday] {e}")
-        return [_text(f"❌ 盤中解說失敗：{e}", qr_items(("重試", "/midday")))]
+        return [_text(_fmt_err("盤中解說失敗", e), qr_items(("重試", "/midday")))]
 
 
 async def _cmd_fundcost(code: str, uid: str) -> list:
@@ -9186,7 +9264,7 @@ async def _cmd_fundcost(code: str, uid: str) -> list:
         ))]
     except Exception as e:
         logger.error(f"[fundcost] {code} {e}")
-        return [_text(f"❌ 資金成本分析失敗：{e}",
+        return [_text(_fmt_err("資金成本分析失敗", e),
                       qr_items(("重試", f"/fundcost {code}")))]
 
 
@@ -9204,7 +9282,7 @@ async def _cmd_us2tw(uid: str) -> list:
         ))]
     except Exception as e:
         logger.error(f"[us2tw] {e}")
-        return [_text(f"❌ 美台聯動分析失敗：{e}", qr_items(("重試", "/us2tw")))]
+        return [_text(_fmt_err("美台聯動分析失敗", e), qr_items(("重試", "/us2tw")))]
 
 
 async def _cmd_techrating(code: str, uid: str) -> list:
@@ -9221,7 +9299,7 @@ async def _cmd_techrating(code: str, uid: str) -> list:
         ))]
     except Exception as e:
         logger.error(f"[techrating] {code} {e}")
-        return [_text(f"❌ 技術評級失敗：{e}",
+        return [_text(_fmt_err("技術評級失敗", e),
                       qr_items(("重試", f"/techrating {code}")))]
 
 
@@ -9239,7 +9317,7 @@ async def _cmd_streak(code: str, uid: str) -> list:
         ))]
     except Exception as e:
         logger.error(f"[streak] {code} {e}")
-        return [_text(f"❌ 法人連續追蹤失敗：{e}",
+        return [_text(_fmt_err("法人連續追蹤失敗", e),
                       qr_items(("重試", f"/streak {code}")))]
 
 
@@ -9257,7 +9335,7 @@ async def _cmd_feargreed(uid: str) -> list:
         ))]
     except Exception as e:
         logger.error(f"[feargreed] {e}")
-        return [_text(f"❌ 恐慌貪婪指數失敗：{e}", qr_items(("重試", "/feargreed")))]
+        return [_text(_fmt_err("恐慌貪婪指數失敗", e), qr_items(("重試", "/feargreed")))]
 
 
 async def _cmd_chiphealth(code: str, uid: str) -> list:
@@ -9274,7 +9352,7 @@ async def _cmd_chiphealth(code: str, uid: str) -> list:
         ))]
     except Exception as e:
         logger.error(f"[chiphealth] {code} {e}")
-        return [_text(f"❌ 籌碼健康評分失敗：{e}",
+        return [_text(_fmt_err("籌碼健康評分失敗", e),
                       qr_items(("重試", f"/chiphealth {code}")))]
 
 # ── Batch 10 Handler Functions ────────────────────────────────────────────────
@@ -9293,7 +9371,7 @@ async def _cmd_ailearn(uid: str) -> list:
         ))]
     except Exception as e:
         logger.error(f"[ailearn] {e}")
-        return [_text(f"❌ AI學習報告失敗：{e}", qr_items(("重試", "/ailearn")))]
+        return [_text(_fmt_err("AI學習報告失敗", e), qr_items(("重試", "/ailearn")))]
 
 
 async def _cmd_mtf(code: str, uid: str) -> list:
@@ -9310,7 +9388,7 @@ async def _cmd_mtf(code: str, uid: str) -> list:
         ))]
     except Exception as e:
         logger.error(f"[mtf] {code} {e}")
-        return [_text(f"❌ 多時框架分析失敗：{e}",
+        return [_text(_fmt_err("多時框架分析失敗", e),
                       qr_items(("重試", f"/mtf {code}")))]
 
 
@@ -9328,7 +9406,7 @@ async def _cmd_supply_chain(query: str, uid: str) -> list:
         ))]
     except Exception as e:
         logger.error(f"[supply_chain] {query} {e}")
-        return [_text(f"❌ 供應鏈分析失敗：{e}",
+        return [_text(_fmt_err("供應鏈分析失敗", e),
                       qr_items(("台積電", "/supply 台積電")))]
 
 
@@ -9346,7 +9424,7 @@ async def _cmd_seasonal(code: str, uid: str) -> list:
         ))]
     except Exception as e:
         logger.error(f"[seasonal] {code} {e}")
-        return [_text(f"❌ 季節性分析失敗：{e}",
+        return [_text(_fmt_err("季節性分析失敗", e),
                       qr_items(("重試", f"/seasonal {code}")))]
 
 
@@ -9364,7 +9442,7 @@ async def _cmd_bearish_scan(uid: str) -> list:
         ))]
     except Exception as e:
         logger.error(f"[bearish_scan] {e}")
-        return [_text(f"❌ 空頭掃描失敗：{e}", qr_items(("重試", "/bearish")))]
+        return [_text(_fmt_err("空頭掃描失敗", e), qr_items(("重試", "/bearish")))]
 
 
 async def _cmd_behavior(uid: str) -> list:
@@ -9381,7 +9459,7 @@ async def _cmd_behavior(uid: str) -> list:
         ))]
     except Exception as e:
         logger.error(f"[behavior] {e}")
-        return [_text(f"❌ 行為分析失敗：{e}", qr_items(("重試", "/behavior")))]
+        return [_text(_fmt_err("行為分析失敗", e), qr_items(("重試", "/behavior")))]
 
 
 async def _cmd_breaking_news(uid: str) -> list:
@@ -9398,7 +9476,7 @@ async def _cmd_breaking_news(uid: str) -> list:
         ))]
     except Exception as e:
         logger.error(f"[breaking_news] {e}")
-        return [_text(f"❌ 新聞快訊失敗：{e}", qr_items(("重試", "/breaking")))]
+        return [_text(_fmt_err("新聞快訊失敗", e), qr_items(("重試", "/breaking")))]
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -9419,7 +9497,7 @@ async def _cmd_stress_test(code: str, uid: str) -> list:
         ))]
     except Exception as e:
         logger.error(f"[stress_test] {code} {e}")
-        return [_text(f"❌ 壓力測試失敗：{e}", qr_items(("重試", f"/stress {code}")))]
+        return [_text(_fmt_err("壓力測試失敗", e), qr_items(("重試", f"/stress {code}")))]
 
 
 async def _cmd_scorecard2(code: str, uid: str) -> list:
@@ -9436,7 +9514,7 @@ async def _cmd_scorecard2(code: str, uid: str) -> list:
         ))]
     except Exception as e:
         logger.error(f"[scorecard2] {code} {e}")
-        return [_text(f"❌ 評分卡失敗：{e}", qr_items(("重試", f"/scorecard2 {code}")))]
+        return [_text(_fmt_err("評分卡失敗", e), qr_items(("重試", f"/scorecard2 {code}")))]
 
 
 async def _cmd_daily_qa(uid: str) -> list:
@@ -9453,7 +9531,7 @@ async def _cmd_daily_qa(uid: str) -> list:
         ))]
     except Exception as e:
         logger.error(f"[daily_qa] {e}")
-        return [_text(f"❌ 每日問答失敗：{e}", qr_items(("重試", "/qa")))]
+        return [_text(_fmt_err("每日問答失敗", e), qr_items(("重試", "/qa")))]
 
 
 async def _cmd_index_tracker(query: str, uid: str) -> list:
@@ -9470,7 +9548,7 @@ async def _cmd_index_tracker(query: str, uid: str) -> list:
         ))]
     except Exception as e:
         logger.error(f"[index_tracker] {query} {e}")
-        return [_text(f"❌ 指數追蹤失敗：{e}", qr_items(("重試", f"/index {query}")))]
+        return [_text(_fmt_err("指數追蹤失敗", e), qr_items(("重試", f"/index {query}")))]
 
 
 async def _cmd_timeline(code: str, uid: str) -> list:
@@ -9487,7 +9565,7 @@ async def _cmd_timeline(code: str, uid: str) -> list:
         ))]
     except Exception as e:
         logger.error(f"[timeline] {code} {e}")
-        return [_text(f"❌ 事件時間軸失敗：{e}", qr_items(("重試", f"/timeline {code}")))]
+        return [_text(_fmt_err("事件時間軸失敗", e), qr_items(("重試", f"/timeline {code}")))]
 
 
 async def _cmd_short_tracker(uid: str) -> list:
@@ -9504,7 +9582,7 @@ async def _cmd_short_tracker(uid: str) -> list:
         ))]
     except Exception as e:
         logger.error(f"[short_tracker] {e}")
-        return [_text(f"❌ 融券追蹤失敗：{e}", qr_items(("重試", "/short")))]
+        return [_text(_fmt_err("融券追蹤失敗", e), qr_items(("重試", "/short")))]
 
 
 async def _cmd_wisdom(uid: str) -> list:
@@ -9521,7 +9599,7 @@ async def _cmd_wisdom(uid: str) -> list:
         ))]
     except Exception as e:
         logger.error(f"[wisdom] {e}")
-        return [_text(f"❌ 每日智慧失敗：{e}", qr_items(("重試", "/wisdom")))]
+        return [_text(_fmt_err("每日智慧失敗", e), qr_items(("重試", "/wisdom")))]
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -9542,7 +9620,7 @@ async def _cmd_portfolio_opt(uid: str) -> list:
         ))]
     except Exception as e:
         logger.error(f"[portfolio_opt] {uid} {e}")
-        return [_text(f"❌ 投資組合最佳化失敗：{e}",
+        return [_text(_fmt_err("投資組合最佳化失敗", e),
                       qr_items(("重試", "/optimize_portfolio")))]
 
 
@@ -9560,7 +9638,7 @@ async def _cmd_catalyst(code: str, uid: str) -> list:
         ))]
     except Exception as e:
         logger.error(f"[catalyst] {code} {e}")
-        return [_text(f"❌ 催化劑追蹤失敗：{e}",
+        return [_text(_fmt_err("催化劑追蹤失敗", e),
                       qr_items(("重試", f"/catalyst {code}")))]
 
 
@@ -9578,7 +9656,7 @@ async def _cmd_contrarian(uid: str) -> list:
         ))]
     except Exception as e:
         logger.error(f"[contrarian] {e}")
-        return [_text(f"❌ 反向指標失敗：{e}", qr_items(("重試", "/contrarian")))]
+        return [_text(_fmt_err("反向指標失敗", e), qr_items(("重試", "/contrarian")))]
 
 
 async def _cmd_pair_monitor(code1: str, code2: str, uid: str) -> list:
@@ -9602,7 +9680,7 @@ async def _cmd_pair_monitor(code1: str, code2: str, uid: str) -> list:
         ))]
     except Exception as e:
         logger.error(f"[pair_monitor] {code1}/{code2} {e}")
-        return [_text(f"❌ 配對監控失敗：{e}",
+        return [_text(_fmt_err("配對監控失敗", e),
                       qr_items(("重試", f"/pairmonitor {code1} {code2}")))]
 
 
@@ -9631,7 +9709,7 @@ async def _cmd_pair_monitor_list(uid: str) -> list:
         ))]
     except Exception as e:
         logger.error(f"[pair_monitor_list] {e}")
-        return [_text(f"❌ 清單失敗：{e}")]
+        return [_text(_fmt_err("清單失敗", e))]
 
 
 async def _cmd_weekly_picks(uid: str) -> list:
@@ -9648,7 +9726,7 @@ async def _cmd_weekly_picks(uid: str) -> list:
         ))]
     except Exception as e:
         logger.error(f"[weekly_picks] {e}")
-        return [_text(f"❌ 週精選報告失敗：{e}",
+        return [_text(_fmt_err("週精選報告失敗", e),
                       qr_items(("重試", "/weeklypicks")))]
 
 
@@ -9682,7 +9760,7 @@ async def _cmd_ai_natural_qa(question: str, uid: str) -> list:
         return [_text(answer[:4800], qr)]
     except Exception as e:
         logger.error(f"[ai_natural_qa] {e}")
-        return [_text(f"❌ AI 問答失敗：{e}",
+        return [_text(_fmt_err("AI 問答失敗", e),
                       qr_items(("重試", f"/ask {question[:20]}")))]
 
 
@@ -9699,7 +9777,7 @@ async def _cmd_system_status(uid: str) -> list:
         ))]
     except Exception as e:
         logger.error(f"[system_status] {e}")
-        return [_text(f"❌ 系統狀態查詢失敗：{e}",
+        return [_text(_fmt_err("系統狀態查詢失敗", e),
                       qr_items(("重試", "/sysstatus"), ("簡易狀態", "/status")))]
 
 
@@ -9721,7 +9799,7 @@ async def _cmd_swing(code: str, uid: str) -> list:
         ))]
     except Exception as e:
         logger.error(f"[swing] {code} {e}")
-        return [_text(f"❌ 波段分析失敗：{e}", qr_items(("重試", f"/swing {code}")))]
+        return [_text(_fmt_err("波段分析失敗", e), qr_items(("重試", f"/swing {code}")))]
 
 
 async def _cmd_deep_review(uid: str) -> list:
@@ -9738,7 +9816,7 @@ async def _cmd_deep_review(uid: str) -> list:
         ))]
     except Exception as e:
         logger.error(f"[deep_review] {e}")
-        return [_text(f"❌ 盤後覆盤失敗：{e}", qr_items(("重試", "/deepreview")))]
+        return [_text(_fmt_err("盤後覆盤失敗", e), qr_items(("重試", "/deepreview")))]
 
 
 async def _cmd_cheap(code: str, uid: str) -> list:
@@ -9755,7 +9833,7 @@ async def _cmd_cheap(code: str, uid: str) -> list:
         ))]
     except Exception as e:
         logger.error(f"[cheap] {code} {e}")
-        return [_text(f"❌ 比價評估失敗：{e}", qr_items(("重試", f"/cheap {code}")))]
+        return [_text(_fmt_err("比價評估失敗", e), qr_items(("重試", f"/cheap {code}")))]
 
 
 async def _cmd_breadth_enhanced(uid: str) -> list:
@@ -9774,7 +9852,7 @@ async def _cmd_breadth_enhanced(uid: str) -> list:
         ))]
     except Exception as e:
         logger.error(f"[breadth_enhanced] {e}")
-        return [_text(f"❌ 廣度分析失敗：{e}", qr_items(("重試", "/mktbreadth")))]
+        return [_text(_fmt_err("廣度分析失敗", e), qr_items(("重試", "/mktbreadth")))]
 
 
 async def _cmd_dynstop(code: str, uid: str) -> list:
@@ -9791,7 +9869,7 @@ async def _cmd_dynstop(code: str, uid: str) -> list:
         ))]
     except Exception as e:
         logger.error(f"[dynstop] {code} {e}")
-        return [_text(f"❌ 動態停損失敗：{e}", qr_items(("重試", f"/dynstop {code}")))]
+        return [_text(_fmt_err("動態停損失敗", e), qr_items(("重試", f"/dynstop {code}")))]
 
 
 async def _cmd_global_compare(uid: str) -> list:
@@ -9810,7 +9888,7 @@ async def _cmd_global_compare(uid: str) -> list:
         ))]
     except Exception as e:
         logger.error(f"[global_compare] {e}")
-        return [_text(f"❌ 國際比較失敗：{e}", qr_items(("重試", "/global_compare")))]
+        return [_text(_fmt_err("國際比較失敗", e), qr_items(("重試", "/global_compare")))]
 
 
 async def _cmd_mysummary(uid: str) -> list:
@@ -9826,4 +9904,4 @@ async def _cmd_mysummary(uid: str) -> list:
         ))]
     except Exception as e:
         logger.error(f"[mysummary] {uid} {e}")
-        return [_text(f"❌ 個人投資總結失敗：{e}", qr_items(("重試", "/mysummary")))]
+        return [_text(_fmt_err("個人投資總結失敗", e), qr_items(("重試", "/mysummary")))]

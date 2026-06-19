@@ -1,50 +1,85 @@
 """精簡早報 — 08:45 盤前推播
 整合：自選股重點 + 大盤情緒 + 今日重大事件
-設計原則：LINE 一則可讀完，不超過 500 字
+設計原則：LINE 一則可讀完，控制在 300 字以內
 """
 from __future__ import annotations
 from datetime import datetime, date
 from loguru import logger
 
+# 只有達到以下任一條件的股票才完整顯示，其餘只列代號+持平
+_CHG_THRESHOLD  = 2.0   # 漲跌幅 >= 2%
+_RSI_HIGH       = 70    # RSI 超買
+_RSI_LOW        = 30    # RSI 超賣
+
+
+def _is_notable(it: dict) -> bool:
+    """判斷股票是否「有變化」，值得完整顯示"""
+    chg = abs(it.get("change_pct", 0) or 0)
+    rsi = it.get("rsi")
+    sl  = it.get("sl_triggered", False)
+    tp  = it.get("tp_triggered", False)
+    if sl or tp:
+        return True
+    if chg >= _CHG_THRESHOLD:
+        return True
+    if rsi is not None and (rsi >= _RSI_HIGH or rsi <= _RSI_LOW):
+        return True
+    return False
+
 
 async def generate_compact_morning(uid: str) -> str:
-    """生成單一使用者的精簡盤前摘要"""
+    """生成單一使用者的精簡盤前摘要（< 300 字）"""
     today = datetime.now().strftime("%m/%d")
     parts: list[str] = [f"🌅 {today} 盤前摘要"]
 
-    # ── 1. 自選股狀態（最多 5 檔）────────────────────────────────
+    # ── 1. 自選股（有變化才完整顯示）────────────────────────────
     try:
         from .watchlist_monitor import scan_user_watchlist
         items = await scan_user_watchlist(uid)
         if items:
             parts.append("─" * 16)
-            for it in items[:5]:
+            notable   = [it for it in items if _is_notable(it)]
+            flat_codes = [it["code"] for it in items if not _is_notable(it)]
+
+            for it in notable[:4]:
                 price = it.get("price", 0)
                 chg   = it.get("change_pct", 0)
                 rsi   = it.get("rsi")
                 icon  = it.get("signal_icon", "📊")
                 sign  = "+" if chg >= 0 else ""
-                rsi_s = f" RSI{rsi:.0f}" if rsi is not None else ""
+                rsi_s = ""
+                if rsi is not None:
+                    if rsi >= _RSI_HIGH:
+                        rsi_s = f" RSI{rsi:.0f}⚡"
+                    elif rsi <= _RSI_LOW:
+                        rsi_s = f" RSI{rsi:.0f}💧"
+                    else:
+                        rsi_s = f" RSI{rsi:.0f}"
+                sl_s = " 🛑" if it.get("sl_triggered") else ""
+                tp_s = " 🎯" if it.get("tp_triggered") else ""
                 parts.append(
-                    f"{icon} {it['code']} {it['name']}  "
-                    f"{price:,.0f}({sign}{chg:.1f}%){rsi_s}"
+                    f"{icon} {it['code']}  "
+                    f"{price:,.0f}({sign}{chg:.1f}%){rsi_s}{sl_s}{tp_s}"
                 )
+
+            if flat_codes:
+                parts.append(f"⚪ 持平：{'、'.join(flat_codes)}")
     except Exception as e:
         logger.debug(f"[compact_morning] watchlist: {e}")
 
-    # ── 2. 大盤情緒分數 + 建議倉位 ──────────────────────────────
+    # ── 2. 大盤情緒（一句話）────────────────────────────────────
     try:
         from .market_sentiment import get_sentiment_score
         data  = await get_sentiment_score()
         score = data.get("score") or data.get("total_score") or 0
         if score >= 70:
-            mood = "偏多 ↑ 可增持"
+            mood = f"🟢 情緒 {score:.0f}/100 偏多，可積極布局"
         elif score >= 40:
-            mood = "中性 → 持盈保泰"
+            mood = f"⚪ 情緒 {score:.0f}/100 中性，持盈保泰"
         else:
-            mood = "偏空 ↓ 控制倉位"
+            mood = f"🔴 情緒 {score:.0f}/100 偏空，控制倉位"
         parts.append("─" * 16)
-        parts.append(f"🎯 情緒分數 {score:.0f}/100  {mood}")
+        parts.append(mood)
     except Exception as e:
         logger.debug(f"[compact_morning] sentiment: {e}")
 
@@ -54,10 +89,11 @@ async def generate_compact_morning(uid: str) -> str:
         from .dividend_service import fetch_upcoming_dividends
         divs = await fetch_upcoming_dividends(days_ahead=1)
         today_iso = date.today().isoformat()
-        today_divs = [d for d in divs if str(d.get("ex_date", "")).startswith(today_iso[:10])]
+        today_divs = [d for d in divs
+                      if str(d.get("ex_date", "")).startswith(today_iso[:10])]
         if today_divs:
-            names = "、".join(f"{d.get('code','')} {d.get('name','')}" for d in today_divs[:3])
-            events.append(f"💰 除息：{names}")
+            codes = "、".join(str(d.get("code", "")) for d in today_divs[:3])
+            events.append(f"💰 除息：{codes}")
     except Exception:
         pass
 
@@ -65,34 +101,29 @@ async def generate_compact_morning(uid: str) -> str:
         from .conference_service import get_conferences
         confs = await get_conferences(days_ahead=1)
         if confs:
-            first = confs[0]
-            name  = first.get("company_name") or first.get("name", "")
-            events.append(f"🏢 法說：{name}" + ("等" if len(confs) > 1 else ""))
-    except Exception:
-        pass
-
-    try:
-        from .news_pipeline import get_latest_news
-        news_list = await get_latest_news(limit=1, importance="high")
-        if news_list:
-            headline = news_list[0].get("title", "")[:40]
-            events.append(f"📰 {headline}")
+            name = confs[0].get("company_name") or confs[0].get("name", "")
+            extra = f"等 {len(confs)} 場" if len(confs) > 1 else ""
+            events.append(f"🏢 法說：{name}{extra}")
     except Exception:
         pass
 
     if events:
         parts.append("─" * 16)
-        parts.append("📌 今日重點")
         for ev in events[:2]:
             parts.append(ev)
 
     parts.append("─" * 16)
-    parts.append("/today 完整查詢 • /screen 選股")
+    parts.append("/today 完整 • /screen 選股 • /quiet 安靜模式")
     return "\n".join(parts)
 
 
 async def push_compact_morning_all() -> None:
-    """08:45 推播精簡早報給所有訂閱者"""
+    """08:45 推播精簡早報給所有訂閱者（安靜模式時跳過）"""
+    from .notify_config import is_quiet_mode
+    if is_quiet_mode():
+        logger.info("[compact_morning] 安靜模式中，跳過推播")
+        return
+
     from ..models.database import AsyncSessionLocal
     from ..models.models import Subscriber
     from sqlalchemy import select
@@ -101,7 +132,9 @@ async def push_compact_morning_all() -> None:
 
     try:
         async with AsyncSessionLocal() as db:
-            r    = await db.execute(select(Subscriber).where(Subscriber.subscribed_morning == True))
+            r    = await db.execute(
+                select(Subscriber).where(Subscriber.subscribed_morning == True)
+            )
             subs = r.scalars().all()
     except Exception as e:
         logger.error(f"[compact_morning] DB query failed: {e}")
@@ -113,8 +146,8 @@ async def push_compact_morning_all() -> None:
 
     qr = {"items": [
         {"type": "action", "action": {"type": "message", "label": "📊 今日總覽", "text": "/today"}},
-        {"type": "action", "action": {"type": "message", "label": "🔍 選股",   "text": "/screen"}},
-        {"type": "action", "action": {"type": "message", "label": "📈 大盤",   "text": "/market"}},
+        {"type": "action", "action": {"type": "message", "label": "🔍 選股",     "text": "/screen"}},
+        {"type": "action", "action": {"type": "message", "label": "📈 大盤",     "text": "/market"}},
     ]}
 
     async with httpx.AsyncClient(timeout=30) as c:
@@ -127,6 +160,8 @@ async def push_compact_morning_all() -> None:
                     client=c, context="compact_morning",
                 )
             except Exception as e:
-                logger.warning(f"[compact_morning] push failed {sub.line_user_id[:8]}: {e}")
+                logger.warning(
+                    f"[compact_morning] push failed {sub.line_user_id[:8]}: {e}"
+                )
 
     logger.info(f"[compact_morning] 完成推播，{len(subs)} 位訂閱者")

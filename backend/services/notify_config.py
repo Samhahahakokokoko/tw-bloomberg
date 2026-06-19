@@ -127,4 +127,54 @@ def list_config() -> dict[str, dict]:
     }
 
 
+# ── 安靜模式（Quiet Mode）────────────────────────────────────────────────────
+# 儲存在 _state["__quiet_until__"]，值為 ISO 時間字串
+
+_QUIET_KEY = "__quiet_until__"
+
+
+def set_quiet_mode(hours: int = 24) -> "datetime":
+    """啟用安靜模式，hours 小時後自動恢復。回傳恢復時間。"""
+    from datetime import datetime, timedelta
+    until = datetime.now() + timedelta(hours=hours)
+    _state[_QUIET_KEY] = until.isoformat()
+    _save()
+    return until
+
+
+def clear_quiet_mode() -> None:
+    """立即關閉安靜模式"""
+    _state.pop(_QUIET_KEY, None)
+    _save()
+
+
+def is_quiet_mode() -> bool:
+    """目前是否處於安靜模式（未到期）"""
+    from datetime import datetime
+    ts = _state.get(_QUIET_KEY)
+    if not ts:
+        return False
+    try:
+        until = datetime.fromisoformat(ts)
+        if datetime.now() >= until:
+            _state.pop(_QUIET_KEY, None)
+            _save()
+            return False
+        return True
+    except Exception:
+        return False
+
+
+def get_quiet_until() -> "datetime | None":
+    """回傳安靜模式到期時間，若未啟用回傳 None"""
+    from datetime import datetime
+    ts = _state.get(_QUIET_KEY)
+    if not ts:
+        return None
+    try:
+        return datetime.fromisoformat(ts)
+    except Exception:
+        return None
+
+
 _load()

@@ -101,7 +101,11 @@ async def generate_closing_summary(uid: str) -> str:
 
 
 async def push_closing_summary_all() -> None:
-    """15:00 推播收盤總結給所有訂閱者"""
+    """15:00 推播收盤總結給所有訂閱者（安靜模式時跳過）"""
+    from .notify_config import is_quiet_mode
+    if is_quiet_mode():
+        logger.info("[closing_summary] 安靜模式中，跳過推播")
+        return
     from ..models.database import AsyncSessionLocal
     from ..models.models import Subscriber
     from sqlalchemy import select
