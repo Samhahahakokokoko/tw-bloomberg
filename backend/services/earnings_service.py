@@ -215,7 +215,7 @@ async def update_actual_eps(db: AsyncSession, reminder_id: int, actual_eps: floa
 # ── 自動抓最新 EPS（TWSE OpenAPI）─────────────────────────────────────────────
 
 async def fetch_latest_eps(stock_code: str) -> dict:
-    """從 TWSE OpenAPI 抓最新 EPS 資料"""
+    """從 TWSE OpenAPI 抓最新 EPS 資料，失敗時 fallback 到 Yahoo Finance"""
     url = "https://openapi.twse.com.tw/v1/opendata/t187ap06_L"
     try:
         async with httpx.AsyncClient(timeout=20, follow_redirects=True) as client:
@@ -223,20 +223,55 @@ async def fetch_latest_eps(stock_code: str) -> dict:
             resp.raise_for_status()
             data = resp.json()
             matches = [x for x in data if x.get("公司代號", "") == stock_code]
-            if not matches:
-                return {}
-            latest = matches[-1]
-            return {
-                "stock_code": stock_code,
-                "stock_name": latest.get("公司名稱", ""),
-                "year":       latest.get("年度", ""),
-                "season":     latest.get("季別", ""),
-                "eps":        _safe_float(latest.get("基本每股盈餘", "")),
-                "revenue":    latest.get("營業收入", ""),
-                "net_income": latest.get("本期淨利", ""),
-            }
+            if matches:
+                latest = matches[-1]
+                return {
+                    "stock_code": stock_code,
+                    "stock_name": latest.get("公司名稱", ""),
+                    "year":       latest.get("年度", ""),
+                    "season":     latest.get("季別", ""),
+                    "eps":        _safe_float(latest.get("基本每股盈餘", "")),
+                    "revenue":    latest.get("營業收入", ""),
+                    "net_income": latest.get("本期淨利", ""),
+                }
     except Exception as e:
-        logger.error(f"Fetch latest EPS error {stock_code}: {e}")
+        logger.warning(f"Fetch EPS from TWSE failed {stock_code}: {e}")
+
+    # Yahoo Finance fallback — trailingEps (TTM)
+    try:
+        ticker = f"{stock_code}.TW"
+        yf_url = (f"https://query1.finance.yahoo.com/v10/finance/quoteSummary/{ticker}"
+                  f"?modules=defaultKeyStatistics")
+        async with httpx.AsyncClient(timeout=15, follow_redirects=True,
+                                      headers={"User-Agent": "Mozilla/5.0"}) as client:
+            resp = await client.get(yf_url)
+            js = resp.json()
+        stats = (js.get("quoteSummary", {})
+                   .get("result", [{}])[0]
+                   .get("defaultKeyStatistics", {}))
+        trailing = stats.get("trailingEps", {})
+        eps_val = trailing.get("raw") if isinstance(trailing, dict) else None
+        if eps_val is not None:
+            return {"stock_code": stock_code, "eps": eps_val,
+                    "year": "", "season": "TTM", "stock_name": ""}
+        # Try OTC suffix
+        ticker_two = f"{stock_code}.TWO"
+        yf_url2 = (f"https://query1.finance.yahoo.com/v10/finance/quoteSummary/{ticker_two}"
+                   f"?modules=defaultKeyStatistics")
+        async with httpx.AsyncClient(timeout=15, follow_redirects=True,
+                                      headers={"User-Agent": "Mozilla/5.0"}) as client:
+            resp2 = await client.get(yf_url2)
+            js2 = resp2.json()
+        stats2 = (js2.get("quoteSummary", {})
+                     .get("result", [{}])[0]
+                     .get("defaultKeyStatistics", {}))
+        trailing2 = stats2.get("trailingEps", {})
+        eps_val2 = trailing2.get("raw") if isinstance(trailing2, dict) else None
+        if eps_val2 is not None:
+            return {"stock_code": stock_code, "eps": eps_val2,
+                    "year": "", "season": "TTM", "stock_name": ""}
+    except Exception as e:
+        logger.error(f"Fetch EPS Yahoo fallback error {stock_code}: {e}")
     return {}
 
 

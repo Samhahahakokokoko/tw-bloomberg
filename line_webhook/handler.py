@@ -941,14 +941,18 @@ async def _handle_text(text: str, uid: str) -> list:
     # ── 市場情報作戰系統 ──────────────────────────────────────────────────
     if cmd == "/timeline":
         sub = parts[1].upper() if len(parts) > 1 else ""
-        return await _cmd_timeline(sub)
+        return await _cmd_timeline(sub, uid)
     if cmd == "/leadlag":               return await _cmd_lead_lag()
     if cmd == "/theme":                 return await _cmd_theme()
     if cmd == "/footprint":
         sub = parts[1].upper() if len(parts) > 1 else ""
         return await _cmd_footprint(sub)
     if cmd == "/euphoria":              return await _cmd_euphoria()
-    if cmd == "/stress":                return await _cmd_stress()
+    if cmd == "/stress":
+        _stress_code = args[0].upper() if args else ""
+        if _stress_code:
+            return await _cmd_stress_test(_stress_code, uid)
+        return await _cmd_stress()
     if cmd == "/debate":
         sub = parts[1].upper() if len(parts) > 1 else ""
         return await _cmd_debate(sub)
