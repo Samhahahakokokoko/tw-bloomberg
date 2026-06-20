@@ -67,16 +67,7 @@ async def _get_hist(code: str) -> list:
         return bars
     except Exception as e:
         logger.debug(f"[exit] hist {code}: {e}")
-        return _fake_hist()
-
-
-def _fake_hist() -> list:
-    import random, math
-    base = 200.0
-    bars = []
-    for i in range(40):
-        c = round(base * (1 + math.sin(i * 0.2) * 0.05 + random.uniform(-0.02, 0.02)), 1)
-        bars.append({"close": c, "high": c * 1.01, "low": c * 0.99, "volume": random.randint(5000, 50000)})
+        return []
         base = c
     return bars
 

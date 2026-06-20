@@ -69,13 +69,7 @@ async def _get_price_hist(code: str) -> list:
         return bars[-7:]
     except Exception as e:
         logger.debug(f"[daytrader] hist {code}: {e}")
-        return _fake_hist()
-
-
-def _fake_hist() -> list:
-    import random
-    return [{"volume": random.randint(10000, 100000), "close": round(100 + random.uniform(-5, 5), 1)}
-            for _ in range(7)]
+        return []
 
 
 async def _get_margin_hist(code: str) -> list:

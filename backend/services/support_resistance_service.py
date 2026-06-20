@@ -80,18 +80,7 @@ async def _get_hist(code: str) -> list:
         return bars
     except Exception as e:
         logger.debug(f"[sr] hist {code}: {e}")
-        return _fake_bars()
-
-
-def _fake_bars() -> list:
-    import random
-    base = 100.0; bars = []
-    for _ in range(120):
-        c  = round(base + random.uniform(-2, 2), 2)
-        bars.append({"close": c, "high": c + 1, "low": c - 1,
-                     "volume": random.randint(5000, 40000)})
-        base = c
-    return bars
+        return []
 
 
 async def _get_quote(code: str) -> dict:

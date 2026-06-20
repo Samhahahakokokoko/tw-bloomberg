@@ -93,18 +93,7 @@ async def _get_hist(code: str) -> list:
         return bars
     except Exception as e:
         logger.debug(f"[forecast] hist {code}: {e}")
-        return _fake_bars()
-
-
-def _fake_bars(n=40) -> list:
-    import random, math
-    base = 100.0; bars = []
-    for i in range(n):
-        wave = math.sin(i * 0.3) * 3
-        c = round(base + wave + random.uniform(-1, 1), 2)
-        bars.append({"close": c, "high": c + 1, "low": c - 1, "volume": random.randint(5000, 50000)})
-        base = c
-    return bars
+        return []
 
 
 async def _get_quote(code: str) -> dict:

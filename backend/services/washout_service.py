@@ -71,17 +71,7 @@ async def _get_price_history(code: str) -> list:
         return bars
     except Exception as e:
         logger.debug(f"[washout] hist {code}: {e}")
-        return _fake_hist()
-
-
-def _fake_hist() -> list:
-    import random, time as t
-    base = 100.0
-    bars = []
-    now  = int(t.time()) - 30 * 86400
-    for i in range(30):
-        chg  = random.uniform(-3, 3)
-        close = round(max(50, base + chg), 2)
+        return []
         vol  = int(random.uniform(5000, 50000))
         bars.append({"close": close, "open": base, "high": close + 1,
                      "low": close - 1, "volume": vol, "ts": now + i * 86400})

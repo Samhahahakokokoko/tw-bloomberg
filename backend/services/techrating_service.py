@@ -233,6 +233,34 @@ async def _fetch_techrating(code: str) -> dict:
     rating_changed = (rating != prev_rating)
     _last_ratings[code] = rating
 
+    # 記錄預測到 /ailearn 系統（只記方向性評級，中性不記）
+    try:
+        direction = None
+        if rating in ("突破", "強勢整理"):
+            direction = "bullish"
+        elif rating in ("跌破", "弱勢"):
+            direction = "bearish"
+        if direction:
+            indicators_used: list[str] = []
+            if abs(rsi14 - 50) >= 15:
+                indicators_used.append("rsi")
+            if abs(macd_hist) > 0:
+                indicators_used.append("macd")
+            if vol_ratio > 1.4 or vol_ratio < 0.7:
+                indicators_used.append("volume_ratio")
+            indicators_used.append("ma_cross")
+            confidence = 0.75 if abs(rsi14 - 50) >= 20 else 0.60
+            from .ailearn_service import record_prediction
+            record_prediction(
+                code=code,
+                signal_type="techrating",
+                direction=direction,
+                indicators=indicators_used or ["macd", "rsi", "ma_cross"],
+                confidence=confidence,
+            )
+    except Exception as _e:
+        logger.debug(f"[techrating] record_prediction {code}: {_e}")
+
     return {
         "code": code,
         "current_price": round(current_price, 2),

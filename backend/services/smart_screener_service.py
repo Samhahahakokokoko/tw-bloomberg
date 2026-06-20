@@ -116,13 +116,18 @@ async def smart_screen(limit: int = 5) -> list[dict]:
     except Exception as e:
         logger.warning(f"[smart_screen] DB query failed: {e}")
 
-    # Fallback: if DB empty, use a small hardcoded list for demo
+    # Fallback: if DB empty, use a fixed reference list and flag it
     if not candidates:
+        logger.warning("[smart_screen] stock_scores DB empty, using reference pool (9 stocks)")
         candidates = [
             ("2330", "台積電"), ("2454", "聯發科"), ("2308", "台達電"),
             ("2317", "鴻海"), ("2382", "廣達"), ("3034", "聯詠"),
             ("2379", "瑞昱"), ("6505", "台塑化"), ("2303", "聯電"),
         ]
+        # Mark result so caller can warn user
+        _using_reference_pool = True
+    else:
+        _using_reference_pool = False
 
     # Parallel analysis
     tasks = [_analyze_candidate(code, name) for code, name in candidates]

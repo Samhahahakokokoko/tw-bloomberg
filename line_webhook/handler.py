@@ -2975,7 +2975,7 @@ async def _cmd_ai_stock(stock_code: str) -> list:
 
 
 async def _cmd_accuracy() -> list:
-    """查看 AI 推薦準確率統計"""
+    """查看 AI 推薦準確率統計（含多閾值對比）"""
     try:
         from backend.services.recommendation_tracker import get_accuracy_stats
         stats = await get_accuracy_stats(30)
@@ -2990,17 +2990,28 @@ async def _cmd_accuracy() -> list:
             "📊 AI 推薦準確率（近30日）",
             "─" * 22,
             f"總推薦：{stats['total']} 筆",
-            f"5日勝率：{stats['win_rate']:.1f}% ({stats['hits_5d']}/{stats['total']})",
-            f"平均報酬：{stats['avg_return']:+.2f}%",
-            f"成功門檻：+{stats['threshold']}%",
+            f"平均5日報酬：{stats['avg_return']:+.2f}%",
+            "",
+            "📐 不同門檻下的勝率對比",
         ]
+        tc = stats.get("threshold_comparison", {})
+        for label, d in tc.items():
+            lines.append(f"  {label}：{d['rate']:.1f}% ({d['hits']}/{stats['total']})")
+        lines.append("")
+        lines.append("ℹ️ 主要指標：跑贏大盤（0050）")
         if stats.get("best_picks"):
             best = stats["best_picks"][0]
-            lines.append(f"\n🏆 最佳推薦：{best['stock_code']} {best.get('stock_name','')} ({best.get('return_5d',0):+.1f}%)")
+            lines.append(f"\n🏆 最佳：{best['stock_code']} {best.get('stock_name','')} ({best.get('return_5d',0):+.1f}%)")
         if stats.get("worst_picks"):
             worst = stats["worst_picks"][0]
-            lines.append(f"💔 最差推薦：{worst['stock_code']} {worst.get('stock_name','')} ({worst.get('return_5d',0):+.1f}%)")
-        return [_text("\n".join(lines), qr_items(("💼 庫存","/portfolio"),("📊 選股","/screener")))]
+            lines.append(f"💔 最差：{worst['stock_code']} {worst.get('stock_name','')} ({worst.get('return_5d',0):+.1f}%)")
+        lines.append("")
+        lines.append("⚠️ 輔助參考，非投資建議，過去績效不代表未來表現")
+        return [_text("\n".join(lines), qr_items(
+            ("📈 AI學習", "/ailearn"),
+            ("🔍 選股", "/screener top"),
+            ("今日總覽", "/today"),
+        ))]
     except Exception as e:
         return [_text(_fmt_err("查詢失敗", e))]
 
@@ -6083,26 +6094,14 @@ async def _cmd_recommend(regime: str = "unknown") -> list:
             )
             data = resp.json()
     except Exception as e:
-        from quant.strategy_engine import StrategyEngine, MOCK_STOCKS
-        # 用 TWSE 即時收盤覆蓋 MOCK_STOCKS 硬編碼舊價格
-        try:
-            from backend.services.report_screener import _rt_cache, _fetch_rt_cache
-            if not _rt_cache.get("prices"):
-                await _fetch_rt_cache()
-            cached_prices = _rt_cache.get("prices", {})
-            enriched = []
-            for s in MOCK_STOCKS:
-                d = dict(s)
-                p = cached_prices.get(s.get("stock_id", ""), {})
-                if p.get("close", 0) > 0:
-                    c = p["close"]
-                    d["close"] = c
-                    d["atr14"] = round(c * 0.02, 1)
-                enriched.append(d)
-        except Exception as e:
-            enriched = MOCK_STOCKS
-        sigs = StrategyEngine().batch_evaluate(enriched, regime=regime, min_confidence=60)
-        data = {"regime": regime, "signals": [s.to_dict() for s in sigs[:5]]}
+        # API 無法連線時不使用假資料，改導向已有真實資料的選股指令
+        return [_text(
+            "📊 推薦選股\n\n"
+            "策略服務暫時無法連線，請改用以下指令：\n"
+            "/screener top  — 今日多因子高分選股（真實資料）\n"
+            "/today         — 自選股狀況 + 大盤情緒",
+            qr_items(("高分選股", "/screener top"), ("今日總覽", "/today"), ("大盤", "/market")),
+        )]
 
     regime_label = {
         "bull": "多頭", "bear": "空頭",
@@ -6150,60 +6149,32 @@ async def _cmd_odd(budget_str: str, code: str | None, uid: str) -> list:
         result = engine.calc(budget, price, code, name)
         return [_text(result.to_line_text())]
 
-    # 未指定個股 → 從推薦清單分配
-    try:
-        from quant.strategy_engine import StrategyEngine, MOCK_STOCKS
-        top    = StrategyEngine().batch_evaluate(MOCK_STOCKS, min_confidence=55)[:3]
-        stocks = []
-        for sig in top:
-            try:
-                q = await fetch_realtime_quote(sig.stock_id)
-                p = float(q.get("close") or q.get("price") or 0)
-            except Exception as e:
-                p = 0.0
-            if p <= 0:
-                try:
-                    from backend.services.report_screener import _rt_cache
-                    cached_p = _rt_cache.get("prices", {}).get(sig.stock_id, {})
-                    p = float(cached_p.get("close", 0) or 0)
-                except Exception as e:
-                    p = 0.0
-            stocks.append({"stock_id": sig.stock_id, "name": sig.name,
-                           "price": p, "confidence": sig.confidence})
-        portfolio = engine.allocate(budget, stocks, strategy="signal")
-        return [_text(portfolio.to_line_text())]
-    except Exception as e:
-        logger.warning(f"[odd_lot] alloc failed: {e}")
-        return [_text(f"零股計算失敗，請用 /odd {budget:.0f} {{股票代號}}")]
+    # 未指定個股 → 提示使用者自行指定，不使用假資料池
+    return [_text(
+        f"零股計算\n\n"
+        f"請指定股票代號：\n"
+        f"/odd {budget:.0f} 2330  → 台積電零股試算\n"
+        f"/odd {budget:.0f} 0056  → 元大高股息零股試算",
+        qr_items(
+            (f"台積電", f"/odd {budget:.0f} 2330"),
+            (f"元大高股息", f"/odd {budget:.0f} 0056"),
+        ),
+    )]
 
 
 async def _cmd_compare(code_a: str, code_b: str) -> list:
     """/compare {code_a} {code_b}  → 兩股策略比較"""
-    import numpy as np
-    from quant.strategy_engine import StrategyEngine, MOCK_STOCKS
+    from quant.strategy_engine import StrategyEngine
 
-    def _data(code: str) -> dict:
-        for s in MOCK_STOCKS:
-            if s["stock_id"] == code:
-                return dict(s)   # 複製，避免後續修改污染 MOCK_STOCKS
-        seed = sum(ord(c) for c in code)
-        rng  = np.random.default_rng(seed)
+    def _neutral_data(code: str) -> dict:
+        """建立中性預設值（不隨機），close/atr14 由 _enrich_close 覆蓋"""
         return {
             "stock_id": code, "name": code,
-            "momentum_20d":       float(rng.uniform(0.95, 1.15)),
-            "foreign_buy_days":   int(rng.integers(-3, 7)),
-            "volume_ratio":       float(rng.uniform(0.8, 1.8)),
-            "dividend_yield":     float(rng.uniform(0, 7)),
-            "pe_ratio":           float(rng.uniform(8, 28)),
-            "eps_stability":      float(rng.uniform(0.4, 0.95)),
-            "foreign_net":        float(rng.uniform(-1000, 4000)),
-            "trust_net":          float(rng.uniform(-300, 800)),
-            "dealer_net":         float(rng.uniform(-100, 200)),
-            "chip_concentration": float(rng.uniform(45, 80)),
-            "volatility":         float(rng.uniform(0.008, 0.022)),
-            "max_drawdown":       float(rng.uniform(0.05, 0.20)),
-            "close":              float(rng.uniform(30, 1000)),
-            "atr14":              float(rng.uniform(0.5, 20)),
+            "momentum_20d": 1.0, "foreign_buy_days": 0, "volume_ratio": 1.0,
+            "dividend_yield": 3.0, "pe_ratio": 15.0, "eps_stability": 0.75,
+            "foreign_net": 0, "trust_net": 0, "dealer_net": 0,
+            "chip_concentration": 60.0, "volatility": 0.015, "max_drawdown": 0.12,
+            "close": 100.0, "atr14": 2.0,
         }
 
     async def _enrich_close(d: dict) -> dict:
@@ -6223,8 +6194,8 @@ async def _cmd_compare(code_a: str, code_b: str) -> list:
             pass
         return d
 
-    da_raw = await _enrich_close(_data(code_a))
-    db_raw = await _enrich_close(_data(code_b))
+    da_raw = await _enrich_close(_neutral_data(code_a))
+    db_raw = await _enrich_close(_neutral_data(code_b))
     result = StrategyEngine().compare(da_raw, db_raw)
     cmp    = result["compare"]
     da     = result.get(code_a, {})
@@ -6247,6 +6218,8 @@ async def _cmd_compare(code_a: str, code_b: str) -> list:
         f"信心較高：{cmp['higher_confidence']}",
         f"風險較低：{cmp['lower_risk']}",
         f"建議選擇：{cmp['recommend']}（{cmp['reason']}）",
+        "",
+        "⚠️ 停損/目標以今日收盤估算，信心分數以技術面為主，基本面僅供參考",
     ]
     qr = qr_items(
         (f"📋 {code_a} 策略", f"/strategy {code_a}"),
@@ -6257,32 +6230,17 @@ async def _cmd_compare(code_a: str, code_b: str) -> list:
 
 async def _cmd_strategy_analyze(code: str) -> list:
     """/strategy {code}  → 個股完整策略評分"""
-    import numpy as np
-    from quant.strategy_engine import StrategyEngine, MOCK_STOCKS
+    from quant.strategy_engine import StrategyEngine
 
-    data = next((s for s in MOCK_STOCKS if s["stock_id"] == code), None)
-    if data:
-        data = dict(data)   # 複製，避免修改污染 MOCK_STOCKS
-    else:
-        seed = sum(ord(c) for c in code)
-        rng  = np.random.default_rng(seed)
-        data = {
-            "stock_id": code, "name": code,
-            "momentum_20d":       float(rng.uniform(0.95, 1.12)),
-            "foreign_buy_days":   int(rng.integers(-2, 6)),
-            "volume_ratio":       float(rng.uniform(0.8, 1.8)),
-            "dividend_yield":     float(rng.uniform(1, 6)),
-            "pe_ratio":           float(rng.uniform(10, 25)),
-            "eps_stability":      float(rng.uniform(0.5, 0.9)),
-            "foreign_net":        float(rng.uniform(-500, 3000)),
-            "trust_net":          float(rng.uniform(-200, 600)),
-            "dealer_net":         float(rng.uniform(-100, 200)),
-            "chip_concentration": float(rng.uniform(45, 75)),
-            "volatility":         float(rng.uniform(0.009, 0.020)),
-            "max_drawdown":       float(rng.uniform(0.05, 0.18)),
-            "close":              float(rng.uniform(50, 800)),
-            "atr14":              float(rng.uniform(1, 15)),
-        }
+    # 使用中性預設值（不隨機），close/atr14 由真實 TWSE 報價覆蓋
+    data = {
+        "stock_id": code, "name": code,
+        "momentum_20d": 1.0, "foreign_buy_days": 0, "volume_ratio": 1.0,
+        "dividend_yield": 3.0, "pe_ratio": 15.0, "eps_stability": 0.75,
+        "foreign_net": 0, "trust_net": 0, "dealer_net": 0,
+        "chip_concentration": 60.0, "volatility": 0.015, "max_drawdown": 0.12,
+        "close": 100.0, "atr14": 2.0,
+    }
 
     # 用 TWSE 即時收盤覆蓋 close/atr14，確保目標/停損基於今日真實股價
     try:
@@ -6299,6 +6257,9 @@ async def _cmd_strategy_analyze(code: str) -> list:
     except Exception as e:
         pass
 
+    if not data.get("close") or data["close"] <= 0:
+        return [_text(f"⚠️ 無法取得 {code} 現價，請確認代號後再試")]
+
     sig = StrategyEngine().evaluate(data, strategy="composite")
     sc  = sig.to_dict()["scores"]
     lines = [
@@ -6311,6 +6272,8 @@ async def _cmd_strategy_analyze(code: str) -> list:
         f"  複合：{sc['composite']:.0f}",
         "",
         f"理由：{'、'.join(sig.reasons[:4])}",
+        "",
+        "⚠️ 停損/目標基於今日收盤，信心分數以技術面為主。建議搭配 /score 查看完整評分。",
     ]
     qr = qr_items(
         ("📈 報價",     f"/quote {code}"),
