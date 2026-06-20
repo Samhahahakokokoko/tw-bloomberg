@@ -40,7 +40,7 @@ async def get_sentiment_why() -> str:
         def _n(v: object) -> int:
             try:
                 return int(str(v).replace(",", "").replace("+", "") or 0)
-            except Exception:
+            except Exception as e:
                 return 0
 
         foreign_net = None
@@ -80,7 +80,7 @@ async def get_sentiment_why() -> str:
                         if prev > 1_000_000:
                             margin_chg_bil = (today - prev) / 1e6
                             break
-                    except Exception:
+                    except Exception as e:
                         continue
         delta = max(-8.0, min(4.0, -margin_chg_bil))
         score += delta
@@ -216,7 +216,7 @@ def _get_stock_detail_sync(code: str) -> dict:
             from ..models.database import settings as _settings
             if getattr(_settings, "finmind_token", ""):
                 params["token"] = _settings.finmind_token
-        except Exception:
+        except Exception as e:
             pass
         resp = requests.get("https://api.finmindtrade.com/api/v4/data", params=params, timeout=20)
         if resp.status_code == 200:
@@ -274,7 +274,7 @@ def _get_stock_detail_sync(code: str) -> dict:
                 from ..utils.credit_guard import is_exhausted as _credit_ex, mark_exhausted as _mark_ex
                 from ..models.database import settings as _settings
                 api_key = getattr(_settings, "anthropic_api_key", "") or ""
-            except Exception:
+            except Exception as e:
                 _credit_ex = lambda: True
                 api_key = ""
 
