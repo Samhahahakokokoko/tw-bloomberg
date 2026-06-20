@@ -179,9 +179,10 @@ def score_chip(chip_data: list[dict]) -> tuple[float, dict]:
             break
     detail["foreign_consec_buy"] = foreign_consec
 
-    if foreign_consec >= 5:   score += 40
-    elif foreign_consec >= 3: score += 30
-    elif foreign_consec >= 1: score += 15
+    # 外資連買：早期訊號（1-2天）給最高分；連買過久反映追高擁擠
+    if 1 <= foreign_consec <= 2:   score += 40   # 早期佈局訊號
+    elif 3 <= foreign_consec <= 4: score += 20   # 中期，適度加分
+    elif foreign_consec >= 5:      score += 10   # 訊號已擁擠，降分
 
     # 投信連續買超
     trust_consec = 0
@@ -234,7 +235,7 @@ def score_technical(
 
     current = closes[-1]
 
-    # 1. 均線多頭排列（30分）：5MA > 20MA > 60MA
+    # 1. 均線評分（30分）：偵測「均線剛翻揚」優先，完全排列給中等分
     mas = calc_mas(closes, [5, 20, 60])
     ma5, ma20, ma60 = mas.get(5), mas.get(20), mas.get(60)
     detail.update({"ma5": ma5, "ma20": ma20, "ma60": ma60, "current": current})
@@ -243,13 +244,25 @@ def score_technical(
     aligned_20_60 = ma20 is not None and ma60 is not None and ma20 > ma60
     above_ma5     = ma5 is not None and current > ma5
 
-    if aligned_5_20 and aligned_20_60:
-        score += 30
+    # 偵測 MA5 剛翻越 MA20（早期訊號，前一根 MA5 ≤ MA20，現在 MA5 > MA20）
+    mas_prev = calc_mas(closes[:-1], [5, 20])
+    prev_ma5, prev_ma20 = mas_prev.get(5), mas_prev.get(20)
+    just_crossed_5_20 = (
+        prev_ma5 is not None and prev_ma20 is not None
+        and ma5 is not None and ma20 is not None
+        and prev_ma5 <= prev_ma20 and ma5 > ma20
+    )
+
+    if just_crossed_5_20:
+        score += 30   # 剛翻揚：早期佈局訊號
+    elif aligned_5_20 and aligned_20_60:
+        score += 15   # 完全多頭排列：漲幅已大，給中等分
     elif aligned_5_20:
-        score += 15
+        score += 10
     elif above_ma5:
         score += 5
-    detail["ma_aligned"] = aligned_5_20 and aligned_20_60
+    detail["ma_aligned"]       = aligned_5_20 and aligned_20_60
+    detail["ma_just_crossed"]  = just_crossed_5_20
 
     # 2. KD 黃金交叉且 K<80（25分）
     golden_cross, k, d = detect_kd_cross(highs, lows, closes)
@@ -270,18 +283,22 @@ def score_technical(
     elif vol_ratio >= 1.2: score += 8
     detail["vol_breakout"] = vol_breakout
 
-    # 4. 布林通道突破上軌（20分）
+    # 4. 布林通道超賣訊號（20分）— 下軌超賣為買入機會，上軌突破為追高警示
     upper, mid, lower = calc_bollinger(closes)
     detail.update({"bb_upper": upper, "bb_mid": mid, "bb_lower": lower})
-    bb_breakout = current >= upper
-    bb_pos      = (current - lower) / (upper - lower) if upper != lower else 0.5
-    if bb_breakout:
+    bb_oversold   = current <= lower   # 超賣 → 加分
+    bb_overbought = current >= upper   # 追高 → 警示扣分
+    bb_pos = (current - lower) / (upper - lower) if upper != lower else 0.5
+    if bb_oversold:
         score += 20
-    elif bb_pos >= 0.75:
+    elif bb_pos <= 0.25:
         score += 10
-    elif bb_pos >= 0.5:
+    elif bb_pos <= 0.5:
         score += 5
-    detail["bb_breakout"] = bb_breakout
+    elif bb_overbought:
+        score -= 5   # 上軌突破：追高警示
+    detail["bb_oversold"]   = bb_oversold
+    detail["bb_overbought"] = bb_overbought
 
     return min(100.0, max(0.0, round(score, 1))), detail
 

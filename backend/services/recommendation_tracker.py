@@ -26,10 +26,11 @@ MAX_WEIGHT            = 0.60  # 單一維度最高 60%
 
 # ── 存入推薦記錄 ──────────────────────────────────────────────────────────────
 
-async def save_recommendations(top_stocks: list[dict], today: str):
+async def save_recommendations(top_stocks: list[dict], today: str, scoring_version: str = "v2"):
     """
     Agent C 推薦後呼叫，將高分股票存入 recommendation_results。
     避免重複插入（UNIQUE on stock_code + recommend_date）。
+    scoring_version: 'v1'=舊邏輯, 'v2'=2026-06-20 後翻轉BB/MA/Chip邏輯
     """
     if not top_stocks:
         return
@@ -46,12 +47,7 @@ async def save_recommendations(top_stocks: list[dict], today: str):
                 continue  # 今日已存
 
             # 取當日股價
-            rec_price = None
-            try:
-                q = await fetch_realtime_quote(s["stock_code"])
-                rec_price = q.get("price")
-            except Exception as e:
-                pass
+            rec_price = s.get("recommend_price") or s.get("price")
 
             db.add(RecommendationResult(
                 stock_code        = s["stock_code"],
@@ -64,10 +60,11 @@ async def save_recommendations(top_stocks: list[dict], today: str):
                 total_score       = s.get("total_score", 0),
                 confidence        = s.get("confidence", 0),
                 ai_reason         = s.get("ai_reason", ""),
+                scoring_version   = scoring_version,
             ))
 
         await db.commit()
-    logger.info(f"[Tracker] 存入 {len(top_stocks)} 筆推薦記錄 ({today})")
+    logger.info(f"[Tracker] 存入 {len(top_stocks)} 筆推薦記錄 ({today}) [ver={scoring_version}]")
 
 
 # ── 歷史收盤價查詢（Yahoo Finance 點位資料）──────────────────────────────────
@@ -278,6 +275,19 @@ async def get_accuracy_stats(days: int = 30) -> dict:
         for d, rets in sorted(by_date.items())
     ]
 
+    # 版本分組統計（v1 舊邏輯 vs v2 新邏輯）
+    version_stats: dict[str, dict] = {}
+    for ver in ("v1", "v2"):
+        ver_recs = [r for r in recs if (getattr(r, "scoring_version", None) or "v1") == ver]
+        if ver_recs:
+            ver_rets = [r.return_5d for r in ver_recs if r.return_5d is not None]
+            ver_hits = sum(1 for r in ver_recs if r.hit_target_5d)
+            version_stats[ver] = {
+                "count":    len(ver_recs),
+                "win_rate": round(ver_hits / len(ver_recs) * 100, 1),
+                "avg_ret":  round(sum(ver_rets) / len(ver_rets), 2) if ver_rets else 0,
+            }
+
     return {
         "total":      total,
         "win_rate":   round(win_rate, 1),
@@ -288,6 +298,7 @@ async def get_accuracy_stats(days: int = 30) -> dict:
             k: {"hits": v, "rate": round(v / total * 100, 1)}
             for k, v in thresholds.items()
         },
+        "version_stats":   version_stats,
         "daily_win_rates": daily_win_rates,
         "best_picks":  [_rec_to_dict(r) for r in reversed(best)],
         "worst_picks": [_rec_to_dict(r) for r in worst],
@@ -320,8 +331,9 @@ async def adjust_weights():
         )
         recs = r.scalars().all()
 
-    if len(recs) < 5:
-        logger.info("[Weights] 樣本不足，跳過調整")
+    # 需要 300+ 筆才有統計意義；少於此數時自動調整是雜訊而非訊號
+    if len(recs) < 300:
+        logger.info(f"[Weights] 樣本不足（{len(recs)}/300），跳過調整")
         return
 
     # 取當前權重

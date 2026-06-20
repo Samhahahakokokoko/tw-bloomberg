@@ -102,6 +102,7 @@ _SQLITE_MIGRATIONS = [
     "CREATE INDEX IF NOT EXISTS ix_pipeline_run ON pipeline_log(run_id)",
     "CREATE INDEX IF NOT EXISTS ix_pushlog_user_type ON push_log(user_id, message_type)",
     "CREATE INDEX IF NOT EXISTS ix_pushlog_period    ON push_log(period_key)",
+    "ALTER TABLE recommendation_results ADD COLUMN scoring_version VARCHAR(10) DEFAULT 'v1'",
 ]
 
 _PG_MIGRATIONS = [
@@ -140,6 +141,9 @@ _PG_MIGRATIONS = [
     "CREATE INDEX IF NOT EXISTS ix_callback_user ON callback_log(user_id)",
     "CREATE INDEX IF NOT EXISTS ix_pushlog_user_type ON push_log(user_id, message_type)",
     "CREATE INDEX IF NOT EXISTS ix_pushlog_period    ON push_log(period_key)",
+    """DO $$ BEGIN
+         ALTER TABLE recommendation_results ADD COLUMN scoring_version VARCHAR(10) DEFAULT 'v1';
+       EXCEPTION WHEN duplicate_column THEN NULL; END $$""",
 ]
 
 

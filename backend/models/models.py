@@ -369,6 +369,7 @@ class RecommendationResult(Base):
     hit_target_10d     = Column(Boolean)   # 10 日漲幅 > 3%
     is_filled_5d       = Column(Boolean, default=False)
     is_filled_10d      = Column(Boolean, default=False)
+    scoring_version    = Column(String(10), default="v1", nullable=True)  # v1=舊, v2=2026-06-20+
     created_at         = Column(DateTime, default=datetime.utcnow)
 
 

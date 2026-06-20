@@ -127,7 +127,7 @@ async def run_ai_decision():
 
     try:
         from .recommendation_tracker import save_recommendations
-        await save_recommendations(top, today)
+        await save_recommendations(top, today, scoring_version="v2")
     except Exception as e:
         logger.error(f"[AgentC] save_recommendations error: {e}")
 

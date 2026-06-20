@@ -2997,6 +2997,14 @@ async def _cmd_accuracy() -> list:
         tc = stats.get("threshold_comparison", {})
         for label, d in tc.items():
             lines.append(f"  {label}：{d['rate']:.1f}% ({d['hits']}/{stats['total']})")
+        # 版本分組（v1 舊邏輯 vs v2 新邏輯 2026-06-20+）
+        vs = stats.get("version_stats", {})
+        if vs:
+            lines.append("")
+            lines.append("🔬 邏輯版本對比")
+            for ver, vd in vs.items():
+                tag = "（舊邏輯）" if ver == "v1" else "（新邏輯 2026-06+）"
+                lines.append(f"  {ver}{tag}：{vd['count']}筆 勝率{vd['win_rate']}% 均報酬{vd['avg_ret']:+.2f}%")
         lines.append("")
         lines.append("ℹ️ 主要指標：跑贏大盤（0050）")
         if stats.get("best_picks"):
