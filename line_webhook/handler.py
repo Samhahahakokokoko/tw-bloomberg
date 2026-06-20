@@ -719,6 +719,7 @@ async def _handle_text(text: str, uid: str) -> list:
     if cmd == "/today":                         return await _cmd_today(uid)
     if cmd == "/notify":                        return await _cmd_notify(parts[1:], uid)
     if cmd == "/quiet":                         return await _cmd_quiet(parts[1:], uid)
+    if cmd == "/why":                           return await _cmd_why(parts[1:], uid)
     if cmd == "/screener":                      return await _cmd_screener(parts[1] if len(parts) > 1 else "top")
     if cmd == "/find"     and len(parts) >= 2:  return await _cmd_nl_screener(" ".join(parts[1:]))
     if cmd == "/accuracy" and len(parts) == 1: return await _cmd_accuracy()
@@ -3693,6 +3694,50 @@ async def _cmd_quiet(args: list[str], uid: str) -> list:
         "/quiet on 48   暫停推播 48 小時",
         qr_items(("暫停 24h", "/quiet on"), ("查看推播", "/notify list")),
     )]
+
+
+# ── /why — 判斷依據透明展開 ────────────────────────────────────────────────────
+
+async def _cmd_why(args: list[str], uid: str) -> list:
+    """
+    /why sentiment  — 大盤情緒分數逐步計算過程
+    /why {代號}    — 股票健康評分各維度明細 + 假設情境
+    """
+    sub = args[0].lower() if args else ""
+
+    if not sub:
+        return [_text(
+            "🔍 判斷依據查詢\n\n"
+            "/why sentiment  情緒分數計算過程\n"
+            "/why 2330       股票評分依據\n\n"
+            "支援所有台股代號",
+            qr_items(("情緒分數", "/why sentiment"), ("台積電", "/why 2330")),
+        )]
+
+    if sub in ("sentiment", "情緒", "大盤"):
+        try:
+            from backend.services.why_service import get_sentiment_why
+            text = await get_sentiment_why()
+            return [_text(text, qr_items(
+                ("情緒指數", "/sentiment"),
+                ("今日總覽", "/today"),
+                ("大盤", "/market"),
+            ))]
+        except Exception as e:
+            return [_text(_fmt_err("情緒分數查詢失敗", e))]
+
+    # 股票代號
+    code = sub.upper()
+    try:
+        from backend.services.why_service import get_stock_why
+        text = await get_stock_why(code)
+        return [_text(text, qr_items(
+            (f"健康評分", f"/score {code}"),
+            (f"籌碼", f"/chip {code}"),
+            (f"K線", f"/chart {code}"),
+        ))]
+    except Exception as e:
+        return [_text(_fmt_err(f"{code} 評分查詢失敗", e))]
 
 
 # ── 訊息建構輔助 ──────────────────────────────────────────────────────────────
