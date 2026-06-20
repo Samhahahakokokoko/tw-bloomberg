@@ -101,8 +101,25 @@ async def _fetch_system_status() -> dict:
         except Exception as e:
             return {"name": "資料庫", "ok": False, "error": str(e)[:50]}
 
+    async def check_twse():
+        try:
+            async with httpx.AsyncClient(timeout=8, headers={"User-Agent": "Mozilla/5.0"}) as c:
+                r = await c.get("https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_AVG_ALL")
+            return {"name": "TWSE", "ok": r.is_success, "latency_ms": None}
+        except Exception as e:
+            return {"name": "TWSE", "ok": False, "error": str(e)[:50]}
+
+    async def check_finmind():
+        try:
+            async with httpx.AsyncClient(timeout=8, headers={"User-Agent": "Mozilla/5.0"}) as c:
+                r = await c.get("https://api.finmindtrade.com/api/v4/info?dataset=TaiwanStockInfo")
+            return {"name": "FinMind", "ok": r.status_code < 500, "latency_ms": None}
+        except Exception as e:
+            return {"name": "FinMind", "ok": False, "error": str(e)[:50]}
+
     apis = await asyncio.gather(
-        check_yahoo(), check_railway(), check_line_api(),
+        check_yahoo(), check_twse(), check_finmind(),
+        check_railway(), check_line_api(),
         check_anthropic(), check_db(),
         return_exceptions=True,
     )

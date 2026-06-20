@@ -101,13 +101,22 @@ def _evaluate_signal(price: float, chg: float, vol: float,
 
 
 def format_watchlist_report(uid: str, results: list[dict]) -> str:
-    """格式化自選股日報文字"""
+    """格式化自選股日報文字（依漲跌幅排序）"""
     today = datetime.now().strftime("%m/%d")
     if not results:
         return f"👁️ 自選股日報 {today}\n\n尚未加入自選股\n輸入 /watch 代碼 加入"
 
-    lines = [f"👁️ 自選股日報 {today}（{len(results)} 檔）", "─" * 18]
-    for r in results:
+    # 依漲跌幅由高到低排序，方便一眼看出今日強弱
+    sorted_results = sorted(results, key=lambda r: r.get("change_pct", 0) or 0, reverse=True)
+    up_cnt   = sum(1 for r in results if (r.get("change_pct") or 0) > 0)
+    down_cnt = sum(1 for r in results if (r.get("change_pct") or 0) < 0)
+
+    lines = [
+        f"👁️ 自選股日報 {today}（{len(results)} 檔）",
+        f"📈 上漲 {up_cnt}  📉 下跌 {down_cnt}  ─ 依漲跌排序",
+        "─" * 22,
+    ]
+    for r in sorted_results:
         price = r.get("price", 0)
         chg   = r.get("change_pct", 0)
         rsi   = r.get("rsi")

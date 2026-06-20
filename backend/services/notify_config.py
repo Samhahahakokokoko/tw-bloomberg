@@ -8,7 +8,7 @@ import json
 from pathlib import Path
 from loguru import logger
 
-_CONFIG_PATH = Path("/tmp/tw_bloomberg_notify.json")
+_CONFIG_PATH = Path(__file__).parent.parent.parent / "data" / "notify_config.json"
 
 # job_id → 顯示名稱（用於 /notify list）
 NOTIFY_LABELS: dict[str, str] = {

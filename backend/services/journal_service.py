@@ -134,6 +134,26 @@ async def _file_save_all(uid: str, entries: list) -> None:
 
 # ── Analysis ──────────────────────────────────────────────────────────────────
 
+def get_monthly_stats(entries: list) -> dict:
+    """計算本月交易次數統計"""
+    import datetime as _dt
+    today      = _dt.date.today()
+    this_month = f"{today.year}-{today.month:02d}"
+    monthly    = [e for e in entries if (e.get("date") or "").startswith(this_month)]
+    buys       = [e for e in monthly if e.get("action") == "買入"]
+    sells      = [e for e in monthly if e.get("action") == "賣出"]
+    codes      = list({e["code"] for e in monthly if e.get("code")})
+    total_amt  = sum(e.get("amount", 0) or 0 for e in monthly)
+    return {
+        "month":       this_month,
+        "total":       len(monthly),
+        "buy_count":   len(buys),
+        "sell_count":  len(sells),
+        "codes":       codes,
+        "total_amount": total_amt,
+    }
+
+
 def _analyze_entries(entries: list) -> dict:
     buys  = [e for e in entries if e.get("action") == "買入"]
     sells = [e for e in entries if e.get("action") == "賣出"]
@@ -190,12 +210,21 @@ def format_journal_list(entries: list, analysis: dict | None = None) -> str:
                 "新增方式：/journal add 買入 2330 10張 900元 RSI超賣+支撐確立")
 
     ACTION_ICON = {"買入": "🟢", "賣出": "🔴"}
+    m = get_monthly_stats(entries)
+    month_line = ""
+    if m["total"] > 0:
+        codes_str = " ".join(m["codes"][:4]) + ("…" if len(m["codes"]) > 4 else "")
+        month_line = f"本月({m['month']})：{m['total']}筆 買{m['buy_count']}賣{m['sell_count']}  {codes_str}"
+
     lines = [
         "📔 投資日記",
         "─" * 32, "",
         f"共 {len(entries)} 筆記錄",
-        "",
     ]
+    if month_line:
+        lines += [month_line, ""]
+    else:
+        lines.append("")
 
     for e in entries[:10]:
         icon   = ACTION_ICON.get(e.get("action", "買入"), "📝")

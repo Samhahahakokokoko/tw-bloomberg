@@ -864,9 +864,20 @@ async def _handle_text(text: str, uid: str) -> list:
 
     if cmd == "/rs":                    return await _cmd_rs(uid)
     if cmd == "/breadth":               return await _cmd_breadth(uid)
-    if cmd == "/journal":
-        code = parts[1].upper() if len(parts) > 1 else None
-        return await _cmd_journal(uid, code)
+    if cmd in ("/journal", "/diary", "/tradelog"):
+        sub = parts[1].lower() if len(parts) > 1 else "list"
+        if sub == "add":
+            raw = " ".join(parts[2:]).strip() if len(parts) > 2 else ""
+            return await _cmd_journal_add(raw, uid)
+        elif sub in ("analysis", "analyze", "ai"):
+            return await _cmd_journal_analysis(uid)
+        elif sub in ("del", "delete", "rm"):
+            eid = int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else 0
+            return await _cmd_journal_del(eid, uid)
+        elif re.match(r"^\d{4,6}$", sub):
+            return await _cmd_journal(uid, sub.upper())  # 股票代號 → 個股日誌
+        else:
+            return await _cmd_journal_list(uid)
     if cmd == "/review":                return await _cmd_review(uid)
     if cmd == "/manage":                return await _cmd_manage(uid)
     if cmd == "/exposure":              return await _cmd_exposure(uid)
@@ -1298,20 +1309,6 @@ async def _handle_text(text: str, uid: str) -> list:
             qr_items(("台積電", "/buzz 2330"), ("聯發科", "/buzz 2454"),
                      ("鴻海", "/buzz 2317"),   ("聯電", "/buzz 2303"))
         )]
-    # 功能7: 投資日記
-    if cmd in ("/journal", "/diary", "/tradelog"):
-        sub = parts[1].lower() if len(parts) > 1 else "list"
-        if sub == "add":
-            raw = " ".join(parts[2:]).strip() if len(parts) > 2 else ""
-            return await _cmd_journal_add(raw, uid)
-        elif sub in ("analysis", "analyze", "ai"):
-            return await _cmd_journal_analysis(uid)
-        elif sub in ("del", "delete", "rm"):
-            eid = int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else 0
-            return await _cmd_journal_del(eid, uid)
-        else:
-            return await _cmd_journal_list(uid)
-
     # ── Batch 9: 盤中解說/資金成本/美台聯動/技術評級/法人連續/恐慌貪婪/籌碼健康 ──
     # 功能1: AI盤中即時解說
     if cmd in ("/midday", "/intraday", "/盤中"):
