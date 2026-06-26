@@ -275,9 +275,9 @@ async def get_accuracy_stats(days: int = 30) -> dict:
         for d, rets in sorted(by_date.items())
     ]
 
-    # 版本分組統計（v1 舊邏輯 vs v2 新邏輯）
+    # 版本分組統計（v1 舊邏輯 / v2 翻轉BB+MA+Chip / v3 基本面優先）
     version_stats: dict[str, dict] = {}
-    for ver in ("v1", "v2"):
+    for ver in ("v1", "v2", "v3"):
         ver_recs = [r for r in recs if (getattr(r, "scoring_version", None) or "v1") == ver]
         if ver_recs:
             ver_rets = [r.return_5d for r in ver_recs if r.return_5d is not None]

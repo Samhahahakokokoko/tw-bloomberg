@@ -2999,8 +2999,13 @@ async def _cmd_accuracy() -> list:
         if vs:
             lines.append("")
             lines.append("🔬 邏輯版本對比")
+            ver_tags = {
+                "v1": "（舊邏輯）",
+                "v2": "（翻轉BB/MA/Chip 2026-06-20+）",
+                "v3": "（基本面優先 F=100% 2026-06-21+）",
+            }
             for ver, vd in vs.items():
-                tag = "（舊邏輯）" if ver == "v1" else "（新邏輯 2026-06+）"
+                tag = ver_tags.get(ver, "")
                 lines.append(f"  {ver}{tag}：{vd['count']}筆 勝率{vd['win_rate']}% 均報酬{vd['avg_ret']:+.2f}%")
         lines.append("")
         lines.append("ℹ️ 主要指標：跑贏大盤（0050）")
@@ -3253,7 +3258,11 @@ async def _cmd_screener(preset_or_top: str = "top") -> list:
 
         score_date = results[0].get("score_date", "")
         date_note  = f"（評分日：{score_date}）" if score_date else ""
-        lines = [f"🎯 多維度選股結果{date_note}\n" + "─" * 20]
+        lines = [
+            f"🎯 多維度選股結果{date_note}",
+            "🧪 目前採用基本面優先邏輯（實驗中）",
+            "─" * 20,
+        ]
         for i, r in enumerate(results[:8], 1):
             ma  = "✓" if r.get("ma_aligned") else "✗"
             kd  = "✓" if r.get("kd_golden_cross") else "✗"
@@ -6113,7 +6122,7 @@ async def _cmd_recommend(regime: str = "unknown") -> list:
         "sideways": "盤整", "volatile": "高波動", "unknown": "未知",
     }.get(data.get("regime", "unknown"), "未知")
 
-    lines = [f"市場狀態：{regime_label} 策略推薦\n"]
+    lines = [f"市場狀態：{regime_label} 策略推薦", "🧪 目前採用基本面優先邏輯（實驗中）", ""]
     emoji_map = {"強力買進": "🔥", "買進": "▲", "觀察": "◆", "減碼": "▽", "賣出": "🔴"}
     for s in data.get("signals", []):
         e = emoji_map.get(s.get("action", ""), "")
