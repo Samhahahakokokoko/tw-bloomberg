@@ -87,7 +87,7 @@ def _score_value(quote: dict) -> float:
     """價值因子：PE、PB 相對 baseline"""
     def sf(v):
         try: return float(str(v).replace(",", ""))
-        except: return 0.0
+        except (ValueError, TypeError): return 0.0
 
     pe = sf(quote.get("pe_ratio") or quote.get("pe") or 0)
     pb = sf(quote.get("pb_ratio") or quote.get("pb") or 0)
@@ -126,7 +126,7 @@ def _score_quality(quote: dict, closes: list[float]) -> float:
     """品質因子：ROE、殖利率、價格穩定性"""
     def sf(v):
         try: return float(str(v).replace(",", ""))
-        except: return 0.0
+        except (ValueError, TypeError): return 0.0
 
     score = 50.0
     roe = sf(quote.get("roe") or 0)
@@ -156,7 +156,7 @@ def _score_chip(chip: dict, quote: dict) -> float:
     """籌碼因子：法人持股比例、近期買超"""
     def si(v):
         try: return int(str(v).replace(",", ""))
-        except: return 0
+        except (ValueError, TypeError): return 0
 
     score = 50.0
     foreign_net = si(chip.get("foreign_net") or chip.get("foreignNet") or 0)
@@ -192,7 +192,7 @@ def _peer_compare(code: str, quote: dict) -> str:
 
     def sf(v):
         try: return float(str(v).replace(",", ""))
-        except: return 0.0
+        except (ValueError, TypeError): return 0.0
 
     pe = sf(quote.get("pe_ratio") or quote.get("pe") or 0)
     pb = sf(quote.get("pb_ratio") or quote.get("pb") or 0)
@@ -214,10 +214,10 @@ def _peer_compare(code: str, quote: dict) -> str:
 def _build_details(code, quote, kline, chip, closes, momentum, value, quality, chip_sc):
     def sf(v):
         try: return float(str(v).replace(",", ""))
-        except: return 0.0
+        except (ValueError, TypeError): return 0.0
     def si(v):
         try: return int(str(v).replace(",", ""))
-        except: return 0
+        except (ValueError, TypeError): return 0
 
     pe  = sf(quote.get("pe_ratio") or quote.get("pe") or 0)
     pb  = sf(quote.get("pb_ratio") or quote.get("pb") or 0)

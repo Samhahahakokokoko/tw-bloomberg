@@ -43,10 +43,10 @@ async def _do_scan() -> dict:
 
     def sf(v):
         try: return float(str(v).replace(",", ""))
-        except: return 0.0
+        except (ValueError, TypeError): return 0.0
     def si(v):
         try: return int(str(v).replace(",", ""))
-        except: return 0
+        except (ValueError, TypeError): return 0
 
     def calc_chg_pct(item):
         close  = sf(item.get("ClosingPrice") or item.get("Close") or 0)
@@ -129,7 +129,7 @@ async def _get_foreign_top10() -> list[dict]:
 
 def _parse_int(v) -> int:
     try: return int(str(v).replace(",", ""))
-    except: return 0
+    except (ValueError, TypeError): return 0
 
 
 def format_scan_report(data: dict) -> str:

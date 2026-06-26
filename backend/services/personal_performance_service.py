@@ -118,7 +118,7 @@ def _period_return(trades, since) -> float | None:
             continue
         if isinstance(trade_date, str):
             try: trade_date = datetime.fromisoformat(trade_date)
-            except: continue
+            except (ValueError, TypeError): continue
         if trade_date >= since_dt:
             p = float(getattr(t, "realized_pnl", 0) or 0)
             c = float(getattr(t, "trade_value", 0) or 0)

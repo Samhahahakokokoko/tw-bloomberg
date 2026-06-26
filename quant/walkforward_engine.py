@@ -254,7 +254,7 @@ class WalkForwardAnalyzer:
 
             def _dt(df_, idx):
                 try:    return str(df_.iloc[idx].get("date", idx))[:10]
-                except: return str(idx)
+                except (IndexError, TypeError): return str(idx)
 
             segments.append(SegmentResult(
                 segment_id=sid,

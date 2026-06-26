@@ -791,7 +791,7 @@ class WalkForwardEngine:
 
             def _date(df_, idx):
                 try: return str(df_.iloc[idx].get("date", idx))[:10]
-                except: return str(idx)
+                except (IndexError, TypeError): return str(idx)
 
             seg = WFSegment(
                 segment_id=seg_id,

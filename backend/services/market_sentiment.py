@@ -40,7 +40,7 @@ async def get_sentiment_score() -> dict:
 
         def _n(v):
             try: return int(str(v).replace(",", "").replace("+", "") or 0)
-            except: return 0
+            except (ValueError, TypeError): return 0
 
         # Find foreign row: "外資及陸資(不含自營商)" has both 外資 and 陸資
         # Row "外資自營商" has 外資 but NOT 陸資 — so 陸資 is the discriminator

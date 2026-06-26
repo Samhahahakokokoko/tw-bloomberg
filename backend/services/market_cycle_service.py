@@ -157,7 +157,7 @@ def _money_flow_score(overview: dict) -> dict:
     """資金面評分（法人淨買超）"""
     def sf(v):
         try: return float(str(v).replace(",", ""))
-        except: return 0.0
+        except (ValueError, TypeError): return 0.0
 
     score = 50.0
     signals = []

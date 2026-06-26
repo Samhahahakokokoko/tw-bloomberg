@@ -75,7 +75,7 @@ async def _scrape_ptt(code: str, name: str) -> dict:
             if p == "爆":    return 100
             if p.startswith("X"): return -len(p) * 10
             try: return int(p)
-            except: return 0
+            except (ValueError, TypeError): return 0
 
         push_vals  = [_parse_push(p) for p in pushes]
         push_count = sum(1 for p in push_vals if p > 0)
