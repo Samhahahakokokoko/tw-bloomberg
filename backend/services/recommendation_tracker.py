@@ -26,11 +26,11 @@ MAX_WEIGHT            = 0.60  # 單一維度最高 60%
 
 # ── 存入推薦記錄 ──────────────────────────────────────────────────────────────
 
-async def save_recommendations(top_stocks: list[dict], today: str, scoring_version: str = "v2"):
+async def save_recommendations(top_stocks: list[dict], today: str, scoring_version: str = "v3"):
     """
     Agent C 推薦後呼叫，將高分股票存入 recommendation_results。
     避免重複插入（UNIQUE on stock_code + recommend_date）。
-    scoring_version: 'v1'=舊邏輯, 'v2'=2026-06-20 後翻轉BB/MA/Chip邏輯
+    scoring_version: 'v1'=舊邏輯, 'v2'=翻轉BB/MA/Chip, 'v3'=基本面優先F=100%
     """
     if not top_stocks:
         return
@@ -334,6 +334,12 @@ async def adjust_weights():
     # 需要 300+ 筆才有統計意義；少於此數時自動調整是雜訊而非訊號
     if len(recs) < 300:
         logger.info(f"[Weights] 樣本不足（{len(recs)}/300），跳過調整")
+        return
+
+    # v3 實驗期間（score_updater 固定使用 F=100%），DB 權重寫入無效，跳過
+    v3_recs = [r for r in recs if (getattr(r, "scoring_version", None) or "v1") == "v3"]
+    if len(v3_recs) > len(recs) * 0.5:
+        logger.info("[Weights] v3 實驗模式下超過 50% 樣本，跳過自動調整（score_updater 已固定 F=100%）")
         return
 
     # 取當前權重

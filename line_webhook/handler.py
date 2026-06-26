@@ -1072,7 +1072,7 @@ async def _handle_text(text: str, uid: str) -> list:
             return await _cmd_report_page(uid, delta=+1)
         if sub == "page" and len(parts) >= 3:
             try:    return await _cmd_report_page(uid, go_to=int(parts[2]))
-            except: return [_text("格式：/report page 2")]
+            except (ValueError, IndexError): return [_text("格式：/report page 2")]
         # 族群指定
         sector_arg = " ".join(parts[2:]) if sub == "sector" and len(parts) >= 3 else ""
         return await _cmd_report(sub, uid, sector=sector_arg)

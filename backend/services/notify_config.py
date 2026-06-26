@@ -97,6 +97,7 @@ def _load() -> None:
 
 def _save() -> None:
     try:
+        _CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
         _CONFIG_PATH.write_text(json.dumps(_state))
     except Exception as e:
         logger.debug(f"[notify_config] save failed: {e}")
