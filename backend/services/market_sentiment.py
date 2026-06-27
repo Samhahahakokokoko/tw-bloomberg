@@ -90,7 +90,7 @@ async def get_sentiment_score() -> dict:
                         if prev > 1e6:
                             margin_chg_bil = (today - prev) / 1e6
                             break
-                    except Exception:
+                    except Exception as e:
                         continue
         delta = max(-8, min(4, -margin_chg_bil))
         score += delta

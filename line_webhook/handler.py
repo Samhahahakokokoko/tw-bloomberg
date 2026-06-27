@@ -3263,7 +3263,7 @@ async def _cmd_screener(preset_or_top: str = "top") -> list:
         try:
             from backend.services.report_screener import _rt_cache
             rt_prices = _rt_cache.get("prices", {})
-        except Exception:
+        except Exception as e:
             pass
 
         score_date = results[0].get("score_date", "")
