@@ -86,15 +86,33 @@ async def generate_morning_report() -> str:
     except Exception as e:
         logger.error(f"Morning report movers error: {e}")
 
-    # ── 操作建議（對應細化市場狀態）──────────────────────────────────
-    op_map = {
-        "強多頭 🚀": "市場強勁，可積極布局動能股",
-        "多頭 📈":   "多頭氛圍，選強勢股順勢操作",
-        "強空頭 🔻": "市場重挫，建議空手觀望護本",
-        "空頭 📉":   "偏空格局，輕倉避開弱勢個股",
-        "盤整 ↔️":   "震盪整理，選擇性進場輕倉為主",
-    }
-    lines.append(f"\n【操作建議】{op_map.get(market_state, '謹慎操作')}")
+    # ── 情緒指數（豐富市場狀態描述）─────────────────────────────────
+    try:
+        from .market_sentiment import get_sentiment_score
+        sent = await get_sentiment_score()
+        s_score = sent["score"]
+        s_desc  = sent.get("state_desc", sent["label"])
+        s_reasons = sent.get("reasons", [])
+        lines.append(
+            f"\n【情緒指數】{sent['icon']} {s_score}/100  {s_desc}"
+        )
+        if s_reasons:
+            for r in s_reasons[:2]:
+                lines.append(f"  · {r}")
+        vs = sent.get("vs_yesterday")
+        if vs:
+            lines.append(f"  {vs}")
+    except Exception as e:
+        logger.debug(f"Morning report sentiment error: {e}")
+        # Fallback to simple map
+        op_map = {
+            "強多頭 🚀": "市場強勁，可積極布局動能股",
+            "多頭 📈":   "多頭氛圍，選強勢股順勢操作",
+            "強空頭 🔻": "市場重挫，建議空手觀望護本",
+            "空頭 📉":   "偏空格局，輕倉避開弱勢個股",
+            "盤整 ↔️":   "震盪整理，選擇性進場輕倉為主",
+        }
+        lines.append(f"\n【操作建議】{op_map.get(market_state, '謹慎操作')}")
 
     # ── 外資動向 ──────────────────────────────────────────────────────────
     try:

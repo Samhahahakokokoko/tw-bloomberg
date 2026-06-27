@@ -3232,13 +3232,23 @@ async def _cmd_correlation(uid: str) -> list:
 
 
 async def _cmd_screener(preset_or_top: str = "top") -> list:
-    """選股引擎 — 顯示前 10 高分股票或 preset"""
+    """選股引擎 — 預設顯示前 5 高分股票，/screener N 可自訂數量"""
     try:
-        from backend.services.screener_engine import get_top_scores, PRESETS, run_screener
-        if preset_or_top in PRESETS:
-            results = await run_screener(PRESETS[preset_or_top])
+        import dataclasses
+        from backend.services.screener_engine import get_top_scores, PRESETS, run_screener, ScreenerFilter
+
+        # 解析數量參數：/screener 10 → limit=10
+        limit = 5
+        actual_preset = preset_or_top
+        if preset_or_top.isdigit():
+            limit = max(1, min(20, int(preset_or_top)))
+            actual_preset = "top"
+
+        if actual_preset in PRESETS:
+            f = dataclasses.replace(PRESETS[actual_preset], limit=limit)
+            results = await run_screener(f)
         else:
-            results = await get_top_scores(limit=10)
+            results = await get_top_scores(limit=limit)
 
         if not results:
             return [_text(
@@ -3248,25 +3258,22 @@ async def _cmd_screener(preset_or_top: str = "top") -> list:
                 qr_items(("💼 庫存", "/portfolio"), ("📊 大盤", "/market"))
             )]
 
-        # 嘗試從 RT 快取補充今日即時漲跌幅
+        # 從 RT 快取補充今日即時漲跌幅
         rt_prices: dict = {}
         try:
             from backend.services.report_screener import _rt_cache
             rt_prices = _rt_cache.get("prices", {})
-        except Exception as e:
+        except Exception:
             pass
 
         score_date = results[0].get("score_date", "")
         date_note  = f"（評分日：{score_date}）" if score_date else ""
         lines = [
-            f"🎯 多維度選股結果{date_note}",
-            "🧪 目前採用基本面優先邏輯（實驗中）",
+            f"🎯 精選選股 Top {len(results)}{date_note}",
+            "🧪 基本面優先邏輯（實驗中）",
             "─" * 20,
         ]
-        for i, r in enumerate(results[:8], 1):
-            ma  = "✓" if r.get("ma_aligned") else "✗"
-            kd  = "✓" if r.get("kd_golden_cross") else "✗"
-            vol = "✓" if r.get("vol_breakout") else "✗"
+        for i, r in enumerate(results, 1):
             code = r["stock_code"]
             price_tag = ""
             if code in rt_prices:
@@ -3274,17 +3281,50 @@ async def _cmd_screener(preset_or_top: str = "top") -> list:
                 prc = float(rt_prices[code].get("close", 0) or 0)
                 if prc > 0:
                     sign = "+" if pct >= 0 else ""
-                    price_tag = f"  {prc:.0f}({sign}{pct:.1f}%)"
+                    price_tag = f"  {prc:.0f}（{sign}{pct:.1f}%）"
+
+            # 組合具體量化原因（至少 2 條）
+            reasons: list[str] = []
+            fc = r.get("foreign_consec_buy") or 0
+            tc = r.get("trust_consec_buy") or 0
+            if fc >= 1:
+                reasons.append(f"外資連買 {fc} 天")
+            if tc >= 1:
+                reasons.append(f"投信連買 {tc} 天")
+            rev = r.get("revenue_yoy")
+            if rev is not None:
+                sign = "+" if rev >= 0 else ""
+                reasons.append(f"月營收 YoY {sign}{rev:.0f}%")
+            gm = r.get("gross_margin")
+            if gm is not None:
+                reasons.append(f"毛利率 {gm:.1f}%")
+            eps_q = r.get("eps_growth_qtrs") or 0
+            if eps_q >= 2:
+                reasons.append(f"EPS 連續成長 {eps_q} 季")
+            if r.get("ma_aligned"):
+                reasons.append("均線多頭排列")
+            if r.get("kd_golden_cross"):
+                reasons.append("KD 黃金交叉")
+            if r.get("vol_breakout"):
+                reasons.append("量能突破")
+            if r.get("three_margins_up"):
+                reasons.append("三率齊升")
+            # ai_reason 作補充
+            ai_r = r.get("ai_reason", "")
+            if ai_r and len(reasons) < 2:
+                reasons.append(ai_r[:30])
+
+            reason_str = "  " + "、".join(reasons[:3]) if reasons else "  綜合評分入選"
             lines.append(
                 f"{i}. {code} {r['stock_name']}{price_tag}\n"
-                f"   總分:{r['total_score']:.0f} "
-                f"基:{r['fundamental_score']:.0f} "
-                f"籌:{r['chip_score']:.0f} "
-                f"技:{r['technical_score']:.0f}\n"
-                f"   均線{ma} KD{kd} 量能{vol}"
+                f"   總分:{r['total_score']:.0f}  基:{r['fundamental_score']:.0f}"
+                f"  籌:{r['chip_score']:.0f}  技:{r['technical_score']:.0f}\n"
+                f"{reason_str}"
             )
 
-        # Top-3 stocks as actionable QR + preset filters
+        lines.append("")
+        lines.append(f"輸入 /screener N 可自訂數量（最多20）")
+
         top3_qr = [
             (f"🔍{r['stock_code']}", f"/quote {r['stock_code']}")
             for r in results[:3]
